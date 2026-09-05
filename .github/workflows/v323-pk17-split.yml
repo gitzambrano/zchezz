@@ -6,6 +6,7 @@ on:
     branches: [v323-fullacc-endgame-test]
     paths:
       - 'tools/v323_apply_pk17_split.py'
+      - 'tools/v323_run_pk17_split.py'
       - '.github/workflows/v323-pk17-split.yml'
 
 permissions:
@@ -32,7 +33,7 @@ jobs:
           set -euo pipefail
           cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
           cp -a engine/c/zchezz_v322 engine/c/zchezz_v323pk17
-          python tools/v323_apply_pk17_split.py --root engine/c/zchezz_v323pk17
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323pk17
           make -C engine/build ENGINE=v323base clean native
           make -C engine/build ENGINE=v323pk17 clean native
           make -C engine/build TOOLS_ENGINE=v403 arena
