@@ -7,6 +7,7 @@ on:
     paths:
       - 'tools/v323_apply_fullacc.py'
       - 'tools/v323_fix_fullacc_exact_delta.py'
+      - 'tools/v323_fix_fullacc_captured_king.py'
       - '.github/workflows/v323-fullacc-screen2.yml'
 
 permissions:
@@ -34,6 +35,7 @@ jobs:
           cp -a engine/c/zchezz_v322 engine/c/zchezz_v323cand
           python tools/v323_apply_fullacc.py fullacc31 --root engine/c/zchezz_v323cand
           python tools/v323_fix_fullacc_exact_delta.py --root engine/c/zchezz_v323cand
+          python tools/v323_fix_fullacc_captured_king.py --root engine/c/zchezz_v323cand
           mkdir -p artifacts/v323-fullacc2
           diff -ur engine/c/zchezz_v323base engine/c/zchezz_v323cand > artifacts/v323-fullacc2/patch.diff || true
 
