@@ -1,0 +1,65 @@
+name: v323-fullacc-verify
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - 'tools/v323_add_fullacc_verify.py'
+      - '.github/workflows/v323-fullacc-verify.yml'
+
+permissions:
+  contents: read
+
+env:
+  STATIC_FLAG: ''
+  ARCH_FLAGS: '-mavx2'
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare verified candidate
+        run: |
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323verify
+          python tools/v323_apply_fullacc.py fullacc31 --root engine/c/zchezz_v323verify
+          python tools/v323_fix_fullacc_exact_delta.py --root engine/c/zchezz_v323verify
+          python tools/v323_add_fullacc_verify.py --root engine/c/zchezz_v323verify
+      - name: Build verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          E=engine/c/zchezz_v323verify
+          gcc -O2 -g -D_GNU_SOURCE -DV323_VERIFY_FULLACC -DNO_TABLEBASES -std=c11 -mavx2 -I"$E" \
+            -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized \
+            -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses \
+            -o "$E/zchezz_verify.exe" \
+            "$E/main.c" "$E/board.c" "$E/search.c" "$E/nnue.c" "$E/syzygy.c" "$E/book.c" -lm -pthread
+      - name: Reproduce en-passant search repeatedly
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 12); do
+            printf 'uci\nisready\nposition fen 8/8/3p4/2pPp3/4P3/8/4K3/4k3 w - c6 0 1\ngo depth 9\n' \
+              | engine/c/zchezz_v323verify/zchezz_verify.exe \
+              > "verify-$i.out" 2> "verify-$i.err"
+            grep -q '^bestmove ' "verify-$i.out"
+            ! grep -q 'V323_FULLACC_MISMATCH' "verify-$i.err"
+          done
+          echo 'FULLACC RECOMPUTE VERIFIER PASSED EP x12'
+      - name: Broader verifier cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          for fen in \
+            'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' \
+            '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1' \
+            '8/P7/8/8/8/5k2/7p/6K1 w - - 0 1' \
+            'r3k2r/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/R3K2R w KQkq - 0 1'; do
+            printf 'uci\nisready\nposition fen %s\ngo depth 9\n' "$fen" \
+              | engine/c/zchezz_v323verify/zchezz_verify.exe >/tmp/o 2>/tmp/e
+            ! grep -q 'V323_FULLACC_MISMATCH' /tmp/e
+          done
+          echo 'FULLACC RECOMPUTE VERIFIER PASSED BROADER CASES'
