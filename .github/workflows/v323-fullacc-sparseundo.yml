@@ -1,0 +1,95 @@
+name: v323-fullacc-sparseundo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - 'tools/v323_optimize_sparseundo.py'
+      - '.github/workflows/v323-fullacc-sparseundo.yml'
+
+permissions:
+  contents: read
+
+env:
+  STATIC_FLAG: ''
+  ARCH_FLAGS: '-mavx2'
+
+jobs:
+  sparseundo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare baseline and sparse candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323sparse
+          python tools/v323_apply_fullacc.py fullacc31 --root engine/c/zchezz_v323sparse
+          python tools/v323_fix_fullacc_exact_delta.py --root engine/c/zchezz_v323sparse
+          python tools/v323_fix_fullacc_captured_king.py --root engine/c/zchezz_v323sparse
+          python tools/v323_optimize_sparseundo.py --root engine/c/zchezz_v323sparse
+          make -C engine/build ENGINE=v323base clean native
+          make -C engine/build ENGINE=v323sparse clean native
+          mkdir -p artifacts/v323-sparse
+
+      - name: Invariants and exact bench parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v323sparse test-c
+          printf 'position startpos\nperft 5\n' | engine/c/zchezz_v323sparse/zchezz.exe | tee artifacts/v323-sparse/perft.txt
+          grep -q 'Nodes searched: 4865609' artifacts/v323-sparse/perft.txt
+          engine/c/zchezz_v323base/zchezz.exe bench 11 > artifacts/v323-sparse/base_parity.txt
+          engine/c/zchezz_v323sparse/zchezz.exe bench 11 > artifacts/v323-sparse/sparse_parity.txt
+          python - <<'PY'
+          from pathlib import Path
+          d=Path('artifacts/v323-sparse')
+          def r(p): return [x for x in p.read_text().splitlines() if x.startswith('Position ')]
+          a,b=r(d/'base_parity.txt'),r(d/'sparse_parity.txt')
+          assert len(a)==len(b)==20
+          if a!=b:
+              for i,(x,y) in enumerate(zip(a,b),1):
+                  if x!=y: print('MISMATCH',i,x,y)
+              raise SystemExit('tree parity failed')
+          print('TREE PARITY 20/20 OK')
+          PY
+
+      - name: 15 paired NPS benches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 15); do
+            if (( i % 2 )); then
+              engine/c/zchezz_v323base/zchezz.exe bench 11 | tee -a artifacts/v323-sparse/base.txt
+              engine/c/zchezz_v323sparse/zchezz.exe bench 11 | tee -a artifacts/v323-sparse/sparse.txt
+            else
+              engine/c/zchezz_v323sparse/zchezz.exe bench 11 | tee -a artifacts/v323-sparse/sparse.txt
+              engine/c/zchezz_v323base/zchezz.exe bench 11 | tee -a artifacts/v323-sparse/base.txt
+            fi
+          done
+          python - <<'PY'
+          import json,re,statistics
+          from pathlib import Path
+          d=Path('artifacts/v323-sparse')
+          def g(name,pat): return [int(x) for x in re.findall(pat,(d/name).read_text())]
+          bn=g('base.txt',r'Total nodes\s*:\s*(\d+)'); sn=g('sparse.txt',r'Total nodes\s*:\s*(\d+)')
+          bp=g('base.txt',r'Nodes/sec\s*:\s*(\d+)'); sp=g('sparse.txt',r'Nodes/sec\s*:\s*(\d+)')
+          assert len(bn)==len(sn)==len(bp)==len(sp)==15 and bn==sn
+          ratios=[s/b for b,s in zip(bp,sp)]
+          out={'nodes':bn[0],'base_median':statistics.median(bp),'sparse_median':statistics.median(sp),
+               'median_paired_pct':(statistics.median(ratios)-1)*100,
+               'ratio_medians_pct':(statistics.median(sp)/statistics.median(bp)-1)*100,
+               'base':bp,'sparse':sp,'paired_pct':[(x-1)*100 for x in ratios]}
+          print('V323_SPARSE_NPS='+json.dumps(out,separators=(',',':')))
+          (d/'summary.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v323-fullacc-sparseundo
+          path: artifacts/v323-sparse/
+          if-no-files-found: warn
