@@ -1,0 +1,228 @@
+name: v323-fullacc-screen
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - 'tools/v323_apply_fullacc.py'
+      - '.github/workflows/v323-fullacc-screen.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  fullacc:
+    name: ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [fullacc31, fullacc31_pm256]
+    env:
+      STATIC_FLAG: ''
+      ARCH_FLAGS: '-mavx2'
+      VARIANT: ${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python test dependency
+        run: python -m pip install --disable-pip-version-check python-chess
+
+      - name: Prepare baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323cand
+          python tools/v323_apply_fullacc.py "$VARIANT" --root engine/c/zchezz_v323cand
+          mkdir -p "artifacts/v323-fullacc/$VARIANT"
+          diff -ur engine/c/zchezz_v323base engine/c/zchezz_v323cand \
+            > "artifacts/v323-fullacc/$VARIANT/patch.diff" || true
+          test -s "artifacts/v323-fullacc/$VARIANT/patch.diff"
+
+      - name: Build AVX2 baseline, candidate and arena
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v323base clean native
+          make -C engine/build ENGINE=v323cand clean native
+          make -C engine/build TOOLS_ENGINE=v403 arena
+          test -x engine/c/zchezz_v323base/zchezz.exe
+          test -x engine/c/zchezz_v323cand/zchezz.exe
+
+      - name: C invariants and perft
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v323cand test-c
+          printf 'position startpos\nperft 5\n' \
+            | engine/c/zchezz_v323cand/zchezz.exe \
+            | tee "artifacts/v323-fullacc/$VARIANT/perft.txt"
+          grep -q 'Nodes searched: 4865609' "artifacts/v323-fullacc/$VARIANT/perft.txt"
+
+      - name: Hard search-tree parity gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          engine/c/zchezz_v323base/zchezz.exe bench 11 \
+            > "artifacts/v323-fullacc/$VARIANT/parity_base.txt"
+          engine/c/zchezz_v323cand/zchezz.exe bench 11 \
+            > "artifacts/v323-fullacc/$VARIANT/parity_candidate.txt"
+          python - <<'PY'
+          import os, pathlib
+          d=pathlib.Path('artifacts/v323-fullacc')/os.environ['VARIANT']
+          def positions(p):
+              return [x for x in p.read_text().splitlines() if x.startswith('Position ')]
+          a=positions(d/'parity_base.txt'); b=positions(d/'parity_candidate.txt')
+          assert len(a)==20 and len(b)==20, (len(a),len(b))
+          if a != b:
+              for i,(x,y) in enumerate(zip(a,b),1):
+                  if x != y: print('MISMATCH',i,'\n base:',x,'\n cand:',y)
+              raise SystemExit('hard parity gate failed: depth/nodes/best/score changed')
+          print('PARITY OK: all 20 bench positions have identical depth/nodes/best/score')
+          PY
+
+      - name: Targeted incremental parity battery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import chess, os, random, re, subprocess
+          base=os.path.abspath('engine/c/zchezz_v323base/zchezz.exe')
+          cand=os.path.abspath('engine/c/zchezz_v323cand/zchezz.exe')
+          rng=random.Random(3231701)
+          fens=[
+            '8/8/8/4k3/8/4K3/4P3/8 w - - 0 1',
+            '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',
+            '8/8/3p4/2pPp3/4P3/8/4K3/4k3 w - c6 0 1',
+            '8/P7/8/8/8/5k2/7p/6K1 w - - 0 1',
+            'r3k2r/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/R3K2R w KQkq - 0 1',
+            '8/5pk1/6p1/8/7P/6P1/5PK1/8 w - - 0 1',
+          ]
+          # Bias random walks toward pawn moves/captures/king moves so the
+          # feature-state delta paths are exercised much more often than in
+          # uniformly random legal play.
+          for _ in range(34):
+              b=chess.Board()
+              for ply in range(rng.randint(10,55)):
+                  ms=list(b.legal_moves)
+                  if not ms or b.is_game_over(claim_draw=True): break
+                  special=[]
+                  for m in ms:
+                      pc=b.piece_at(m.from_square)
+                      if (pc and pc.piece_type in (chess.PAWN,chess.KING)) or b.is_capture(m) or m.promotion:
+                          special.append(m)
+                  b.push(rng.choice(special if special and rng.random()<0.72 else ms))
+              if not b.is_game_over(claim_draw=True): fens.append(b.fen())
+
+          def run(exe, fen):
+              script=f'uci\nisready\nposition fen {fen}\ngo depth 7\n'
+              r=subprocess.run([exe],input=script,text=True,capture_output=True,timeout=20)
+              if r.returncode: raise RuntimeError((exe,fen,r.stderr[-1000:]))
+              infos=[x for x in r.stdout.splitlines() if x.startswith('info depth ')]
+              bm=[x for x in r.stdout.splitlines() if x.startswith('bestmove ')]
+              if not infos or not bm: raise RuntimeError(('missing search output',exe,fen,r.stdout[-1000:]))
+              line=infos[-1]
+              depth=int(re.search(r'\bdepth (\d+)',line).group(1))
+              nodes=int(re.search(r'\bnodes (\d+)',line).group(1))
+              sm=re.search(r'\bscore (cp|mate) (-?\d+)',line)
+              score=(sm.group(1),int(sm.group(2)))
+              best=bm[-1].split()[1]
+              return depth,nodes,score,best
+
+          mism=[]
+          for i,fen in enumerate(fens):
+              a=run(base,fen); b=run(cand,fen)
+              if a!=b: mism.append((i,fen,a,b))
+          if mism:
+              for row in mism[:10]: print('MISMATCH',row)
+              raise SystemExit(f'incremental parity failed on {len(mism)}/{len(fens)} positions')
+          print(f'INCREMENTAL PARITY OK: {len(fens)} positions identical at depth 7')
+          PY
+
+      - name: Repeated NPS benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6 7 8 9; do
+            engine/c/zchezz_v323base/zchezz.exe bench 11 \
+              | tee -a "artifacts/v323-fullacc/$VARIANT/bench_base.txt"
+            engine/c/zchezz_v323cand/zchezz.exe bench 11 \
+              | tee -a "artifacts/v323-fullacc/$VARIANT/bench_candidate.txt"
+          done
+          python - <<'PY'
+          import os,pathlib,re,statistics,json
+          d=pathlib.Path('artifacts/v323-fullacc')/os.environ['VARIANT']
+          def vals(name,pat):
+              t=(d/name).read_text()
+              return [int(x) for x in re.findall(pat,t)]
+          bn=vals('bench_base.txt',r'Total nodes\s*:\s*(\d+)')
+          cn=vals('bench_candidate.txt',r'Total nodes\s*:\s*(\d+)')
+          bp=vals('bench_base.txt',r'Nodes/sec\s*:\s*(\d+)')
+          cp=vals('bench_candidate.txt',r'Nodes/sec\s*:\s*(\d+)')
+          assert len(bn)==len(cn)==len(bp)==len(cp)==9
+          assert bn==cn, (bn,cn)
+          mb=statistics.median(bp); mc=statistics.median(cp)
+          out={'base_nodes':bn[0],'candidate_nodes':cn[0],
+               'base_nps':bp,'candidate_nps':cp,
+               'base_median_nps':mb,'candidate_median_nps':mc,
+               'delta_pct':(mc/mb-1)*100.0}
+          print(json.dumps(out,indent=2))
+          (d/'nps_summary.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+
+      - name: Generate paired openings
+        shell: bash
+        run: |
+          python - <<'PY'
+          import chess,random
+          from pathlib import Path
+          r=random.Random(3231701); rows=[]; seen=set()
+          while len(rows)<256:
+              b=chess.Board()
+              for _ in range(r.randint(8,22)):
+                  ms=list(b.legal_moves)
+                  if not ms: break
+                  quiet=[m for m in ms if not b.is_capture(m)]
+                  b.push(r.choice(quiet if quiet and r.random()<.72 else ms))
+                  if b.is_game_over(claim_draw=True): break
+              if not b.is_game_over(claim_draw=True):
+                  k=' '.join(b.fen().split()[:4])
+                  if k not in seen: seen.add(k); rows.append(k)
+          Path('v323.epd').write_text('\n'.join(rows)+'\n')
+          PY
+
+      - name: Fixed-node strength identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/run_arena.py \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323cand/zchezz.exe" \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323base/zchezz.exe" \
+            --games 256 --threads 4 --movetime 0 --nodes 20000 --max-plies 220 \
+            --openings v323.epd --opening-plies 0 --seed 3231701 --tt-mb 16 \
+            --json "artifacts/v323-fullacc/$VARIANT/fixed20k.json" \
+            --pgn "artifacts/v323-fullacc/$VARIANT/fixed20k.pgn"
+
+      - name: Timed strength at 20 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/run_arena.py \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323cand/zchezz.exe" \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323base/zchezz.exe" \
+            --games 512 --threads 4 --movetime 20 --max-plies 240 \
+            --openings v323.epd --opening-plies 0 --seed 3231701 --tt-mb 16 \
+            --json "artifacts/v323-fullacc/$VARIANT/timed20ms.json" \
+            --pgn "artifacts/v323-fullacc/$VARIANT/timed20ms.pgn"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v323-fullacc-${{ matrix.variant }}
+          path: artifacts/v323-fullacc/${{ matrix.variant }}/
+          if-no-files-found: warn
