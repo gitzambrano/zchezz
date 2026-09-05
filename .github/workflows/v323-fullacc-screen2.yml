@@ -1,0 +1,185 @@
+name: v323-fullacc-screen2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - 'tools/v323_apply_fullacc.py'
+      - 'tools/v323_fix_fullacc_exact_delta.py'
+      - '.github/workflows/v323-fullacc-screen2.yml'
+
+permissions:
+  contents: read
+
+env:
+  STATIC_FLAG: ''
+  ARCH_FLAGS: '-mavx2'
+
+jobs:
+  exact-fullacc31:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install --disable-pip-version-check python-chess
+
+      - name: Prepare exact fullacc candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323cand
+          python tools/v323_apply_fullacc.py fullacc31 --root engine/c/zchezz_v323cand
+          python tools/v323_fix_fullacc_exact_delta.py --root engine/c/zchezz_v323cand
+          mkdir -p artifacts/v323-fullacc2
+          diff -ur engine/c/zchezz_v323base engine/c/zchezz_v323cand > artifacts/v323-fullacc2/patch.diff || true
+
+      - name: Build and invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v323base clean native
+          make -C engine/build ENGINE=v323cand clean native
+          make -C engine/build TOOLS_ENGINE=v403 arena
+          make -C engine/build ENGINE=v323cand test-c
+          printf 'position startpos\nperft 5\n' | engine/c/zchezz_v323cand/zchezz.exe | tee artifacts/v323-fullacc2/perft.txt
+          grep -q 'Nodes searched: 4865609' artifacts/v323-fullacc2/perft.txt
+
+      - name: Hard bench parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          engine/c/zchezz_v323base/zchezz.exe bench 11 > artifacts/v323-fullacc2/parity_base.txt
+          engine/c/zchezz_v323cand/zchezz.exe bench 11 > artifacts/v323-fullacc2/parity_candidate.txt
+          python - <<'PY'
+          from pathlib import Path
+          d=Path('artifacts/v323-fullacc2')
+          def rows(p): return [x for x in p.read_text().splitlines() if x.startswith('Position ')]
+          a,b=rows(d/'parity_base.txt'),rows(d/'parity_candidate.txt')
+          assert len(a)==len(b)==20
+          if a!=b:
+              for i,(x,y) in enumerate(zip(a,b),1):
+                  if x!=y: print('MISMATCH',i,'\nBASE',x,'\nCAND',y)
+              raise SystemExit('bench parity failed')
+          print('BENCH PARITY OK')
+          PY
+
+      - name: Targeted incremental parity battery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import chess,os,random,re,subprocess
+          base=os.path.abspath('engine/c/zchezz_v323base/zchezz.exe')
+          cand=os.path.abspath('engine/c/zchezz_v323cand/zchezz.exe')
+          rng=random.Random(3231702)
+          fens=[
+            '8/8/8/4k3/8/4K3/4P3/8 w - - 0 1',
+            '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',
+            '8/8/3p4/2pPp3/4P3/8/4K3/4k3 w - c6 0 1',
+            '8/P7/8/8/8/5k2/7p/6K1 w - - 0 1',
+            'r3k2r/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/R3K2R w KQkq - 0 1',
+            '8/5pk1/6p1/8/7P/6P1/5PK1/8 w - - 0 1',
+          ]
+          for _ in range(50):
+              b=chess.Board()
+              for _ in range(rng.randint(8,60)):
+                  ms=list(b.legal_moves)
+                  if not ms or b.is_game_over(claim_draw=True): break
+                  sp=[]
+                  for m in ms:
+                      pc=b.piece_at(m.from_square)
+                      if (pc and pc.piece_type in (chess.PAWN,chess.KING)) or b.is_capture(m) or m.promotion:
+                          sp.append(m)
+                  b.push(rng.choice(sp if sp and rng.random()<.75 else ms))
+              if not b.is_game_over(claim_draw=True): fens.append(b.fen())
+          def run(exe,fen):
+              r=subprocess.run([exe],input=f'uci\nisready\nposition fen {fen}\ngo depth 7\n',text=True,capture_output=True,timeout=20)
+              if r.returncode: raise RuntimeError((exe,fen,r.stderr[-1000:]))
+              infos=[x for x in r.stdout.splitlines() if x.startswith('info depth ')]
+              bm=[x for x in r.stdout.splitlines() if x.startswith('bestmove ')]
+              if not infos or not bm: raise RuntimeError((exe,fen,r.stdout[-1000:]))
+              line=infos[-1]
+              depth=int(re.search(r'\bdepth (\d+)',line).group(1))
+              nodes=int(re.search(r'\bnodes (\d+)',line).group(1))
+              sm=re.search(r'\bscore (cp|mate) (-?\d+)',line)
+              return depth,nodes,(sm.group(1),int(sm.group(2))),bm[-1].split()[1]
+          bad=[]
+          for i,fen in enumerate(fens):
+              a,b=run(base,fen),run(cand,fen)
+              if a!=b: bad.append((i,fen,a,b))
+          if bad:
+              for x in bad[:10]: print('MISMATCH',x)
+              raise SystemExit(f'{len(bad)}/{len(fens)} targeted positions diverged')
+          print(f'TARGETED PARITY OK: {len(fens)} positions')
+          PY
+
+      - name: Repeated NPS benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in 1 2 3 4 5 6 7 8 9 10 11; do
+            engine/c/zchezz_v323base/zchezz.exe bench 11 | tee -a artifacts/v323-fullacc2/bench_base.txt
+            engine/c/zchezz_v323cand/zchezz.exe bench 11 | tee -a artifacts/v323-fullacc2/bench_candidate.txt
+          done
+          python - <<'PY'
+          import json,re,statistics
+          from pathlib import Path
+          d=Path('artifacts/v323-fullacc2')
+          def nums(name,pat): return [int(x) for x in re.findall(pat,(d/name).read_text())]
+          bn=nums('bench_base.txt',r'Total nodes\s*:\s*(\d+)'); cn=nums('bench_candidate.txt',r'Total nodes\s*:\s*(\d+)')
+          bp=nums('bench_base.txt',r'Nodes/sec\s*:\s*(\d+)'); cp=nums('bench_candidate.txt',r'Nodes/sec\s*:\s*(\d+)')
+          assert len(bn)==len(cn)==len(bp)==len(cp)==11
+          assert bn==cn
+          mb,mc=statistics.median(bp),statistics.median(cp)
+          out={'nodes':bn[0],'base_nps':bp,'candidate_nps':cp,'base_median':mb,'candidate_median':mc,'delta_pct':(mc/mb-1)*100}
+          print(json.dumps(out,indent=2)); (d/'nps_summary.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+
+      - name: Generate openings
+        run: |
+          python - <<'PY'
+          import chess,random
+          from pathlib import Path
+          r=random.Random(3231702); rows=[]; seen=set()
+          while len(rows)<256:
+              b=chess.Board()
+              for _ in range(r.randint(8,22)):
+                  ms=list(b.legal_moves)
+                  if not ms: break
+                  q=[m for m in ms if not b.is_capture(m)]
+                  b.push(r.choice(q if q and r.random()<.72 else ms))
+                  if b.is_game_over(claim_draw=True): break
+              if not b.is_game_over(claim_draw=True):
+                  k=' '.join(b.fen().split()[:4])
+                  if k not in seen: seen.add(k); rows.append(k)
+          Path('v323.epd').write_text('\n'.join(rows)+'\n')
+          PY
+
+      - name: Fixed 20k 256 games
+        run: |
+          python tests/run_arena.py \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323cand/zchezz.exe" \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323base/zchezz.exe" \
+            --games 256 --threads 4 --movetime 0 --nodes 20000 --max-plies 220 \
+            --openings v323.epd --opening-plies 0 --seed 3231702 --tt-mb 16 \
+            --json artifacts/v323-fullacc2/fixed20k.json --pgn artifacts/v323-fullacc2/fixed20k.pgn
+
+      - name: Timed 20ms 512 games
+        run: |
+          python tests/run_arena.py \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323cand/zchezz.exe" \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323base/zchezz.exe" \
+            --games 512 --threads 4 --movetime 20 --max-plies 240 \
+            --openings v323.epd --opening-plies 0 --seed 3231702 --tt-mb 16 \
+            --json artifacts/v323-fullacc2/timed20ms.json --pgn artifacts/v323-fullacc2/timed20ms.pgn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v323-fullacc-screen2
+          path: artifacts/v323-fullacc2/
+          if-no-files-found: warn
