@@ -1,0 +1,181 @@
+name: v323-statecache
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - 'tools/v323_optimize_statecache.py'
+      - '.github/workflows/v323-statecache.yml'
+
+permissions:
+  contents: read
+
+env:
+  STATIC_FLAG: ''
+  ARCH_FLAGS: '-mavx2'
+
+jobs:
+  statecache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --disable-pip-version-check python-chess
+
+      - name: Prepare baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323state
+          python tools/v323_apply_fullacc.py fullacc31 --root engine/c/zchezz_v323state
+          python tools/v323_fix_fullacc_exact_delta.py --root engine/c/zchezz_v323state
+          python tools/v323_fix_fullacc_captured_king.py --root engine/c/zchezz_v323state
+          python tools/v323_optimize_sparseundo.py --root engine/c/zchezz_v323state
+          python tools/v323_optimize_statecache.py --root engine/c/zchezz_v323state
+          make -C engine/build ENGINE=v323base clean native
+          make -C engine/build ENGINE=v323state clean native
+          make -C engine/build TOOLS_ENGINE=v403 arena
+          mkdir -p artifacts/v323-statecache
+
+      - name: Invariants, perft and exact bench parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v323state test-c
+          printf 'position startpos\nperft 5\n' | engine/c/zchezz_v323state/zchezz.exe | tee artifacts/v323-statecache/perft.txt
+          grep -q 'Nodes searched: 4865609' artifacts/v323-statecache/perft.txt
+          engine/c/zchezz_v323base/zchezz.exe bench 11 > artifacts/v323-statecache/base_parity.txt
+          engine/c/zchezz_v323state/zchezz.exe bench 11 > artifacts/v323-statecache/state_parity.txt
+          python - <<'PY'
+          from pathlib import Path
+          d=Path('artifacts/v323-statecache')
+          def rows(p): return [x for x in p.read_text().splitlines() if x.startswith('Position ')]
+          a,b=rows(d/'base_parity.txt'),rows(d/'state_parity.txt')
+          assert len(a)==len(b)==20
+          if a!=b:
+              for i,(x,y) in enumerate(zip(a,b),1):
+                  if x!=y: print('MISMATCH',i,'\nBASE',x,'\nCAND',y)
+              raise SystemExit('tree parity failed')
+          print('TREE PARITY 20/20 OK')
+          PY
+
+      - name: Targeted parity battery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import chess,os,random,re,subprocess
+          base=os.path.abspath('engine/c/zchezz_v323base/zchezz.exe')
+          cand=os.path.abspath('engine/c/zchezz_v323state/zchezz.exe')
+          rng=random.Random(3231801)
+          fens=[
+            '8/8/8/4k3/8/4K3/4P3/8 w - - 0 1',
+            '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',
+            '8/8/3p4/2pPp3/4P3/8/4K3/6k1 w - c6 0 1',
+            '8/P7/8/8/8/5k2/7p/6K1 w - - 0 1',
+            'r3k2r/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/R3K2R w KQkq - 0 1',
+            '8/5pk1/6p1/8/7P/6P1/5PK1/8 w - - 0 1',
+          ]
+          for _ in range(58):
+              b=chess.Board()
+              for _ in range(rng.randint(8,65)):
+                  if b.is_game_over(claim_draw=True): break
+                  ms=list(b.legal_moves)
+                  special=[]
+                  for m in ms:
+                      pc=b.piece_at(m.from_square)
+                      if (pc and pc.piece_type in (chess.PAWN,chess.KING)) or b.is_capture(m) or m.promotion:
+                          special.append(m)
+                  b.push(rng.choice(special if special and rng.random()<.72 else ms))
+              if not b.is_game_over(claim_draw=True): fens.append(b.fen())
+          def run(exe,fen):
+              r=subprocess.run([exe],input=f'uci\nisready\nposition fen {fen}\ngo depth 7\n',text=True,capture_output=True,timeout=20)
+              if r.returncode: raise RuntimeError((exe,fen,r.stderr[-1000:]))
+              infos=[x for x in r.stdout.splitlines() if x.startswith('info depth ')]
+              bm=[x for x in r.stdout.splitlines() if x.startswith('bestmove ')]
+              line=infos[-1]; sm=re.search(r'\bscore (cp|mate) (-?\d+)',line)
+              return (int(re.search(r'\bdepth (\d+)',line).group(1)),
+                      int(re.search(r'\bnodes (\d+)',line).group(1)),
+                      (sm.group(1),int(sm.group(2))),bm[-1].split()[1])
+          bad=[]
+          for i,fen in enumerate(fens):
+              a,b=run(base,fen),run(cand,fen)
+              if a!=b: bad.append((i,fen,a,b))
+          if bad:
+              for x in bad[:10]: print('MISMATCH',x)
+              raise SystemExit(f'{len(bad)}/{len(fens)} targeted positions diverged')
+          print(f'TARGETED PARITY OK: {len(fens)} positions')
+          PY
+
+      - name: 17 paired NPS benches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 17); do
+            if (( i % 2 )); then
+              engine/c/zchezz_v323base/zchezz.exe bench 11 | tee -a artifacts/v323-statecache/base.txt
+              engine/c/zchezz_v323state/zchezz.exe bench 11 | tee -a artifacts/v323-statecache/state.txt
+            else
+              engine/c/zchezz_v323state/zchezz.exe bench 11 | tee -a artifacts/v323-statecache/state.txt
+              engine/c/zchezz_v323base/zchezz.exe bench 11 | tee -a artifacts/v323-statecache/base.txt
+            fi
+          done
+          python - <<'PY'
+          import json,re,statistics
+          from pathlib import Path
+          d=Path('artifacts/v323-statecache')
+          def g(name,pat): return [int(x) for x in re.findall(pat,(d/name).read_text())]
+          bn=g('base.txt',r'Total nodes\s*:\s*(\d+)'); cn=g('state.txt',r'Total nodes\s*:\s*(\d+)')
+          bp=g('base.txt',r'Nodes/sec\s*:\s*(\d+)'); cp=g('state.txt',r'Nodes/sec\s*:\s*(\d+)')
+          assert len(bn)==len(cn)==len(bp)==len(cp)==17 and bn==cn
+          ratios=[c/b for b,c in zip(bp,cp)]
+          out={'nodes':bn[0],'base_median':statistics.median(bp),'candidate_median':statistics.median(cp),
+               'median_paired_pct':(statistics.median(ratios)-1)*100,
+               'ratio_medians_pct':(statistics.median(cp)/statistics.median(bp)-1)*100,
+               'base':bp,'candidate':cp,'paired_pct':[(x-1)*100 for x in ratios]}
+          print('V323_STATECACHE_NPS='+json.dumps(out,separators=(',',':')))
+          (d/'summary.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+
+      - name: Generate paired openings
+        run: |
+          python - <<'PY'
+          import chess,random
+          from pathlib import Path
+          r=random.Random(3231801); rows=[]; seen=set()
+          while len(rows)<256:
+              b=chess.Board()
+              for _ in range(r.randint(8,22)):
+                  ms=list(b.legal_moves)
+                  if not ms: break
+                  q=[m for m in ms if not b.is_capture(m)]
+                  b.push(r.choice(q if q and r.random()<.72 else ms))
+                  if b.is_game_over(claim_draw=True): break
+              if not b.is_game_over(claim_draw=True):
+                  k=' '.join(b.fen().split()[:4])
+                  if k not in seen: seen.add(k); rows.append(k)
+          Path('v323-state.epd').write_text('\n'.join(rows)+'\n')
+          PY
+
+      - name: Timed 20ms screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/run_arena.py \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323state/zchezz.exe" \
+            --player "uci:$GITHUB_WORKSPACE/engine/c/zchezz_v323base/zchezz.exe" \
+            --games 512 --threads 4 --movetime 20 --max-plies 240 \
+            --openings v323-state.epd --opening-plies 0 --seed 3231801 --tt-mb 16 \
+            --json artifacts/v323-statecache/timed20ms.json --pgn artifacts/v323-statecache/timed20ms.pgn
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v323-statecache
+          path: artifacts/v323-statecache/
+          if-no-files-found: warn
