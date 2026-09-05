@@ -37,6 +37,23 @@ jobs:
             -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses \
             -o "$E/zchezz_verify.exe" \
             "$E/main.c" "$E/board.c" "$E/search.c" "$E/nnue.c" "$E/syzygy.c" "$E/book.c" -lm -pthread
+      - name: Reproduce en-passant and expose first mismatch
+        shell: bash
+        run: |
+          set -uo pipefail
+          rc=0
+          printf 'uci\nisready\nposition fen 8/8/3p4/2pPp3/4P3/8/4K3/4k3 w - c6 0 1\ngo depth 9\n' \
+            | engine/c/zchezz_v323verify/zchezz_verify.exe > verify.out 2> verify.err || rc=$?
+          echo "engine rc=$rc"
+          echo '--- verifier stderr ---'
+          cat verify.err
+          echo '--- verifier stdout tail ---'
+          tail -80 verify.out || true
+          if grep -q 'V323_FULLACC_MISMATCH' verify.err; then
+            exit 1
+          fi
+          test "$rc" -eq 0
+          grep -q '^bestmove ' verify.out
       - name: Reproduce en-passant search repeatedly
         shell: bash
         run: |
