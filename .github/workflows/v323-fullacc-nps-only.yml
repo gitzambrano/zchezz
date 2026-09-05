@@ -1,0 +1,72 @@
+name: v323-fullacc-nps-only
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths: ['.github/workflows/v323-fullacc-nps-only.yml']
+
+permissions:
+  contents: read
+
+env:
+  STATIC_FLAG: ''
+  ARCH_FLAGS: '-mavx2'
+
+jobs:
+  nps:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323cand
+          python tools/v323_apply_fullacc.py fullacc31 --root engine/c/zchezz_v323cand
+          python tools/v323_fix_fullacc_exact_delta.py --root engine/c/zchezz_v323cand
+          python tools/v323_fix_fullacc_captured_king.py --root engine/c/zchezz_v323cand
+          make -C engine/build ENGINE=v323base clean native
+          make -C engine/build ENGINE=v323cand clean native
+          mkdir -p artifacts/v323-nps
+      - name: 15 paired benches
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Alternate order on every pair to reduce thermal/frequency ordering bias.
+          for i in $(seq 1 15); do
+            if (( i % 2 )); then
+              engine/c/zchezz_v323base/zchezz.exe bench 11 | tee -a artifacts/v323-nps/base.txt
+              engine/c/zchezz_v323cand/zchezz.exe bench 11 | tee -a artifacts/v323-nps/cand.txt
+            else
+              engine/c/zchezz_v323cand/zchezz.exe bench 11 | tee -a artifacts/v323-nps/cand.txt
+              engine/c/zchezz_v323base/zchezz.exe bench 11 | tee -a artifacts/v323-nps/base.txt
+            fi
+          done
+          python - <<'PY'
+          import json,re,statistics
+          from pathlib import Path
+          d=Path('artifacts/v323-nps')
+          def get(name,pat): return [int(x) for x in re.findall(pat,(d/name).read_text())]
+          bn=get('base.txt',r'Total nodes\s*:\s*(\d+)'); cn=get('cand.txt',r'Total nodes\s*:\s*(\d+)')
+          bp=get('base.txt',r'Nodes/sec\s*:\s*(\d+)'); cp=get('cand.txt',r'Nodes/sec\s*:\s*(\d+)')
+          assert len(bn)==len(cn)==len(bp)==len(cp)==15
+          assert bn==cn
+          ratios=[c/b for b,c in zip(bp,cp)]
+          out={
+            'nodes':bn[0], 'base_nps':bp, 'candidate_nps':cp,
+            'base_median_nps':statistics.median(bp),
+            'candidate_median_nps':statistics.median(cp),
+            'median_of_paired_ratios_pct':(statistics.median(ratios)-1)*100,
+            'ratio_of_medians_pct':(statistics.median(cp)/statistics.median(bp)-1)*100,
+            'paired_ratios_pct':[(x-1)*100 for x in ratios],
+          }
+          print('V323_NPS_SUMMARY='+json.dumps(out,separators=(',',':')))
+          (d/'summary.json').write_text(json.dumps(out,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v323-fullacc-nps-only
+          path: artifacts/v323-nps/
