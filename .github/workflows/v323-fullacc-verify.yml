@@ -6,6 +6,7 @@ on:
     branches: [v323-fullacc-endgame-test]
     paths:
       - 'tools/v323_add_fullacc_verify.py'
+      - 'tools/v323_fix_fullacc_captured_king.py'
       - '.github/workflows/v323-fullacc-verify.yml'
 
 permissions:
@@ -26,6 +27,7 @@ jobs:
           cp -a engine/c/zchezz_v322 engine/c/zchezz_v323verify
           python tools/v323_apply_fullacc.py fullacc31 --root engine/c/zchezz_v323verify
           python tools/v323_fix_fullacc_exact_delta.py --root engine/c/zchezz_v323verify
+          python tools/v323_fix_fullacc_captured_king.py --root engine/c/zchezz_v323verify
           python tools/v323_add_fullacc_verify.py --root engine/c/zchezz_v323verify
       - name: Build verifier
         shell: bash
