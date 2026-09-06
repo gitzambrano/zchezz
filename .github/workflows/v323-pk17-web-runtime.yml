@@ -1,0 +1,41 @@
+name: v323-pk17-web-runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_mt_hardening.py
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - .github/workflows/v323-pk17-web-runtime.yml
+
+jobs:
+  browser-runtime:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Install browser test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check pytest playwright
+          python -m playwright install --with-deps chromium
+      - name: Generate fixed PK17 source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323runtime
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323runtime
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323runtime
+      - name: Run canonical web profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/run_tests.py web --version v323runtime --baseline v322
