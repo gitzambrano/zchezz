@@ -1,0 +1,293 @@
+name: main-stockfish-rating-200ms
+
+on:
+  push:
+    branches: [bench/main-v323-stockfish-rating-200ms-20260906]
+
+permissions:
+  contents: read
+
+jobs:
+  match323:
+    name: v323 vs SF ${{ matrix.elo }} shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        elo: [2700, 2750, 2800, 2850]
+        shard: [0, 1, 2, 3, 4]
+    env:
+      OPP_ELO: ${{ matrix.elo }}
+      SHARD: ${{ matrix.shard }}
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify source and build v323 without tablebases
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(tr -d '\r\n' < engine/ACTIVE_ENGINE)" = v323
+          git diff --exit-code b6e197f6fb251b08a57fa838502befe7f23bfa8d HEAD -- engine/
+          python -m pip install --disable-pip-version-check python-chess
+          sudo apt-get update -qq
+          sudo apt-get install -y stockfish
+          make -C engine/build ENGINE=v323 clean
+          make -C engine/build ENGINE=v323 build-info | tee /tmp/buildinfo.txt
+          grep -q 'Tablebases: disabled' /tmp/buildinfo.txt
+          make -C engine/build ENGINE=v323 native CC=gcc
+          printf 'uci\nisready\nquit\n' | engine/c/zchezz_v323/zchezz.exe --nnue engine/c/zchezz_v323/nnue_weights.bin | tee /tmp/zuci.txt
+          grep -q 'id name Zchezz 3.23' /tmp/zuci.txt
+          grep -q readyok /tmp/zuci.txt
+      - name: Run 20 games at movetime 200ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          SF="$(command -v stockfish || true)"; if [ -z "$SF" ]; then SF=/usr/games/stockfish; fi
+          export STOCKFISH="$SF"
+          python - <<'PY'
+          import json, os, random
+          import chess, chess.engine
+          elo=int(os.environ['OPP_ELO']); shard=int(os.environ['SHARD'])
+          sf_path=os.environ['STOCKFISH']
+          z_path='engine/c/zchezz_v323/zchezz.exe'; weights='engine/c/zchezz_v323/nnue_weights.bin'
+          move_time=0.200; max_plies=200
+          opening_ids=list(range(shard*10, shard*10+10))
+          def cfg(e,o):
+              u={k:v for k,v in o.items() if k in e.options}
+              if u: e.configure(u)
+          gen=chess.engine.SimpleEngine.popen_uci(sf_path,timeout=10)
+          openings=[]
+          try:
+              cfg(gen,{'Threads':1,'Hash':64,'UCI_LimitStrength':False,'SyzygyPath':''})
+              for oid in opening_ids:
+                  rng=random.Random(3230906+oid); b=chess.Board(); moves=[]
+                  for _ in range(8):
+                      infos=gen.analyse(b,chess.engine.Limit(depth=5),multipv=4)
+                      if not isinstance(infos,list): infos=[infos]
+                      c=[]
+                      for info in infos[:4]:
+                          pv=info.get('pv') or []
+                          if pv and pv[0] in b.legal_moves: c.append(pv[0])
+                      if not c: raise RuntimeError('No opening candidate')
+                      mv=rng.choices(c,weights=[8,4,2,1][:len(c)],k=1)[0]
+                      moves.append(mv.uci()); b.push(mv)
+                  openings.append((oid,moves))
+          finally: gen.quit()
+          z=chess.engine.SimpleEngine.popen_uci([z_path,'--nnue',weights],timeout=10)
+          sf=chess.engine.SimpleEngine.popen_uci(sf_path,timeout=10)
+          try:
+              cfg(z,{'Threads':1,'Hash':64,'OwnBook':False,'SyzygyPath':''})
+              cfg(sf,{'Threads':1,'Hash':64,'UCI_LimitStrength':True,'UCI_Elo':elo,'SyzygyPath':''})
+              print('STOCKFISH_ID',json.dumps(sf.id,sort_keys=True))
+              rows=[]
+              for oid,opening in openings:
+                  for zwhite in (True,False):
+                      b=chess.Board()
+                      for u in opening: b.push_uci(u)
+                      start=b.ply()
+                      while b.outcome(claim_draw=True) is None and b.ply()-start<max_plies:
+                          zturn=(b.turn==chess.WHITE)==zwhite
+                          r=(z if zturn else sf).play(b,chess.engine.Limit(time=move_time))
+                          if r.move is None or r.move not in b.legal_moves: raise RuntimeError('illegal/null move')
+                          b.push(r.move)
+                      out=b.outcome(claim_draw=True)
+                      res='1/2-1/2' if out is None else out.result()
+                      if res=='1/2-1/2': score=.5
+                      elif (res=='1-0' and zwhite) or (res=='0-1' and not zwhite): score=1.0
+                      else: score=0.0
+                      rows.append({'opening':oid,'z_white':zwhite,'result':res,'zscore':score,'plies_after_opening':b.ply()-start})
+                      print('GAME',len(rows),oid,zwhite,res,score,flush=True)
+              w=sum(x['zscore']==1 for x in rows); d=sum(x['zscore']==.5 for x in rows); l=sum(x['zscore']==0 for x in rows)
+              out={'engine':'v323','opponent_elo':elo,'shard':shard,'games':len(rows),'wins':w,'draws':d,'losses':l,'points':w+.5*d,'score':(w+.5*d)/len(rows),'move_time_ms':200,'threads_each':1,'hash_mb_each':64,'tablebases_both_sides':False,'games_detail':rows}
+              with open(f'm323-{elo}-{shard}.json','w') as f: json.dump(out,f,indent=2)
+              print('SUMMARY',json.dumps({k:v for k,v in out.items() if k!='games_detail'},sort_keys=True))
+          finally: z.quit(); sf.quit()
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m323-${{ matrix.elo }}-${{ matrix.shard }}
+          path: m323-${{ matrix.elo }}-${{ matrix.shard }}.json
+
+  match314:
+    name: v314 vs SF 2750 shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        shard: [0, 1, 2, 3, 4]
+    env:
+      SHARD: ${{ matrix.shard }}
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build v314 without tablebases
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code b6e197f6fb251b08a57fa838502befe7f23bfa8d HEAD -- engine/
+          python -m pip install --disable-pip-version-check python-chess
+          sudo apt-get update -qq
+          sudo apt-get install -y stockfish
+          make -C engine/build ENGINE=v314 clean
+          make -C engine/build ENGINE=v314 build-info | tee /tmp/buildinfo.txt
+          grep -q 'Tablebases: disabled' /tmp/buildinfo.txt
+          make -C engine/build ENGINE=v314 native CC=gcc
+          printf 'uci\nisready\nquit\n' | engine/c/zchezz_v314/zchezz.exe --nnue engine/c/zchezz_v314/nnue_weights.bin | tee /tmp/zuci.txt
+          grep -q 'id name Zchezz 3.14' /tmp/zuci.txt
+          grep -q readyok /tmp/zuci.txt
+      - name: Run 20 games against SF2750 at movetime 200ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          SF="$(command -v stockfish || true)"; if [ -z "$SF" ]; then SF=/usr/games/stockfish; fi
+          export STOCKFISH="$SF"
+          python - <<'PY'
+          import json, os, random
+          import chess, chess.engine
+          elo=2750; shard=int(os.environ['SHARD']); sf_path=os.environ['STOCKFISH']
+          z_path='engine/c/zchezz_v314/zchezz.exe'; weights='engine/c/zchezz_v314/nnue_weights.bin'
+          move_time=.200; max_plies=200; opening_ids=list(range(shard*10,shard*10+10))
+          def cfg(e,o):
+              u={k:v for k,v in o.items() if k in e.options}
+              if u: e.configure(u)
+          gen=chess.engine.SimpleEngine.popen_uci(sf_path,timeout=10); openings=[]
+          try:
+              cfg(gen,{'Threads':1,'Hash':64,'UCI_LimitStrength':False,'SyzygyPath':''})
+              for oid in opening_ids:
+                  rng=random.Random(3230906+oid); b=chess.Board(); moves=[]
+                  for _ in range(8):
+                      infos=gen.analyse(b,chess.engine.Limit(depth=5),multipv=4)
+                      if not isinstance(infos,list): infos=[infos]
+                      c=[]
+                      for info in infos[:4]:
+                          pv=info.get('pv') or []
+                          if pv and pv[0] in b.legal_moves: c.append(pv[0])
+                      if not c: raise RuntimeError('No opening candidate')
+                      mv=rng.choices(c,weights=[8,4,2,1][:len(c)],k=1)[0]
+                      moves.append(mv.uci()); b.push(mv)
+                  openings.append((oid,moves))
+          finally: gen.quit()
+          z=chess.engine.SimpleEngine.popen_uci([z_path,'--nnue',weights],timeout=10); sf=chess.engine.SimpleEngine.popen_uci(sf_path,timeout=10)
+          try:
+              cfg(z,{'Threads':1,'Hash':64,'OwnBook':False,'SyzygyPath':''})
+              cfg(sf,{'Threads':1,'Hash':64,'UCI_LimitStrength':True,'UCI_Elo':elo,'SyzygyPath':''})
+              rows=[]
+              for oid,opening in openings:
+                  for zwhite in (True,False):
+                      b=chess.Board()
+                      for u in opening: b.push_uci(u)
+                      start=b.ply()
+                      while b.outcome(claim_draw=True) is None and b.ply()-start<max_plies:
+                          zturn=(b.turn==chess.WHITE)==zwhite
+                          r=(z if zturn else sf).play(b,chess.engine.Limit(time=move_time))
+                          if r.move is None or r.move not in b.legal_moves: raise RuntimeError('illegal/null move')
+                          b.push(r.move)
+                      out=b.outcome(claim_draw=True); res='1/2-1/2' if out is None else out.result()
+                      score=.5 if res=='1/2-1/2' else (1.0 if ((res=='1-0' and zwhite) or (res=='0-1' and not zwhite)) else 0.0)
+                      rows.append({'opening':oid,'z_white':zwhite,'result':res,'zscore':score,'plies_after_opening':b.ply()-start})
+                      print('GAME',len(rows),oid,zwhite,res,score,flush=True)
+              w=sum(x['zscore']==1 for x in rows); d=sum(x['zscore']==.5 for x in rows); l=sum(x['zscore']==0 for x in rows)
+              out={'engine':'v314','opponent_elo':elo,'shard':shard,'games':len(rows),'wins':w,'draws':d,'losses':l,'points':w+.5*d,'score':(w+.5*d)/len(rows),'move_time_ms':200,'threads_each':1,'hash_mb_each':64,'tablebases_both_sides':False,'games_detail':rows}
+              with open(f'm314-2750-{shard}.json','w') as f: json.dump(out,f,indent=2)
+              print('SUMMARY',json.dumps({k:v for k,v in out.items() if k!='games_detail'},sort_keys=True))
+          finally: z.quit(); sf.quit()
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m314-2750-${{ matrix.shard }}
+          path: m314-2750-${{ matrix.shard }}.json
+
+  aggregate:
+    name: Aggregate 200ms results
+    needs: [match323, match314]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: m*
+          merge-multiple: true
+      - name: Estimate v323 Elo and compare v314 at SF2750
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob,json,math,random
+          def load(p):
+              a=[]
+              for fn in sorted(glob.glob(p)):
+                  with open(fn) as f: a.append(json.load(f))
+              return a
+          r323=load('m323-*.json'); r314=load('m314-*.json')
+          if len(r323)!=20 or len(r314)!=5: raise RuntimeError((len(r323),len(r314)))
+          def group(rows):
+              g={}
+              for x in rows:
+                  y=g.setdefault(x['opponent_elo'],{'opponent_elo':x['opponent_elo'],'games':0,'wins':0,'draws':0,'losses':0,'points':0.0,'detail':[]})
+                  for k in ('games','wins','draws','losses'): y[k]+=x[k]
+                  y['points']+=x['points']; y['detail']+=x['games_detail']
+              for y in g.values(): y['score']=y['points']/y['games']
+              return g
+          g323=group(r323); g314=group(r314)
+          q=math.log(10)/400
+          def p(r,o): return 1/(1+10**((o-r)/400))
+          def mle(groups):
+              rows=list(groups.values()); r=sum(x['opponent_elo'] for x in rows)/len(rows)
+              for _ in range(100):
+                  grad=info=0.0
+                  for x in rows:
+                      pp=p(r,x['opponent_elo']); grad+=q*(x['points']-x['games']*pp); info+=q*q*x['games']*pp*(1-pp)
+                  st=grad/info; r+=st
+                  if abs(st)<1e-10: break
+              return r
+          rating323=mle(g323)
+          per=[]
+          for elo in sorted(g323):
+              x=g323[elo]; s=x['score']; implied=elo+400*math.log10(s/(1-s)) if 0<s<1 else None
+              per.append({'opponent_elo':elo,'games':x['games'],'wins':x['wins'],'draws':x['draws'],'losses':x['losses'],'score':s,'implied_elo':implied})
+          x314=g314[2750]; s314=x314['score']; elo314=2750+400*math.log10(s314/(1-s314)) if 0<s314<1 else None
+          x323=g323[2750]; s323=x323['score']; elo323_2750=2750+400*math.log10(s323/(1-s323)) if 0<s323<1 else None
+          # Paired opening bootstrap for v323 rating and v323-v314 difference at SF2750.
+          rng=random.Random(323200); br=[]; bd=[]
+          pairs323={e:{} for e in g323}
+          for e,x in g323.items():
+              for d in x['detail']: pairs323[e].setdefault(d['opening'],[]).append(d['zscore'])
+          pairs314={}
+          for d in x314['detail']: pairs314.setdefault(d['opening'],[]).append(d['zscore'])
+          for _ in range(20000):
+              bg={}
+              for e in sorted(g323):
+                  ids=sorted(pairs323[e]); chosen=[rng.choice(ids) for __ in ids]
+                  pts=sum(sum(pairs323[e][i]) for i in chosen)
+                  bg[e]={'opponent_elo':e,'games':100,'points':pts}
+              br.append(mle(bg))
+              ids=sorted(pairs323[2750]); chosen=[rng.choice(ids) for __ in ids]
+              p323=sum(sum(pairs323[2750][i]) for i in chosen)/100
+              p314=sum(sum(pairs314[i]) for i in chosen)/100
+              if 0<p323<1 and 0<p314<1:
+                  e323=2750+400*math.log10(p323/(1-p323)); e314=2750+400*math.log10(p314/(1-p314)); bd.append(e323-e314)
+          br.sort(); bd.sort()
+          ci323=[br[int(.025*len(br))],br[int(.975*len(br))]]
+          cid=[bd[int(.025*len(bd))],bd[int(.975*len(bd))]]
+          out={'main_sha':'b6e197f6fb251b08a57fa838502befe7f23bfa8d','protocol':{'movetime_ms':200,'threads_each':1,'hash_mb_each':64,'tablebases_both_sides':False,'paired_colors':True},'v323':{'rating_mle':rating323,'paired_bootstrap_95_ci':ci323,'matches':per},'sf2750_comparison':{'v323':{'wins':x323['wins'],'draws':x323['draws'],'losses':x323['losses'],'score':s323,'implied_elo':elo323_2750},'v314':{'wins':x314['wins'],'draws':x314['draws'],'losses':x314['losses'],'score':s314,'implied_elo':elo314},'delta_implied_elo_v323_minus_v314':elo323_2750-elo314,'paired_bootstrap_delta_elo_95_ci':cid}}
+          with open('rating-200ms-result.json','w') as f: json.dump(out,f,indent=2)
+          print('FINAL_RESULT'); print(json.dumps(out,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rating-200ms-result
+          path: rating-200ms-result.json
