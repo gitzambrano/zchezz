@@ -1,0 +1,44 @@
+name: v323-pk17-functional-full
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_mt_hardening.py
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - .github/workflows/v323-pk17-functional-full.yml
+
+jobs:
+  functional:
+    runs-on: ubuntu-24.04
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check pytest python-chess
+      - name: Generate fixed PK17 and build
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf engine/c/zchezz_v323
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323
+          make -C engine/build ENGINE=v323 clean native
+      - name: NNUE artifact and C invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/check_nnue.py --version v323
+          make -C engine/build ENGINE=v323 test-c
+      - name: Full perft suite
+        run: python tests/test_perft.py --version v323
+      - name: Full UCI extended suite
+        run: python tests/test_uci_extended.py --version v323
