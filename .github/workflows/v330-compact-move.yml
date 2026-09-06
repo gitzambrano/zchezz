@@ -1,0 +1,99 @@
+name: v3.30 compact Move
+
+on:
+  push:
+    branches: [exp/v330-compact-move]
+  workflow_dispatch:
+
+jobs:
+  ab:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {label: nodes512, games: 500, movetime: 0, nodes: 512, seed: 3300512}
+          - {label: 50ms, games: 300, movetime: 50, nodes: 0, seed: 3300050}
+          - {label: 200ms, games: 160, movetime: 200, nodes: 0, seed: 3300200}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Verify common baseline
+        run: git diff --exit-code 1a1df3ebcc207a888c4355d512d582db73b3f24d HEAD -- engine/
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[all]"
+      - name: Build untouched v3.23 baseline
+        run: |
+          make -C engine/build ENGINE=v323 clean native CC=gcc ARCH_FLAGS="-mavx2" STATIC_FLAG=""
+          cp engine/c/zchezz_v323/zchezz.exe /tmp/base.exe
+      - name: Materialize v3.30 compact-Move candidate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          main=Path('engine/c/zchezz_v323/main.c'); s=main.read_text(encoding='utf-8')
+          old='#define ENGINE_VERSION "3.23"'; assert s.count(old)==1
+          main.write_text(s.replace(old,'#define ENGINE_VERSION "3.30"',1),encoding='utf-8')
+
+          p=Path('engine/c/zchezz_v323/board.h'); s=p.read_text(encoding='utf-8')
+          old='''typedef struct {
+    uint8_t  from;
+    uint8_t  to;
+    uint8_t  prom;
+    uint8_t  epc;
+    uint8_t  castle;
+    int32_t  score;
+} Move;'''
+          new='''/* v3.30 experiment: compact move identity into one 32-bit bitfield word.
+ * score remains int32 because ordering scores exceed int16 range.
+ * sizeof(Move): 12 -> 8 bytes on GCC/Clang. */
+typedef struct {
+    uint32_t from     : 6;
+    uint32_t to       : 6;
+    uint32_t prom     : 3;
+    uint32_t epc      : 1;
+    uint32_t castle   : 3;
+    uint32_t reserved : 13;
+    int32_t  score;
+} Move;
+_Static_assert(sizeof(Move) == 8, "v3.30 compact Move must be 8 bytes");'''
+          assert s.count(old)==1, s.count(old)
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
+          git diff --check
+          make -C engine/build ENGINE=v323 clean native CC=gcc ARCH_FLAGS="-mavx2" STATIC_FLAG=""
+          cp engine/c/zchezz_v323/zchezz.exe /tmp/cand.exe
+          printf 'uci\nquit\n' | /tmp/cand.exe | grep -F 'id name Zchezz 3.30'
+          python tests/test_perft.py --version v323 --max-depth 4
+      - name: Generate common deterministic openings
+        env: {OPENING_SEED: '${{ matrix.seed }}'}
+        run: |
+          mkdir -p tests/arena_results
+          python - <<'PY'
+          import os,random,chess
+          from pathlib import Path
+          r=random.Random(int(os.environ['OPENING_SEED'])); out=[]; seen=set()
+          while len(out)<256:
+              b=chess.Board(); ok=True
+              for _ in range(r.randint(8,22)):
+                  ms=list(b.legal_moves)
+                  if not ms: ok=False; break
+                  qs=[m for m in ms if not b.is_capture(m)]
+                  b.push(r.choice(qs if qs and r.random()<.72 else ms))
+                  if b.is_game_over(claim_draw=True): ok=False; break
+              if not ok: continue
+              k=' '.join(b.fen().split()[:4])
+              if k not in seen: seen.add(k); out.append(k)
+          Path('tests/arena_results/openings.epd').write_text('\n'.join(out)+'\n')
+          PY
+      - name: A/B ${{ matrix.label }}
+        run: |
+          python tests/run_arena.py --player uci:/tmp/cand.exe --player uci:/tmp/base.exe \
+            --games ${{ matrix.games }} --movetime ${{ matrix.movetime }} --nodes ${{ matrix.nodes }} \
+            --threads 2 --max-plies 300 --openings "$GITHUB_WORKSPACE/tests/arena_results/openings.epd" \
+            --opening-plies 0 --seed ${{ matrix.seed }} --tt-mb 8 \
+            --json "tests/arena_results/${{ matrix.label }}.json" --pgn "tests/arena_results/${{ matrix.label }}.pgn"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v330-compact-move-${{ matrix.label }}
+          path: tests/arena_results/
