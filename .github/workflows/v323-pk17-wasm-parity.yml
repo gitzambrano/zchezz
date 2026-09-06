@@ -1,0 +1,114 @@
+name: v323-pk17-wasm-parity
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_mt_hardening.py
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - .github/workflows/v323-pk17-wasm-parity.yml
+
+jobs:
+  wasm-parity:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Install parity dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check python-chess playwright
+          python -m playwright install --with-deps chromium
+      - name: Build v3.22 and fixed PK17 browser bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf engine/c/zchezz_v323
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323
+          make -C engine/build ENGINE=v322 clean bundle
+          make -C engine/build ENGINE=v323 clean bundle
+      - name: Compare WASM SIMD search on 64 fixed positions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import functools, http.server, random, socketserver, threading, time
+          from pathlib import Path
+          import chess
+          from playwright.sync_api import sync_playwright
+
+          ROOT=Path.cwd()
+          class S(socketserver.TCPServer): allow_reuse_address=True
+          def serve(path,port):
+              h=functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(path))
+              s=S(('127.0.0.1',port),h); threading.Thread(target=s.serve_forever,daemon=True).start(); return s
+
+          rng=random.Random(3236407)
+          fens=[
+            chess.STARTING_FEN,
+            '8/5pk1/6p1/8/7P/6P1/5PK1/8 w - - 0 1',
+            '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',
+            '8/8/3p4/2pPp3/4P3/8/4K3/6k1 w - c6 0 1',
+            'r3k2r/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/R3K2R w KQkq - 0 1',
+            '7k/P7/8/8/8/8/6p1/K7 w - - 0 1',
+          ]
+          seen={' '.join(x.split()[:4]) for x in fens}
+          while len(fens)<64:
+              b=chess.Board()
+              for _ in range(rng.randint(6,76)):
+                  if b.is_game_over(claim_draw=True): break
+                  ms=list(b.legal_moves)
+                  special=[]
+                  for m in ms:
+                      pc=b.piece_at(m.from_square)
+                      if b.is_capture(m) or m.promotion or b.is_castling(m) or (pc and pc.piece_type in (chess.PAWN,chess.KING)):
+                          special.append(m)
+                  b.push(rng.choice(special if special and rng.random()<.75 else ms))
+              if b.is_game_over(claim_draw=True): continue
+              fen=b.fen(); key=' '.join(fen.split()[:4])
+              if key not in seen: seen.add(key); fens.append(fen)
+
+          s1=serve(ROOT/'engine/c/zchezz_v322',8872)
+          s2=serve(ROOT/'engine/c/zchezz_v323',8873)
+          try:
+            with sync_playwright() as pw:
+              br=pw.chromium.launch(headless=True)
+              p1=br.new_page(); p2=br.new_page()
+              p1.goto('http://127.0.0.1:8872/zchezz_bundle.html',wait_until='load')
+              p2.goto('http://127.0.0.1:8873/zchezz_bundle.html',wait_until='load')
+              p1.wait_for_function('() => !!window.zchezzSearch',timeout=30000)
+              p2.wait_for_function('() => !!window.zchezzSearch',timeout=30000)
+
+              def go(page,fen,i):
+                  return page.evaluate("""async ({fen,id}) => await new Promise((resolve,reject) => {
+                    const timer=setTimeout(()=>reject(new Error('search timeout')),30000);
+                    window.zchezzSearch({fen,moves:'',depth:7,id,timeLimitMs:0,multiPv:1,startDepth:0}, r => {
+                      clearTimeout(timer); resolve(r);
+                    });
+                  })""", {'fen':fen,'id':1000+i})
+
+              bad=[]
+              for i,fen in enumerate(fens):
+                  a=go(p1,fen,i); c=go(p2,fen,i)
+                  def canon(x):
+                      return (x.get('uci'),x.get('score'),x.get('pv'),x.get('pvLines'))
+                  if canon(a)!=canon(c): bad.append((i,fen,a,c))
+                  if (i+1)%16==0: print(f'WASM parity {i+1}/{len(fens)}')
+              br.close()
+              if bad:
+                  for x in bad[:8]: print('WASM_DIVERGENCE',*x,sep='\n')
+                  raise SystemExit(f'{len(bad)}/{len(fens)} WASM positions diverged')
+              print(f'WASM_SEARCH_PARITY_OK {len(fens)}/{len(fens)} depth=7')
+          finally:
+            s1.shutdown(); s2.shutdown(); s1.server_close(); s2.server_close()
+          PY
