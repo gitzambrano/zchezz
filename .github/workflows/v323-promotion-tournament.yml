@@ -1,0 +1,105 @@
+name: v323-promotion-tournament
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - .github/workflows/v323-promotion-tournament.yml
+
+jobs:
+  h2h:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: timed20
+            openings: 1024
+            movetime: 20
+            seed: 32323020
+          - label: timed100
+            openings: 512
+            movetime: 100
+            seed: 32323100
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check python-chess numpy
+      - name: Materialize and build v3.23 plus v3.22
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf engine/c/zchezz_v323
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+          make -C engine/build ENGINE=v322 clean native
+          make -C engine/build ENGINE=v323 clean native
+          printf 'uci\nisready\nquit\n' | engine/c/zchezz_v322/zchezz.exe --nnue engine/c/zchezz_v322/nnue_weights.bin | grep -q readyok
+          printf 'uci\nisready\nquit\n' | engine/c/zchezz_v323/zchezz.exe --nnue engine/c/zchezz_v323/nnue_weights.bin | grep -q readyok
+      - name: Generate deterministic opening set
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p v323_gate_openings artifacts/v323-tournament/${{ matrix.label }}
+          python - <<'PY'
+          import chess, random
+          rnd=random.Random(323322)
+          out=[]; seen=set()
+          while len(out)<1024:
+              b=chess.Board()
+              target=rnd.randint(6,14)
+              for _ in range(target):
+                  if b.is_game_over(): break
+                  moves=list(b.legal_moves)
+                  central=[m for m in moves if 2<=chess.square_file(m.to_square)<=5 and 2<=chess.square_rank(m.to_square)<=5]
+                  pool=central if central and rnd.random()<0.70 else moves
+                  b.push(rnd.choice(pool))
+              if b.is_game_over(): continue
+              fen=' '.join(b.fen().split()[:4])+' 0 1'
+              if fen not in seen:
+                  seen.add(fen); out.append(fen)
+          open('v323_gate_openings/gate.epd','w',encoding='utf-8').write('\n'.join(out)+'\n')
+          print('OPENINGS',len(out))
+          PY
+      - name: Run ${{ matrix.label }} H2H
+        shell: bash
+        env:
+          PYTHONHASHSEED: ${{ matrix.seed }}
+        run: |
+          set -euo pipefail
+          python tests/run_tournament_quick.py \
+            --engine-a engine/c/zchezz_v323/zchezz.exe \
+            --label-a v323-PK17 \
+            --engine-b engine/c/zchezz_v322/zchezz.exe \
+            --label-b v322 \
+            --movetime ${{ matrix.movetime }} \
+            --games ${{ matrix.openings }} \
+            --threads 1 \
+            --concurrency 14 \
+            --max-plies 180 \
+            --move-timeout 30 \
+            --openings v323_gate_openings \
+            --opening-file gate.epd \
+            --color-swap true \
+            --pgn true \
+            --epd false \
+            --bin false \
+            --results-dir artifacts/v323-tournament/${{ matrix.label }} \
+            --counter-every 100 \
+            --report-loops 100000 \
+            --perf true \
+            2>&1 | tee artifacts/v323-tournament/${{ matrix.label }}/console.log
+      - name: Upload tournament evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v323-tournament-${{ matrix.label }}
+          path: artifacts/v323-tournament/${{ matrix.label }}/
+          if-no-files-found: error
