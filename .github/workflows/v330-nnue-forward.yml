@@ -1,12 +1,9 @@
 name: v3.30 NNUE accumulator hot path
-
 on:
   push:
     branches: [exp/v330-nnue-forward]
   workflow_dispatch:
-
 permissions: {contents: read}
-
 jobs:
   ab:
     strategy:
@@ -20,6 +17,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - name: Verify common engine baseline
