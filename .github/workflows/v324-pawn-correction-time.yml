@@ -1,9 +1,9 @@
-name: v3.24 Pawn Correction Wall Clock
+name: v3.24 Pawn Correction 100/200ms Confirmation
 
 on:
   workflow_dispatch:
   push:
-    branches: [exp/v324-pawn-correction-time]
+    branches: [exp/v324-pawncorr-200ms-confirm]
 
 permissions:
   contents: read
@@ -14,20 +14,20 @@ env:
 jobs:
   wall-clock-ab:
     runs-on: ubuntu-24.04
-    timeout-minutes: 65
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 2
       matrix:
         include:
-          - tag: 20ms
-            games: 1024
-            movetime: 20
-            seed: 3242420
-          - tag: 100ms
-            games: 512
+          - tag: 100ms-confirm
+            games: 800
             movetime: 100
-            seed: 32424100
+            seed: 32425100
+          - tag: 200ms
+            games: 800
+            movetime: 200
+            seed: 32425200
 
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +64,7 @@ jobs:
           python tests/test_perft.py --version v323 --max-depth 4
           python tests/test_uci_extended.py --version v323 --only T1 --only T2 --only T6 --only T9
 
-      - name: Generate deterministic opening pool
+      - name: Generate independent deterministic opening pool
         shell: bash
         run: |
           set -euo pipefail
@@ -72,9 +72,9 @@ jobs:
           python - <<'PY'
           import random, chess
           from pathlib import Path
-          rng = random.Random(3242401)
+          rng = random.Random(3242501)
           rows=[]; seen=set()
-          while len(rows) < 256:
+          while len(rows) < 384:
               b=chess.Board(); ok=True
               for _ in range(rng.randint(8,22)):
                   moves=list(b.legal_moves)
@@ -89,7 +89,7 @@ jobs:
               key=' '.join(b.fen().split()[:4])
               if key not in seen:
                   seen.add(key); rows.append(key)
-          Path('tests/arena_results/pawncorr_time_openings.epd').write_text('\n'.join(rows)+'\n')
+          Path('tests/arena_results/pawncorr_confirm_openings.epd').write_text('\n'.join(rows)+'\n')
           print('openings', len(rows))
           PY
 
@@ -102,7 +102,7 @@ jobs:
             --player uci:/tmp/zchezz-v323-base.exe \
             --games ${{ matrix.games }} --movetime ${{ matrix.movetime }} --nodes 0 \
             --threads 2 --max-plies 300 \
-            --openings "$GITHUB_WORKSPACE/tests/arena_results/pawncorr_time_openings.epd" \
+            --openings "$GITHUB_WORKSPACE/tests/arena_results/pawncorr_confirm_openings.epd" \
             --opening-plies 0 --seed ${{ matrix.seed }} --tt-mb 8 \
             --json "tests/arena_results/pawncorr-${{ matrix.tag }}.json" \
             --pgn "tests/arena_results/pawncorr-${{ matrix.tag }}.pgn"
@@ -113,7 +113,7 @@ jobs:
         with:
           name: v324-pawn-correction-${{ matrix.tag }}
           path: |
-            tests/arena_results/pawncorr_time_openings.epd
+            tests/arena_results/pawncorr_confirm_openings.epd
             tests/arena_results/pawncorr-${{ matrix.tag }}.json
             tests/arena_results/pawncorr-${{ matrix.tag }}.pgn
           if-no-files-found: warn
