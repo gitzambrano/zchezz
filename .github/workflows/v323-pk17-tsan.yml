@@ -1,0 +1,47 @@
+name: v323-pk17-tsan
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - engine/c/tests/test_v323_pk17_mt.c
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - tools/v323_pk17_verify_patch.py
+      - .github/workflows/v323-pk17-tsan.yml
+
+jobs:
+  tsan-pk17:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate verified PK17 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323tsan
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323tsan
+          python tools/v323_pk17_verify_patch.py --root engine/c/zchezz_v323tsan
+      - name: Build with GCC ThreadSanitizer
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -O1 -g -fno-omit-frame-pointer -fsanitize=thread \
+            -D_GNU_SOURCE -std=c11 -DPK17_VERIFY \
+            -Iengine/c/zchezz_v323tsan \
+            -o pk17_mt_tsan \
+            engine/c/tests/test_v323_pk17_mt.c \
+            engine/c/zchezz_v323tsan/board.c \
+            engine/c/zchezz_v323tsan/nnue.c \
+            -lm -pthread -fsanitize=thread
+      - name: Run race detector
+        shell: bash
+        env:
+          TSAN_OPTIONS: halt_on_error=1:history_size=7:second_deadlock_stack=1
+        run: |
+          set -euo pipefail
+          ./pk17_mt_tsan engine/c/zchezz_v323tsan/nnue_weights.bin
