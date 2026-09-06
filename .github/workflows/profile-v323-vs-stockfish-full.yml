@@ -1,0 +1,136 @@
+name: Profile v323 vs Stockfish full
+on:
+  push:
+    branches:
+      - bench/v323-vs-stockfish-full-profile-20260906-v4
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify engine is exact main
+        run: |
+          test "$(tr -d '\r\n' < engine/ACTIVE_ENGINE)" = v323
+          git diff --exit-code b6e197f6fb251b08a57fa838502befe7f23bfa8d HEAD -- engine/
+      - name: Install Stockfish 16
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y stockfish
+          /usr/games/stockfish bench 1 1 1 default depth 2>&1 | head -20 || true
+      - name: Build Zchezz v323 no tablebases
+        run: |
+          make -C engine/build ENGINE=v323 clean native CC=gcc
+          test -x engine/c/zchezz_v323/zchezz.exe
+          strings engine/c/zchezz_v323/zchezz.exe | grep -q 'Zchezz'
+      - name: Run apples-to-apples profile
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import subprocess,re,time,json,statistics,math,os
+          MAIN='b6e197f6fb251b08a57fa838502befe7f23bfa8d'
+          Z='./engine/c/zchezz_v323/zchezz.exe'
+          SF='/usr/games/stockfish'
+          NN='engine/c/zchezz_v323/nnue_weights.bin'
+          txt=open('engine/c/zchezz_v323/main.c',encoding='utf-8').read()
+          block=txt.split('static const char *BENCH_FENS[] = {',1)[1].split('NULL',1)[0]
+          fens=re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',block)
+          fens=[bytes(x,'utf-8').decode('unicode_escape') for x in fens][:20]
+          assert len(fens)==20
+
+          class Engine:
+              def __init__(self,name,cmd,opts):
+                  self.name=name
+                  self.p=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
+                  self.send('uci'); lines=self.until('uciok'); self.id=[x for x in lines if x.startswith('id name ')]
+                  for k,v in opts:
+                      self.send(f'setoption name {k} value {v}')
+                  self.send('isready'); self.until('readyok')
+              def send(self,s): self.p.stdin.write(s+'\n'); self.p.stdin.flush()
+              def until(self,prefix):
+                  out=[]
+                  while True:
+                      line=self.p.stdout.readline()
+                      if line=='': raise RuntimeError(f'{self.name} exited')
+                      line=line.strip(); out.append(line)
+                      if line.startswith(prefix): return out
+              def run(self,fen,go):
+                  self.send('ucinewgame'); self.send('isready'); self.until('readyok')
+                  self.send('position fen '+fen)
+                  t0=time.perf_counter(); self.send('go '+go); lines=self.until('bestmove'); wall=(time.perf_counter()-t0)*1000
+                  infos=[x for x in lines if x.startswith('info ') and ' depth ' in (' '+x)]
+                  info=infos[-1] if infos else ''
+                  toks=info.split(); d={}
+                  for key in ('depth','seldepth','nodes','nps','time','hashfull'):
+                      if key in toks:
+                          try:d[key]=int(toks[toks.index(key)+1])
+                          except:pass
+                  d['wall_ms']=wall; d['bestmove']=lines[-1]; d['info']=info
+                  return d
+              def close(self):
+                  try:self.send('quit')
+                  except:pass
+                  self.p.wait(timeout=3)
+
+          z=Engine('zchezz',[Z,'--nnue',NN],[('Threads','1'),('Hash','64'),('OwnBook','false'),('SyzygyPath','')])
+          s=Engine('stockfish',[SF],[('Threads','1'),('Hash','64'),('UCI_LimitStrength','false'),('SyzygyPath','')])
+          engines=[z,s]
+          raw={'main_sha':MAIN,'positions':len(fens),'movetime_ms':200,'repeats':3,'depths':[8,10,12],'engines':{},'fixed':[],'depth_runs':[]}
+          for e in engines: raw['engines'][e.name]=e.id
+
+          # warmup
+          for e in engines: e.run(fens[0],'movetime 100')
+
+          for i,fen in enumerate(fens):
+              for e in engines:
+                  for r in range(3):
+                      x=e.run(fen,'movetime 200'); x.update(engine=e.name,pos=i,rep=r); raw['fixed'].append(x)
+          for i,fen in enumerate(fens):
+              for dep in (8,10,12):
+                  for e in engines:
+                      x=e.run(fen,f'depth {dep}'); x.update(engine=e.name,pos=i,target_depth=dep); raw['depth_runs'].append(x)
+          for e in engines: e.close()
+
+          def med(v): return statistics.median(v) if v else None
+          summary={}
+          for en in ('zchezz','stockfish'):
+              per=[]
+              for i in range(len(fens)):
+                  rr=[x for x in raw['fixed'] if x['engine']==en and x['pos']==i]
+                  per.append({k:med([x[k] for x in rr if k in x]) for k in ('depth','seldepth','nodes','nps','time','wall_ms')})
+              summary[en]={'fixed200_median_across_positions':{k:med([p[k] for p in per if p[k] is not None]) for k in per[0]}}
+              ds={}
+              for dep in (8,10,12):
+                  rr=[x for x in raw['depth_runs'] if x['engine']==en and x['target_depth']==dep]
+                  ds[str(dep)]={k:med([x[k] for x in rr if k in x]) for k in ('nodes','nps','time','wall_ms','depth','seldepth')}
+              # per-position EBF
+              ebfs={}
+              for a,b in ((8,10),(10,12)):
+                  vals=[]
+                  for i in range(len(fens)):
+                      ra=[x for x in raw['depth_runs'] if x['engine']==en and x['pos']==i and x['target_depth']==a][0]
+                      rb=[x for x in raw['depth_runs'] if x['engine']==en and x['pos']==i and x['target_depth']==b][0]
+                      if ra.get('nodes',0)>0 and rb.get('nodes',0)>0:
+                          vals.append((rb['nodes']/ra['nodes'])**(1/(b-a)))
+                  ebfs[f'{a}-{b}']=med(vals)
+              summary[en]['depth_profile']=ds; summary[en]['median_effective_branching_factor']=ebfs
+          zf=summary['zchezz']['fixed200_median_across_positions']; sf=summary['stockfish']['fixed200_median_across_positions']
+          summary['ratios']={
+              'sf_over_z_nps': sf['nps']/zf['nps'] if zf['nps'] else None,
+              'sf_minus_z_depth': sf['depth']-zf['depth'] if sf['depth'] is not None and zf['depth'] is not None else None,
+              'sf_over_z_nodes_at_200ms': sf['nodes']/zf['nodes'] if zf['nodes'] else None,
+          }
+          for dep in (8,10,12):
+              zn=summary['zchezz']['depth_profile'][str(dep)]['nodes']; sn=summary['stockfish']['depth_profile'][str(dep)]['nodes']
+              summary['ratios'][f'z_over_sf_nodes_to_depth_{dep}']=zn/sn if sn else None
+          raw['summary']=summary
+          with open('profile-result.json','w') as f: json.dump(raw,f,indent=2)
+          print('FINAL_PROFILE')
+          print(json.dumps(summary,indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v323-vs-stockfish-full-profile
+          path: profile-result.json
