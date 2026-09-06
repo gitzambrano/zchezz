@@ -1,0 +1,65 @@
+name: v323-pk17-tsan-isolate-masks
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - .github/workflows/v323-pk17-tsan-isolate-masks.yml
+      - engine/c/tests/test_v323_pk17_mt.c
+      - tools/v323_run_pk17_split.py
+      - tools/v323_pk17_verify_patch.py
+
+jobs:
+  isolate-mask-init:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate PK17 and remove only legacy-reset writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf engine/c/zchezz_v323maskrace
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323maskrace
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323maskrace
+          python tools/v323_pk17_verify_patch.py --root engine/c/zchezz_v323maskrace
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v323maskrace/nnue.c')
+          s=p.read_text()
+          old='''    /* Legacy globals (for WASM/test push/pop API) */\n    _acc_ptr   = 0;\n    _acc_dirty = 1;\n    memset(_ext_dirty_legacy, 1, sizeof(_ext_dirty_legacy));\n}\n\n/* WASM backward-compatibility: JS worker calls nnue_reset() with no args.\n * This wrapper passes the global accumulator.  Exported as _nnue_reset\n * in the WASM build. */\nvoid nnue_reset_global(void) {\n    nnue_reset(&g_nnue_accum);\n}\n'''
+          new='''}\n\n/* Diagnostic-only: legacy reset state moved to the single-thread wrapper,\n * while passed-pawn masks deliberately remain lazy to isolate that race. */\nvoid nnue_reset_global(void) {\n    nnue_reset(&g_nnue_accum);\n    _acc_ptr   = 0;\n    _acc_dirty = 1;\n    memset(_ext_dirty_legacy, 1, sizeof(_ext_dirty_legacy));\n}\n'''
+          assert s.count(old)==1
+          p.write_text(s.replace(old,new,1))
+          PY
+      - name: Build diagnostic harness with TSan
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcc -O1 -g -fno-omit-frame-pointer -fsanitize=thread \
+            -D_GNU_SOURCE -std=c11 -DPK17_VERIFY \
+            -Iengine/c/zchezz_v323maskrace \
+            -o pk17_mask_tsan \
+            engine/c/tests/test_v323_pk17_mt.c \
+            engine/c/zchezz_v323maskrace/board.c \
+            engine/c/zchezz_v323maskrace/nnue.c \
+            -lm -pthread -fsanitize=thread
+      - name: Demonstrate lazy-mask race
+        shell: bash
+        env:
+          TSAN_OPTIONS: halt_on_error=1:history_size=7
+        run: |
+          set +e
+          ./pk17_mask_tsan engine/c/zchezz_v323maskrace/nnue_weights.bin > mask-race.log 2>&1
+          rc=$?
+          cat mask-race.log
+          if grep -q 'ThreadSanitizer: data race' mask-race.log && \
+             grep -Eq '_init_extra_masks|_pp_span_[wb]|_extra_masks_init' mask-race.log; then
+            echo 'EXPECTED_MASK_INIT_RACE_CONFIRMED'
+            exit 0
+          fi
+          echo "Expected mask-init race was not isolated (rc=$rc)" >&2
+          exit 2
