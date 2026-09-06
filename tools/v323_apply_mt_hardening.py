@@ -30,6 +30,14 @@ def main() -> None:
     p = a.root / "nnue.c"
     t = p.read_text(encoding="utf-8")
 
+    # The PK17 generator applies this hardening by default.  Keep this script
+    # safe to call explicitly as well so older diagnostic workflows do not
+    # fail merely because the candidate is already hardened.
+    if ("must not touch these legacy globals" in t and
+            "_init_extra_masks();\n    _nnue_ready = 1;" in t):
+        print(f"v3.23 NNUE multithread hardening already present in {a.root}")
+        return
+
     old = """int _acc_dirty = 1;\nint _acc_ptr   = 0;\n\n/* ── NNU3 binary loader ──────────────────────────────────────────── */\n"""
     new = """int _acc_dirty = 1;\nint _acc_ptr   = 0;\n\n/* Passed-pawn lookup masks are process-global/read-only after NNUE load.\n * Initialize them before Lazy-SMP threads are launched. */\nstatic void _init_extra_masks(void);\n\n/* ── NNU3 binary loader ──────────────────────────────────────────── */\n"""
     t = one(t, old, new, "forward-declare mask init")
