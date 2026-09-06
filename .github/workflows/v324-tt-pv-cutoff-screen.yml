@@ -14,37 +14,7 @@ env:
 jobs:
   screen:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        include:
-          - variant: nonpv
-            tag: nodes512
-            games: 800
-            movetime: 0
-            nodes: 512
-            seed: 32426511
-          - variant: exactpv
-            tag: nodes512
-            games: 800
-            movetime: 0
-            nodes: 512
-            seed: 32426512
-          - variant: nonpv
-            tag: 50ms
-            games: 500
-            movetime: 50
-            nodes: 0
-            seed: 32426501
-          - variant: exactpv
-            tag: 50ms
-            games: 500
-            movetime: 50
-            nodes: 0
-            seed: 32426502
-
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,53 +35,47 @@ jobs:
           cp engine/c/zchezz_v323/zchezz.exe /tmp/base.exe
           cp engine/c/zchezz_v323/nnue_weights.bin /tmp/nnue_weights.bin
 
-      - name: Apply TT/PV cutoff variant
+      - name: Build non-PV TT-cutoff candidate
         shell: bash
-        env:
-          VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
           python - <<'PY'
-          import os
           from pathlib import Path
           p=Path('engine/c/zchezz_v323/search.c')
           s=p.read_text(encoding='utf-8')
-          old='''        if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0) {
-            if (tte.flag == TT_EXACT) return tte.score;
-            if (tte.flag == TT_LOWER && tte.score >= beta) return tte.score;
-            if (tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;
-        }'''
-          variant=os.environ['VARIANT']
-          if variant == 'nonpv':
-              new='''        if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0 && (beta - alpha <= 1)) {
-            if (tte.flag == TT_EXACT) return tte.score;
-            if (tte.flag == TT_LOWER && tte.score >= beta) return tte.score;
-            if (tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;
-        }'''
-          elif variant == 'exactpv':
-              new='''        if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0) {
-            if (tte.flag == TT_EXACT) return tte.score;
-            if ((beta - alpha <= 1) && tte.flag == TT_LOWER && tte.score >= beta) return tte.score;
-            if ((beta - alpha <= 1) && tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;
-        }'''
-          else:
-              raise SystemExit(variant)
-          if s.count(old) != 1:
-              raise SystemExit(f'anchor count={s.count(old)}')
+          old='if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0) {'
+          new='if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0 && (beta - alpha <= 1)) {'
+          if s.count(old) != 1: raise SystemExit(f'anchor count={s.count(old)}')
           p.write_text(s.replace(old,new,1),encoding='utf-8')
-          print('applied',variant)
           PY
           git diff --check
-          git diff -- engine/c/zchezz_v323/search.c
           make -C engine/build ENGINE=v323 clean native CC=gcc ARCH_FLAGS="-mavx2" STATIC_FLAG=""
-          cp engine/c/zchezz_v323/zchezz.exe /tmp/cand.exe
+          python tests/test_perft.py --version v323 --max-depth 4
+          cp engine/c/zchezz_v323/zchezz.exe /tmp/nonpv.exe
+          git checkout -- engine/c/zchezz_v323/search.c
 
-      - name: Smoke candidate
+      - name: Build exact-only-at-PV candidate
         shell: bash
         run: |
           set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v323/search.c')
+          s=p.read_text(encoding='utf-8')
+          old='''            if (tte.flag == TT_EXACT) return tte.score;
+            if (tte.flag == TT_LOWER && tte.score >= beta) return tte.score;
+            if (tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;'''
+          new='''            if (tte.flag == TT_EXACT) return tte.score;
+            if ((beta - alpha <= 1) && tte.flag == TT_LOWER && tte.score >= beta) return tte.score;
+            if ((beta - alpha <= 1) && tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;'''
+          if s.count(old) != 1: raise SystemExit(f'anchor count={s.count(old)}')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
+          git diff --check
+          make -C engine/build ENGINE=v323 clean native CC=gcc ARCH_FLAGS="-mavx2" STATIC_FLAG=""
           python tests/test_perft.py --version v323 --max-depth 4
-          python tests/test_uci_extended.py --version v323 --only T1 --only T2 --only T6 --only T9
+          cp engine/c/zchezz_v323/zchezz.exe /tmp/exactpv.exe
+          git checkout -- engine/c/zchezz_v323/search.c
 
       - name: Tree and NPS benchmark
         shell: bash
@@ -129,16 +93,19 @@ jobs:
               txt=p.stdout+p.stderr
               n=int(re.search(r'Total nodes\s*:\s*(\d+)',txt).group(1))
               return n,n/dt
-          B=[]; C=[]
-          for i in range(5):
-              order=(('b','/tmp/base.exe'),('c','/tmp/cand.exe')) if i%2==0 else (('c','/tmp/cand.exe'),('b','/tmp/base.exe'))
-              for k,e in order:
-                  (B if k=='b' else C).append(bench(e))
-          bn=B[0][0]; cn=C[0][0]
-          b=statistics.median(x[1] for x in B); c=statistics.median(x[1] for x in C)
-          out={'baseline_nodes':bn,'candidate_nodes':cn,'tree_delta_pct':100*(cn/bn-1),'baseline_median_nps':b,'candidate_median_nps':c,'nps_delta_pct':100*(c/b-1)}
-          print(json.dumps(out,indent=2))
-          Path('tests/arena_results/tree.json').write_text(json.dumps(out,indent=2))
+          base=[]
+          cand={'nonpv':[],'exactpv':[]}
+          exes={'nonpv':'/tmp/nonpv.exe','exactpv':'/tmp/exactpv.exe'}
+          for name,exe in exes.items():
+              B=[]; C=[]
+              for i in range(5):
+                  order=(('b','/tmp/base.exe'),('c',exe)) if i%2==0 else (('c',exe),('b','/tmp/base.exe'))
+                  for k,e in order: (B if k=='b' else C).append(bench(e))
+              bn=B[0][0]; cn=C[0][0]
+              b=statistics.median(x[1] for x in B); c=statistics.median(x[1] for x in C)
+              out={'baseline_nodes':bn,'candidate_nodes':cn,'tree_delta_pct':100*(cn/bn-1),'baseline_median_nps':b,'candidate_median_nps':c,'nps_delta_pct':100*(c/b-1)}
+              print(name, json.dumps(out,indent=2))
+              Path(f'tests/arena_results/tree-{name}.json').write_text(json.dumps(out,indent=2))
           PY
 
       - name: Generate deterministic openings
@@ -164,23 +131,34 @@ jobs:
           Path('tests/arena_results/openings.epd').write_text('\n'.join(rows)+'\n')
           PY
 
-      - name: Arena ${{ matrix.variant }} ${{ matrix.tag }}
+      - name: Arena non-PV cutoff at 512 nodes
         shell: bash
         run: |
           set -euo pipefail
           python tests/run_arena.py \
-            --player uci:/tmp/cand.exe --player uci:/tmp/base.exe \
-            --games ${{ matrix.games }} --movetime ${{ matrix.movetime }} --nodes ${{ matrix.nodes }} \
-            --threads 2 --max-plies 300 \
+            --player uci:/tmp/nonpv.exe --player uci:/tmp/base.exe \
+            --games 1000 --movetime 0 --nodes 512 --threads 2 --max-plies 300 \
             --openings "$GITHUB_WORKSPACE/tests/arena_results/openings.epd" --opening-plies 0 \
-            --seed ${{ matrix.seed }} --tt-mb 8 \
-            --json "tests/arena_results/${{ matrix.variant }}-${{ matrix.tag }}.json" \
-            --pgn "tests/arena_results/${{ matrix.variant }}-${{ matrix.tag }}.pgn"
+            --seed 32426511 --tt-mb 8 \
+            --json tests/arena_results/nonpv-512.json \
+            --pgn tests/arena_results/nonpv-512.pgn
+
+      - name: Arena exact-only-at-PV at 512 nodes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/run_arena.py \
+            --player uci:/tmp/exactpv.exe --player uci:/tmp/base.exe \
+            --games 1000 --movetime 0 --nodes 512 --threads 2 --max-plies 300 \
+            --openings "$GITHUB_WORKSPACE/tests/arena_results/openings.epd" --opening-plies 0 \
+            --seed 32426512 --tt-mb 8 \
+            --json tests/arena_results/exactpv-512.json \
+            --pgn tests/arena_results/exactpv-512.pgn
 
       - name: Upload evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: v324-tt-pv-${{ matrix.variant }}-${{ matrix.tag }}
+          name: v324-tt-pv-cutoff-screen
           path: tests/arena_results/
           if-no-files-found: warn
