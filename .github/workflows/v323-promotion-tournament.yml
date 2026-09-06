@@ -87,14 +87,14 @@ jobs:
             --move-timeout 30 \
             --openings v323_gate_openings \
             --opening-file gate.epd \
-            --color-swap true \
-            --pgn true \
-            --epd false \
-            --bin false \
+            --color-swap \
+            --pgn \
+            --no-epd \
+            --no-bin \
             --results-dir artifacts/v323-tournament/${{ matrix.label }} \
             --counter-every 100 \
             --report-loops 100000 \
-            --perf true \
+            --perf \
             2>&1 | tee artifacts/v323-tournament/${{ matrix.label }}/console.log
       - name: Upload tournament evidence
         if: always()
