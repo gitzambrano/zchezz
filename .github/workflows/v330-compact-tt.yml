@@ -5,6 +5,8 @@ on:
     branches: [exp/v330-compact-tt]
   workflow_dispatch:
 
+permissions: {contents: read}
+
 jobs:
   ab:
     strategy:
@@ -15,93 +17,33 @@ jobs:
           - {label: 50ms, games: 300, movetime: 50, nodes: 0, seed: 3300050}
           - {label: 200ms, games: 160, movetime: 200, nodes: 0, seed: 3300200}
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
-      - name: Verify common baseline
+      - name: Verify common engine baseline
         run: git diff --exit-code 1a1df3ebcc207a888c4355d512d582db73b3f24d HEAD -- engine/
       - name: Install dependencies
         run: python -m pip install --disable-pip-version-check -e ".[all]"
-      - name: Build untouched v3.23 baseline
+      - name: Build v3.23 and v3.30
         run: |
+          set -euo pipefail
           make -C engine/build ENGINE=v323 clean native CC=gcc ARCH_FLAGS="-mavx2" STATIC_FLAG=""
           cp engine/c/zchezz_v323/zchezz.exe /tmp/base.exe
-      - name: Materialize v3.30 compact-TT candidate
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          main=Path('engine/c/zchezz_v323/main.c'); s=main.read_text(encoding='utf-8')
-          old='#define ENGINE_VERSION "3.23"'; assert s.count(old)==1
-          main.write_text(s.replace(old,'#define ENGINE_VERSION "3.30"',1),encoding='utf-8')
-
-          h=Path('engine/c/zchezz_v323/search.h'); s=h.read_text(encoding='utf-8')
-          pairs=[
-            ('extern uint64_t TT_H[TT_SIZE];', 'extern uint32_t TT_H[TT_SIZE];'),
-            ('extern int32_t  TT_S[TT_SIZE];', 'extern int16_t  TT_S[TT_SIZE];'),
-            ('extern int32_t  TT_D[TT_SIZE];', 'extern uint16_t TT_D[TT_SIZE];'),
-            ('extern uint16_t TT_G[TT_SIZE];', 'extern uint8_t  TT_G[TT_SIZE];'),
-            ('extern int32_t  TT_M[TT_SIZE];', 'extern uint32_t TT_M[TT_SIZE];'),
-            ('extern int32_t  TT_E[TT_SIZE];', 'extern int16_t  TT_E[TT_SIZE];'),
-            ('extern uint16_t TT_GEN;', 'extern uint8_t TT_GEN;'),
-          ]
-          for a,b in pairs:
-              assert s.count(a)==1,(a,s.count(a)); s=s.replace(a,b,1)
-          h.write_text(s,encoding='utf-8')
-
-          p=Path('engine/c/zchezz_v323/search.c'); s=p.read_text(encoding='utf-8')
-          defs=[
-            ('uint64_t TT_H[TT_SIZE];','uint32_t TT_H[TT_SIZE];'),
-            ('int32_t  TT_S[TT_SIZE];','int16_t  TT_S[TT_SIZE];'),
-            ('int32_t  TT_D[TT_SIZE];','uint16_t TT_D[TT_SIZE];'),
-            ('uint16_t TT_G[TT_SIZE];','uint8_t  TT_G[TT_SIZE];'),
-            ('int32_t  TT_M[TT_SIZE];','uint32_t TT_M[TT_SIZE];'),
-            ('int32_t  TT_E[TT_SIZE];','int16_t  TT_E[TT_SIZE];'),
-            ('uint16_t TT_GEN = 0;','uint8_t TT_GEN = 0;'),
-          ]
-          for a,b in defs:
-              assert s.count(a)==1,(a,s.count(a)); s=s.replace(a,b,1)
-
-          a='''    int slot = (int)(hash & TT_MASK);
-    int base = slot * TT_BUCKETS;
-    int stored_score = tt_score_store(score, ply);'''
-          b='''    int slot = (int)(hash & TT_MASK);
-    int base = slot * TT_BUCKETS;
-    /* v3.30: lower hash bits select the slot; keep an independent 32-bit
-     * upper signature. Stockfish uses an even shorter TT signature. */
-    uint32_t key32 = (uint32_t)(hash >> 32);
-    int stored_score = tt_score_store(score, ply);'''
-          assert s.count(a)==1,s.count(a); s=s.replace(a,b,1)
-          s=s.replace('TT_H[base] = hash; TT_S[base] = stored_score;',
-                      'TT_H[base] = key32; TT_S[base] = (int16_t)stored_score;',1)
-          s=s.replace('TT_H[base+1] = hash; TT_S[base+1] = stored_score;',
-                      'TT_H[base+1] = key32; TT_S[base+1] = (int16_t)stored_score;',1)
-
-          a='''    int slot = (int)(hash & TT_MASK);
-    int base = slot * TT_BUCKETS;
-
-    /* Check both buckets */'''
-          b='''    int slot = (int)(hash & TT_MASK);
-    int base = slot * TT_BUCKETS;
-    uint32_t key32 = (uint32_t)(hash >> 32);
-
-    /* Check both buckets */'''
-          assert s.count(a)==1,s.count(a); s=s.replace(a,b,1)
-          assert s.count('if (TT_H[idx] != hash) continue;')==1
-          s=s.replace('if (TT_H[idx] != hash) continue;','if (TT_H[idx] != key32) continue;',1)
-          p.write_text(s,encoding='utf-8')
-          PY
+          python tools/v330_compact_tt.py
           git diff --check
           make -C engine/build ENGINE=v323 clean native CC=gcc ARCH_FLAGS="-mavx2" STATIC_FLAG=""
           cp engine/c/zchezz_v323/zchezz.exe /tmp/cand.exe
           printf 'uci\nquit\n' | /tmp/cand.exe | grep -F 'id name Zchezz 3.30'
           python tests/test_perft.py --version v323 --max-depth 4
-      - name: Generate common deterministic openings
-        env: {OPENING_SEED: '${{ matrix.seed }}'}
+      - name: Generate deterministic openings
+        env:
+          OPENING_SEED: ${{ matrix.seed }}
         run: |
           mkdir -p tests/arena_results
           python - <<'PY'
-          import os,random,chess
+          import os, random, chess
           from pathlib import Path
           r=random.Random(int(os.environ['OPENING_SEED'])); out=[]; seen=set()
           while len(out)<256:
@@ -128,3 +70,4 @@ jobs:
         with:
           name: v330-compact-tt-${{ matrix.label }}
           path: tests/arena_results/
+          if-no-files-found: error
