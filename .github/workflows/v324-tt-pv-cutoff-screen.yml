@@ -62,14 +62,16 @@ jobs:
           from pathlib import Path
           p=Path('engine/c/zchezz_v323/search.c')
           s=p.read_text(encoding='utf-8')
-          old='''            if (tte.flag == TT_EXACT) return tte.score;
-            if (tte.flag == TT_LOWER && tte.score >= beta) return tte.score;
-            if (tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;'''
-          new='''            if (tte.flag == TT_EXACT) return tte.score;
-            if ((beta - alpha <= 1) && tte.flag == TT_LOWER && tte.score >= beta) return tte.score;
-            if ((beta - alpha <= 1) && tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;'''
-          if s.count(old) != 1: raise SystemExit(f'anchor count={s.count(old)}')
-          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          pairs=[
+            ('if (tte.flag == TT_LOWER && tte.score >= beta) return tte.score;',
+             'if ((beta - alpha <= 1) && tte.flag == TT_LOWER && tte.score >= beta) return tte.score;'),
+            ('if (tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;',
+             'if ((beta - alpha <= 1) && tte.flag == TT_UPPER && tte.score <= alpha) return tte.score;'),
+          ]
+          for old,new in pairs:
+              if s.count(old) != 1: raise SystemExit(f'anchor count={s.count(old)}: {old}')
+              s=s.replace(old,new,1)
+          p.write_text(s,encoding='utf-8')
           PY
           git diff --check
           make -C engine/build ENGINE=v323 clean native CC=gcc ARCH_FLAGS="-mavx2" STATIC_FLAG=""
@@ -93,10 +95,7 @@ jobs:
               txt=p.stdout+p.stderr
               n=int(re.search(r'Total nodes\s*:\s*(\d+)',txt).group(1))
               return n,n/dt
-          base=[]
-          cand={'nonpv':[],'exactpv':[]}
-          exes={'nonpv':'/tmp/nonpv.exe','exactpv':'/tmp/exactpv.exe'}
-          for name,exe in exes.items():
+          for name,exe in {'nonpv':'/tmp/nonpv.exe','exactpv':'/tmp/exactpv.exe'}.items():
               B=[]; C=[]
               for i in range(5):
                   order=(('b','/tmp/base.exe'),('c',exe)) if i%2==0 else (('c',exe),('b','/tmp/base.exe'))
