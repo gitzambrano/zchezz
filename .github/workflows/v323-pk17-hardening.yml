@@ -1,0 +1,201 @@
+name: v323-pk17-hardening
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - tools/v323_pk17_verify_patch.py
+      - engine/c/tests/test_v323_pk17_stress.c
+      - .github/workflows/v323-pk17-hardening.yml
+
+jobs:
+  invariant-stress:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gcc-avx2-prod
+            cc: gcc
+            cflags: -O3 -ffast-math -mavx2
+            ldflags: ""
+            rounds: 420
+            depth: 48
+            probes: 10
+          - name: clang-avx2-prod
+            cc: clang
+            cflags: -O3 -ffast-math -mavx2
+            ldflags: ""
+            rounds: 300
+            depth: 44
+            probes: 9
+          - name: gcc-scalar-prod
+            cc: gcc
+            cflags: -O3 -ffast-math
+            ldflags: ""
+            rounds: 300
+            depth: 44
+            probes: 9
+          - name: clang-asan-ubsan
+            cc: clang
+            cflags: -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined
+            ldflags: -fsanitize=address,undefined
+            rounds: 150
+            depth: 36
+            probes: 8
+    name: stress-${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate verified PK17 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323stress
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323stress
+          python tools/v323_pk17_verify_patch.py --root engine/c/zchezz_v323stress
+      - name: Compile stress harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          ${{ matrix.cc }} ${{ matrix.cflags }} -D_GNU_SOURCE -std=c11 -DPK17_VERIFY \
+            -Iengine/c/zchezz_v323stress \
+            -o pk17_stress \
+            engine/c/tests/test_v323_pk17_stress.c \
+            engine/c/zchezz_v323stress/board.c \
+            engine/c/zchezz_v323stress/nnue.c \
+            -lm ${{ matrix.ldflags }}
+      - name: Run make/unmake and projection stress
+        shell: bash
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1:strict_string_checks=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          set -euo pipefail
+          ./pk17_stress engine/c/zchezz_v323stress/nnue_weights.bin \
+            ${{ matrix.rounds }} ${{ matrix.depth }} ${{ matrix.probes }} | tee pk17-stress.txt
+
+  fixed-node-differential:
+    runs-on: ubuntu-24.04
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check python-chess
+      - name: Build baseline and PK17
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323diff
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323diff
+          make -C engine/build ENGINE=v323base clean native
+          make -C engine/build ENGINE=v323diff clean native
+      - name: Compare 384 positions at fixed nodes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import chess, random, re, subprocess, sys
+
+          rng = random.Random(323170384)
+          fens = [
+              '8/5pk1/6p1/8/7P/6P1/5PK1/8 w - - 0 1',
+              '8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1',
+              '8/8/3p4/2pPp3/4P3/8/4K3/6k1 w - c6 0 1',
+              'r3k2r/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/R3K2R w KQkq - 0 1',
+              '7k/P7/8/8/8/8/6p1/K7 w - - 0 1',
+          ]
+          seen = set(fens)
+          while len(fens) < 384:
+              b = chess.Board()
+              for _ in range(rng.randint(4, 90)):
+                  if b.is_game_over(claim_draw=True): break
+                  ms = list(b.legal_moves)
+                  special = []
+                  for m in ms:
+                      pc = b.piece_at(m.from_square)
+                      if (pc and pc.piece_type in (chess.PAWN, chess.KING)) or b.is_capture(m) or m.promotion or b.is_castling(m):
+                          special.append(m)
+                  b.push(rng.choice(special if special and rng.random() < .72 else ms))
+              if b.is_game_over(claim_draw=True):
+                  continue
+              fen = b.fen()
+              key = ' '.join(fen.split()[:4])
+              if key not in seen:
+                  seen.add(key); fens.append(fen)
+
+          class Engine:
+              def __init__(self, exe):
+                  self.p = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+                  self.send('uci'); self.until('uciok')
+                  self.send('isready'); self.until('readyok')
+              def send(self, s):
+                  self.p.stdin.write(s+'\n'); self.p.stdin.flush()
+              def until(self, token):
+                  out=[]
+                  while True:
+                      line=self.p.stdout.readline()
+                      if not line: raise RuntimeError('engine EOF')
+                      line=line.strip(); out.append(line)
+                      if line.startswith(token) or line == token: return out
+              def search(self, fen):
+                  self.send('ucinewgame'); self.send('isready'); self.until('readyok')
+                  self.send('position fen '+fen)
+                  self.send('go nodes 20000')
+                  lines=self.until('bestmove ')
+                  infos=[x for x in lines if x.startswith('info depth ')]
+                  bm=[x for x in lines if x.startswith('bestmove ')][-1].split()[1]
+                  if not infos: raise RuntimeError('no info line')
+                  line=infos[-1]
+                  def grab(pat, default=None):
+                      m=re.search(pat,line); return m.group(1) if m else default
+                  score_m=re.search(r'\bscore (cp|mate) (-?\d+)',line)
+                  return (int(grab(r'\bdepth (\d+)')), int(grab(r'\bnodes (\d+)')),
+                          (score_m.group(1),int(score_m.group(2))) if score_m else None, bm)
+              def close(self):
+                  self.send('quit'); self.p.wait(timeout=10)
+
+          base=Engine('engine/c/zchezz_v323base/zchezz.exe')
+          cand=Engine('engine/c/zchezz_v323diff/zchezz.exe')
+          try:
+              for i,fen in enumerate(fens):
+                  a=base.search(fen); c=cand.search(fen)
+                  if a != c:
+                      print('DIVERGENCE', i, fen, 'BASE', a, 'PK17', c, sep='\n')
+                      sys.exit(2)
+                  if (i+1) % 64 == 0: print(f'parity {i+1}/{len(fens)}')
+          finally:
+              base.close(); cand.close()
+          print(f'FIXED_NODE_PARITY_OK {len(fens)}/{len(fens)} @20000 nodes')
+          PY
+
+  wasm-compile:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate PK17 candidate and compile WASM SIMD path
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323wasm
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323wasm
+          make -C engine/build ENGINE=v323wasm clean wasm
+          test -s engine/c/zchezz_v323wasm/zchezz_wasm.js
+          test -s engine/c/zchezz_v323wasm/zchezz_wasm.wasm
