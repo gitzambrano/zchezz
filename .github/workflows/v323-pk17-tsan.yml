@@ -9,6 +9,7 @@ on:
       - tools/v323_apply_pk17_split.py
       - tools/v323_run_pk17_split.py
       - tools/v323_pk17_verify_patch.py
+      - tools/v323_apply_mt_hardening.py
       - .github/workflows/v323-pk17-tsan.yml
 
 jobs:
@@ -25,6 +26,7 @@ jobs:
           set -euo pipefail
           cp -a engine/c/zchezz_v322 engine/c/zchezz_v323tsan
           python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323tsan
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323tsan
           python tools/v323_pk17_verify_patch.py --root engine/c/zchezz_v323tsan
       - name: Build with GCC ThreadSanitizer
         shell: bash
