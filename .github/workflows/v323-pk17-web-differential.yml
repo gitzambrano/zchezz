@@ -1,0 +1,61 @@
+name: v323-pk17-web-differential
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_mt_hardening.py
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - .github/workflows/v323-pk17-web-differential.yml
+
+jobs:
+  web-differential:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Install runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check python-chess pytest playwright
+          python -m playwright install --with-deps chromium
+      - name: Generate fixed PK17 and bundles
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf engine/c/zchezz_v323
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323
+          make -C engine/build ENGINE=v322 clean bundle
+          make -C engine/build ENGINE=v323 clean bundle
+      - name: Compare opening-book contracts explicitly
+        shell: bash
+        run: |
+          set +e
+          python tests/test_book.py --html engine/c/zchezz_v322/zchezz_bundle.html --evaluate false --write-cleaned false > book-v322.log 2>&1
+          base_rc=$?
+          python tests/test_book.py --html engine/c/zchezz_v323/zchezz_bundle.html --evaluate false --write-cleaned false > book-v323.log 2>&1
+          cand_rc=$?
+          echo '=== v322 book ==='; cat book-v322.log
+          echo '=== v323 book ==='; cat book-v323.log
+          echo "BOOK_RC_V322=$base_rc BOOK_RC_V323=$cand_rc"
+          if [[ $base_rc -ne $cand_rc ]]; then
+            echo 'BOOK_DIFFERENTIAL_FAILURE' >&2
+            exit 2
+          fi
+          echo 'BOOK_BEHAVIOR_MATCHES_BASELINE'
+          exit 0
+      - name: Run PK17 browser E2E directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_browser.py --version v323 --html zchezz_bundle.html --headless
