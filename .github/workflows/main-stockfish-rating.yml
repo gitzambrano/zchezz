@@ -1,0 +1,277 @@
+name: main-stockfish-rating
+
+on:
+  push:
+    branches: [bench/main-v323-stockfish-rating-20260906]
+
+permissions:
+  contents: read
+
+jobs:
+  match:
+    name: Stockfish ${{ matrix.elo }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        elo: [2800, 2900, 3000]
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+      OPP_ELO: ${{ matrix.elo }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install match dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check python-chess
+          sudo apt-get update -qq
+          sudo apt-get install -y stockfish
+          SF="$(command -v stockfish || true)"
+          if [ -z "$SF" ]; then SF=/usr/games/stockfish; fi
+          "$SF" bench 1 1 1 default depth >/tmp/sfbench.txt 2>&1 || true
+          head -20 /tmp/sfbench.txt || true
+      - name: Build exact active engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(tr -d '\r\n' < engine/ACTIVE_ENGINE)" = v323
+          make -C engine/build ENGINE=v323 clean native CC=gcc
+          printf 'uci\nisready\nquit\n' | engine/c/zchezz_v323/zchezz.exe --nnue engine/c/zchezz_v323/nnue_weights.bin | tee /tmp/zuci.txt
+          grep -q 'id name Zchezz 3.23' /tmp/zuci.txt
+          grep -q readyok /tmp/zuci.txt
+      - name: Run paired match
+        shell: bash
+        run: |
+          set -euo pipefail
+          SF="$(command -v stockfish || true)"
+          if [ -z "$SF" ]; then SF=/usr/games/stockfish; fi
+          export STOCKFISH="$SF"
+          python - <<'PY'
+          import json, os, random, time
+          import chess
+          import chess.engine
+
+          elo = int(os.environ['OPP_ELO'])
+          sf_path = os.environ['STOCKFISH']
+          z_path = 'engine/c/zchezz_v323/zchezz.exe'
+          weights = 'engine/c/zchezz_v323/nnue_weights.bin'
+          move_time = 0.050
+          max_plies = 200
+
+          openings = [
+              'e2e4 e7e5 g1f3 b8c6 f1b5 a7a6',
+              'e2e4 c7c5 g1f3 d7d6 d2d4 c5d4',
+              'e2e4 c7c6 d2d4 d7d5 b1c3',
+              'e2e4 e7e6 d2d4 d7d5 b1c3',
+              'd2d4 d7d5 c2c4 e7e6 b1c3',
+              'd2d4 g8f6 c2c4 g7g6 b1c3 f8g7',
+              'd2d4 g8f6 c2c4 e7e6 g1f3 b7b6',
+              'c2c4 e7e5 b1c3 g8f6 g2g3',
+              'g1f3 d7d5 g2g3 c7c5 f1g2',
+              'e2e4 c7c5 g1f3 b8c6 d2d4 c5d4',
+              'e2e4 e7e5 g1f3 g8f6 f3e5 d7d6',
+              'd2d4 f7f5 g2g3 g8f6 f1g2',
+              'e2e4 d7d6 d2d4 g8f6 b1c3',
+              'e2e4 g7g6 d2d4 f8g7 b1c3 d7d6',
+              'c2c4 g8f6 b1c3 e7e5 g1f3 b8c6',
+          ]
+
+          def configure_if(engine, opts):
+              supported = engine.options
+              use = {k:v for k,v in opts.items() if k in supported}
+              if use:
+                  engine.configure(use)
+
+          z = chess.engine.SimpleEngine.popen_uci([z_path, '--nnue', weights], timeout=10.0)
+          sf = chess.engine.SimpleEngine.popen_uci(sf_path, timeout=10.0)
+          try:
+              configure_if(z, {'Threads': 1, 'Hash': 64, 'Ponder': False})
+              configure_if(sf, {
+                  'Threads': 1,
+                  'Hash': 64,
+                  'Ponder': False,
+                  'UCI_LimitStrength': True,
+                  'UCI_Elo': elo,
+              })
+              print('ZCHEZZ_OPTIONS', sorted(z.options))
+              print('STOCKFISH_OPTIONS_HAS_LIMIT', 'UCI_LimitStrength' in sf.options, 'UCI_Elo' in sf.options)
+              if 'UCI_LimitStrength' not in sf.options or 'UCI_Elo' not in sf.options:
+                  raise RuntimeError('Installed Stockfish does not expose UCI_LimitStrength/UCI_Elo')
+
+              results = []
+              order = list(range(len(openings)))
+              random.Random(323000 + elo).shuffle(order)
+
+              for seq_no, idx in enumerate(order, 1):
+                  for z_white in (True, False):
+                      board = chess.Board()
+                      for u in openings[idx].split():
+                          mv = chess.Move.from_uci(u)
+                          if mv not in board.legal_moves:
+                              raise RuntimeError(f'Illegal opening move {u} in opening {idx}')
+                          board.push(mv)
+
+                      start_ply = board.ply()
+                      while board.outcome(claim_draw=True) is None and board.ply() - start_ply < max_plies:
+                          z_turn = (board.turn == chess.WHITE) == z_white
+                          eng = z if z_turn else sf
+                          result = eng.play(board, chess.engine.Limit(time=move_time))
+                          if result.move not in board.legal_moves:
+                              raise RuntimeError(f'Illegal engine move: {result.move}')
+                          board.push(result.move)
+
+                      outcome = board.outcome(claim_draw=True)
+                      if outcome is None:
+                          game_result = '1/2-1/2'
+                          reason = 'ply-cap'
+                      else:
+                          game_result = outcome.result()
+                          reason = str(outcome.termination)
+
+                      if game_result == '1/2-1/2':
+                          zscore = 0.5
+                      elif (game_result == '1-0' and z_white) or (game_result == '0-1' and not z_white):
+                          zscore = 1.0
+                      else:
+                          zscore = 0.0
+
+                      row = {
+                          'opponent_elo': elo,
+                          'opening': idx,
+                          'z_white': z_white,
+                          'result': game_result,
+                          'zscore': zscore,
+                          'plies_after_opening': board.ply() - start_ply,
+                          'termination': reason,
+                      }
+                      results.append(row)
+                      print('GAME', len(results), json.dumps(row, sort_keys=True), flush=True)
+
+              wins = sum(r['zscore'] == 1.0 for r in results)
+              draws = sum(r['zscore'] == 0.5 for r in results)
+              losses = sum(r['zscore'] == 0.0 for r in results)
+              points = wins + 0.5 * draws
+              summary = {
+                  'opponent_elo': elo,
+                  'games': len(results),
+                  'wins': wins,
+                  'draws': draws,
+                  'losses': losses,
+                  'points': points,
+                  'score': points / len(results),
+                  'move_time_ms': int(move_time * 1000),
+                  'max_plies_after_opening': max_plies,
+                  'games_detail': results,
+              }
+              with open(f'match-{elo}.json', 'w') as f:
+                  json.dump(summary, f, indent=2)
+              print('MATCH_SUMMARY', json.dumps({k:v for k,v in summary.items() if k != 'games_detail'}, sort_keys=True))
+          finally:
+              z.quit()
+              sf.quit()
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: match-${{ matrix.elo }}
+          path: match-${{ matrix.elo }}.json
+
+  aggregate:
+    name: Aggregate rating
+    needs: match
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: match-*
+          merge-multiple: true
+      - name: Estimate one Elo and confidence interval
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob, json, math, random
+
+          rows=[]
+          for fn in sorted(glob.glob('match-*.json')):
+              with open(fn) as f: rows.append(json.load(f))
+
+          q = math.log(10.0)/400.0
+          def pwin(r, opp):
+              return 1.0/(1.0 + 10.0**((opp-r)/400.0))
+
+          # MLE treating each draw as half a point, matching the standard Elo score model.
+          r = sum(x['opponent_elo'] for x in rows)/len(rows)
+          for _ in range(100):
+              grad = 0.0
+              info = 0.0
+              for x in rows:
+                  p = pwin(r, x['opponent_elo'])
+                  grad += q * (x['points'] - x['games']*p)
+                  info += q*q*x['games']*p*(1-p)
+              step = grad/info
+              r += step
+              if abs(step) < 1e-10: break
+
+          info = sum(q*q*x['games']*pwin(r,x['opponent_elo'])*(1-pwin(r,x['opponent_elo'])) for x in rows)
+          se = 1.0/math.sqrt(info)
+          lo, hi = r-1.96*se, r+1.96*se
+
+          per=[]
+          for x in rows:
+              n=x['games']; s=x['score']
+              # Jeffreys-style half-game smoothing only prevents infinities at 0/100%.
+              ss=(x['points']+0.5)/(n+1.0) if s in (0.0,1.0) else s
+              est=x['opponent_elo'] + 400.0*math.log10(ss/(1.0-ss))
+              per.append({
+                  'opponent_elo':x['opponent_elo'], 'games':n,
+                  'wins':x['wins'],'draws':x['draws'],'losses':x['losses'],
+                  'score':s,'implied_zchezz_elo':est
+              })
+
+          # Non-parametric bootstrap over exact game scores, stratified by opponent.
+          rng=random.Random(3230906)
+          boots=[]
+          for _ in range(20000):
+              bs=[]
+              for x in rows:
+                  scores=[g['zscore'] for g in x['games_detail']]
+                  pts=sum(rng.choice(scores) for __ in scores)
+                  bs.append((x['opponent_elo'],len(scores),pts))
+              rr=r
+              for __ in range(30):
+                  grad=0.0; inf=0.0
+                  for opp,n,pts in bs:
+                      p=pwin(rr,opp)
+                      grad += q*(pts-n*p)
+                      inf += q*q*n*p*(1-p)
+                  if inf == 0: break
+                  st=grad/inf; rr += st
+                  if abs(st)<1e-8: break
+              if math.isfinite(rr): boots.append(rr)
+          boots.sort()
+          blo=boots[int(0.025*len(boots))]
+          bhi=boots[int(0.975*len(boots))]
+
+          out={
+              'main_sha':'b6e197f6fb251b08a57fa838502befe7f23bfa8d',
+              'engine':'Zchezz 3.23',
+              'protocol':{'opponents':[2800,2900,3000],'games_per_opponent':30,'total_games':90,'move_time_ms':50,'paired_colors':True,'opening_pairs':15},
+              'matches':per,
+              'combined_rating_mle':r,
+              'wald_95_ci':[lo,hi],
+              'bootstrap_95_ci':[blo,bhi],
+              'total_score':sum(x['points'] for x in rows)/sum(x['games'] for x in rows),
+          }
+          with open('rating-result.json','w') as f: json.dump(out,f,indent=2)
+          print('FINAL_RATING_RESULT')
+          print(json.dumps(out, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rating-result
+          path: rating-result.json
