@@ -1,0 +1,118 @@
+name: v323-promotion-gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - .github/workflows/v323-promotion-gate.yml
+
+jobs:
+  arena:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: fixed20k
+            games: 512
+            movetime: 0
+            nodes: 20000
+            maxplies: 180
+            seed: 32322001
+          - label: timed20
+            games: 2048
+            movetime: 20
+            nodes: 0
+            maxplies: 180
+            seed: 32322002
+          - label: timed100
+            games: 1024
+            movetime: 100
+            nodes: 0
+            maxplies: 180
+            seed: 32322003
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check python-chess
+      - name: Materialize PK17 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf engine/c/zchezz_v323
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+      - name: Build v3.22 and v3.23
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v322 clean native
+          make -C engine/build ENGINE=v323 clean native
+          make -C engine/build arena
+      - name: Generate deterministic paired opening set
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import chess, random
+          rnd = random.Random(323322)
+          out=[]; seen=set()
+          # Mildly-random legal opening positions, 6..14 plies from startpos.
+          # The arena itself plays each opening antithetically (color-swapped).
+          while len(out) < 1024:
+              b=chess.Board()
+              target=rnd.randint(6,14)
+              for _ in range(target):
+                  if b.is_game_over(): break
+                  moves=list(b.legal_moves)
+                  # Bias away from pathological edge moves without hard-coding theory.
+                  central=[]
+                  for m in moves:
+                      tf=chess.square_file(m.to_square); tr=chess.square_rank(m.to_square)
+                      if 2 <= tf <= 5 and 2 <= tr <= 5:
+                          central.append(m)
+                  pool = central if central and rnd.random() < 0.70 else moves
+                  b.push(rnd.choice(pool))
+              if b.is_game_over(): continue
+              fen=' '.join(b.fen().split()[:4])+' 0 1'
+              if fen in seen: continue
+              seen.add(fen); out.append(fen)
+          open('v323_gate_openings.epd','w',encoding='utf-8').write('\n'.join(out)+'\n')
+          print('OPENINGS', len(out))
+          PY
+      - name: Run ${{ matrix.label }} arena
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/v323-gate
+          python tests/run_arena.py \
+            --player uci:engine/c/zchezz_v323/zchezz.exe \
+            --player uci:engine/c/zchezz_v322/zchezz.exe \
+            --games ${{ matrix.games }} \
+            --movetime ${{ matrix.movetime }} \
+            --nodes ${{ matrix.nodes }} \
+            --threads 4 \
+            --max-plies ${{ matrix.maxplies }} \
+            --openings v323_gate_openings.epd \
+            --opening-plies 0 \
+            --seed ${{ matrix.seed }} \
+            --tt-mb 8 \
+            --json artifacts/v323-gate/${{ matrix.label }}.json \
+            --pgn artifacts/v323-gate/${{ matrix.label }}.pgn \
+            2>&1 | tee artifacts/v323-gate/${{ matrix.label }}.log
+      - name: Upload gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v323-gate-${{ matrix.label }}
+          path: artifacts/v323-gate/
+          if-no-files-found: error
