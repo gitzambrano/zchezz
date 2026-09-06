@@ -31,11 +31,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323runtime
-          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323runtime
-          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323runtime
+          rm -rf engine/c/zchezz_v323
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323
       - name: Run canonical web profile
         shell: bash
         run: |
           set -euo pipefail
-          python tests/run_tests.py web --version v323runtime --baseline v322
+          python tests/run_tests.py web --version v323 --baseline v322
