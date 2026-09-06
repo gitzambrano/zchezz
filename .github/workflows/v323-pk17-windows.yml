@@ -1,0 +1,55 @@
+name: v323-pk17-windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_mt_hardening.py
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - .github/workflows/v323-pk17-windows.yml
+
+jobs:
+  windows-mingw:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Ensure MinGW toolchain
+        shell: powershell
+        run: |
+          if (-not (Get-Command gcc.exe -ErrorAction SilentlyContinue)) {
+            choco install mingw --no-progress -y
+            $env:PATH = "C:\ProgramData\mingw64\mingw64\bin;$env:PATH"
+            echo "C:\ProgramData\mingw64\mingw64\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          gcc --version
+      - name: Install test dependencies
+        run: python -m pip install --disable-pip-version-check python-chess
+      - name: Generate fixed PK17
+        shell: powershell
+        run: |
+          if (Test-Path engine/c/zchezz_v323) { Remove-Item -Recurse -Force engine/c/zchezz_v323 }
+          Copy-Item -Recurse engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323
+      - name: Build Windows executable directly with MinGW
+        shell: powershell
+        run: |
+          gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 `
+            -Iengine/c/zchezz_v323 -DNO_TABLEBASES `
+            -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized `
+            -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses `
+            -o engine/c/zchezz_v323/zchezz.exe `
+            engine/c/zchezz_v323/main.c engine/c/zchezz_v323/board.c `
+            engine/c/zchezz_v323/search.c engine/c/zchezz_v323/nnue.c `
+            engine/c/zchezz_v323/syzygy.c engine/c/zchezz_v323/book.c `
+            -lm -pthread
+      - name: Windows perft and UCI smoke
+        shell: powershell
+        run: |
+          python tests/test_perft.py --version v323 --max-depth 4
+          python tests/test_uci_extended.py --version v323 --only T1 --only T2 --only T6 --only T9
