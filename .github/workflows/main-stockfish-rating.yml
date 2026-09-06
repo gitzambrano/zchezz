@@ -53,7 +53,7 @@ jobs:
           if [ -z "$SF" ]; then SF=/usr/games/stockfish; fi
           export STOCKFISH="$SF"
           python - <<'PY'
-          import json, os, random, time
+          import json, os, random
           import chess
           import chess.engine
 
@@ -91,11 +91,10 @@ jobs:
           z = chess.engine.SimpleEngine.popen_uci([z_path, '--nnue', weights], timeout=10.0)
           sf = chess.engine.SimpleEngine.popen_uci(sf_path, timeout=10.0)
           try:
-              configure_if(z, {'Threads': 1, 'Hash': 64, 'Ponder': False})
+              configure_if(z, {'Threads': 1, 'Hash': 64})
               configure_if(sf, {
                   'Threads': 1,
                   'Hash': 64,
-                  'Ponder': False,
                   'UCI_LimitStrength': True,
                   'UCI_Elo': elo,
               })
@@ -108,7 +107,7 @@ jobs:
               order = list(range(len(openings)))
               random.Random(323000 + elo).shuffle(order)
 
-              for seq_no, idx in enumerate(order, 1):
+              for idx in order:
                   for z_white in (True, False):
                       board = chess.Board()
                       for u in openings[idx].split():
@@ -204,7 +203,6 @@ jobs:
           def pwin(r, opp):
               return 1.0/(1.0 + 10.0**((opp-r)/400.0))
 
-          # MLE treating each draw as half a point, matching the standard Elo score model.
           r = sum(x['opponent_elo'] for x in rows)/len(rows)
           for _ in range(100):
               grad = 0.0
@@ -224,7 +222,6 @@ jobs:
           per=[]
           for x in rows:
               n=x['games']; s=x['score']
-              # Jeffreys-style half-game smoothing only prevents infinities at 0/100%.
               ss=(x['points']+0.5)/(n+1.0) if s in (0.0,1.0) else s
               est=x['opponent_elo'] + 400.0*math.log10(ss/(1.0-ss))
               per.append({
@@ -233,7 +230,6 @@ jobs:
                   'score':s,'implied_zchezz_elo':est
               })
 
-          # Non-parametric bootstrap over exact game scores, stratified by opponent.
           rng=random.Random(3230906)
           boots=[]
           for _ in range(20000):
