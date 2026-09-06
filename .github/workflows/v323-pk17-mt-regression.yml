@@ -1,0 +1,77 @@
+name: v323-pk17-mt-regression
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_mt_hardening.py
+      - .github/workflows/v323-pk17-mt-regression.yml
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build baseline and fixed PK17
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323base
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323fixed
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323fixed
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323fixed
+          make -C engine/build ENGINE=v323base clean native
+          make -C engine/build ENGINE=v323fixed clean native
+          make -C engine/build ENGINE=v323fixed test-c
+      - name: Exact bench parity
+        shell: bash
+        run: |
+          set -euo pipefail
+          engine/c/zchezz_v323base/zchezz.exe bench 11 > base-parity.txt
+          engine/c/zchezz_v323fixed/zchezz.exe bench 11 > fixed-parity.txt
+          python - <<'PY'
+          from pathlib import Path
+          def rows(p): return [x for x in Path(p).read_text().splitlines() if x.startswith('Position ')]
+          a,b=rows('base-parity.txt'),rows('fixed-parity.txt')
+          assert len(a)==len(b)==20 and a==b
+          print('TREE_PARITY_OK 20/20')
+          PY
+      - name: 31 paired NPS benches
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > base-nps.txt
+          : > fixed-nps.txt
+          for i in $(seq 1 31); do
+            if (( i % 2 )); then
+              engine/c/zchezz_v323base/zchezz.exe bench 11 >> base-nps.txt
+              engine/c/zchezz_v323fixed/zchezz.exe bench 11 >> fixed-nps.txt
+            else
+              engine/c/zchezz_v323fixed/zchezz.exe bench 11 >> fixed-nps.txt
+              engine/c/zchezz_v323base/zchezz.exe bench 11 >> base-nps.txt
+            fi
+          done
+          python - <<'PY'
+          import re,statistics
+          from pathlib import Path
+          def get(p,pat): return [int(x) for x in re.findall(pat,Path(p).read_text())]
+          bn=get('base-nps.txt',r'Total nodes\s*:\s*(\d+)')
+          cn=get('fixed-nps.txt',r'Total nodes\s*:\s*(\d+)')
+          bp=get('base-nps.txt',r'Nodes/sec\s*:\s*(\d+)')
+          cp=get('fixed-nps.txt',r'Nodes/sec\s*:\s*(\d+)')
+          assert len(bp)==len(cp)==31 and bn==cn
+          ratios=[c/b for b,c in zip(bp,cp)]
+          print('NODES',bn[0])
+          print('BASE_MEDIAN',statistics.median(bp))
+          print('PK17_FIXED_MEDIAN',statistics.median(cp))
+          print('PAIRED_MEDIAN_PCT',round((statistics.median(ratios)-1)*100,4))
+          print('RATIO_MEDIANS_PCT',round((statistics.median(cp)/statistics.median(bp)-1)*100,4))
+          print('POSITIVE_PAIRS',sum(r>1 for r in ratios),'OF',len(ratios))
+          PY
