@@ -1,0 +1,112 @@
+name: v323-pk17-uci-mt-stress
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [v323-fullacc-endgame-test]
+    paths:
+      - tools/v323_apply_mt_hardening.py
+      - tools/v323_apply_pk17_split.py
+      - tools/v323_run_pk17_split.py
+      - .github/workflows/v323-pk17-uci-mt-stress.yml
+
+jobs:
+  uci-multithread:
+    runs-on: ubuntu-24.04
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --disable-pip-version-check python-chess
+      - name: Build fixed PK17
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf engine/c/zchezz_v323
+          cp -a engine/c/zchezz_v322 engine/c/zchezz_v323
+          python tools/v323_run_pk17_split.py --root engine/c/zchezz_v323
+          python tools/v323_apply_mt_hardening.py --root engine/c/zchezz_v323
+          make -C engine/build ENGINE=v323 clean native
+      - name: Stress Threads 2 4 8 with random legal positions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import chess, random, subprocess, threading, queue, time
+
+          exe='engine/c/zchezz_v323/zchezz.exe'
+          rng=random.Random(3238042)
+          fens=[]
+          while len(fens)<72:
+              b=chess.Board()
+              for _ in range(rng.randint(8,70)):
+                  if b.is_game_over(claim_draw=True): break
+                  ms=list(b.legal_moves)
+                  special=[m for m in ms if b.is_capture(m) or m.promotion or b.is_castling(m) or
+                           (b.piece_at(m.from_square) and b.piece_at(m.from_square).piece_type in (chess.PAWN,chess.KING))]
+                  b.push(rng.choice(special if special and rng.random()<.70 else ms))
+              if not b.is_game_over(claim_draw=True): fens.append(b.fen())
+
+          class UCI:
+              def __init__(self):
+                  self.p=subprocess.Popen([exe],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE,text=True,bufsize=1)
+                  self.err=[]
+                  self.t=threading.Thread(target=lambda:[self.err.append(x.rstrip()) for x in self.p.stderr],daemon=True)
+                  self.t.start()
+                  self.send('uci'); self.until('uciok')
+              def send(self,s): self.p.stdin.write(s+'\n'); self.p.stdin.flush()
+              def until(self,prefix,timeout=20):
+                  q=queue.Queue()
+                  def rd():
+                      while True:
+                          x=self.p.stdout.readline()
+                          if not x: q.put(None); return
+                          q.put(x.rstrip())
+                          if x.startswith(prefix): return
+                  t=threading.Thread(target=rd,daemon=True); t.start()
+                  lines=[]; end=time.time()+timeout
+                  while time.time()<end:
+                      try: x=q.get(timeout=.25)
+                      except queue.Empty: continue
+                      if x is None: raise RuntimeError('engine EOF; stderr='+repr(self.err[-20:]))
+                      lines.append(x)
+                      if x.startswith(prefix): return lines
+                  raise TimeoutError(prefix+' stderr='+repr(self.err[-20:]))
+              def ready(self): self.send('isready'); self.until('readyok')
+              def close(self):
+                  try: self.send('quit')
+                  except BrokenPipeError: pass
+                  self.p.wait(timeout=10)
+
+          e=UCI()
+          searches=0
+          try:
+              for th in (2,4,8):
+                  e.send(f'setoption name Threads value {th}')
+                  e.send('setoption name Hash value 32')
+                  e.ready()
+                  for rep in range(2):
+                      for fen in fens:
+                          b=chess.Board(fen)
+                          e.send('ucinewgame'); e.ready()
+                          e.send('position fen '+fen)
+                          e.send('go nodes 25000')
+                          lines=e.until('bestmove ',timeout=30)
+                          bm=lines[-1].split()[1]
+                          if bm == '(none)':
+                              raise AssertionError(('none bestmove',th,fen))
+                          try: m=chess.Move.from_uci(bm)
+                          except ValueError: raise AssertionError(('bad UCI',th,fen,bm))
+                          if m not in b.legal_moves:
+                              raise AssertionError(('illegal bestmove',th,fen,bm))
+                          searches+=1
+                  print(f'THREADS_{th}_OK searches={len(fens)*2}')
+          finally:
+              e.close()
+          print(f'PK17_UCI_MT_STRESS_OK searches={searches}')
+          PY
