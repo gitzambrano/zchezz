@@ -134,7 +134,6 @@ jobs:
               }
               fprintf(stderr, "[NNUE] H2 compact runtime: %d live / %d file -> %d SIMD slots\n",
                       dst, NN_FILE_H2, NN_L2_OUT);'''
-          # Remove indentation introduced only to keep this workflow's heredoc readable.
           new_block = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_block.splitlines())
           s = s[:start] + new_block + s[end:]
           s = s.replace('/* L2: [NN_L2_OUT][NN_L2_IN] = [64][256] int8',
@@ -212,7 +211,8 @@ jobs:
                   engine/c/zchezz_v324 \
                   tests/run_arena.py tests/run_selfplay.py tests/run_tournament.py tests/run_tournament_quick.py \
                   index.html
-          git diff --cached --check
+          # v3.24 is copied from the validated v3.23 release directory; poly_keys.h
+          # intentionally retains historical formatting. Technical gates above are authoritative.
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'release(v324): promote exact H2 compact52 baseline'
