@@ -1,0 +1,208 @@
+name: v331-promote-main
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/v331-promote-main.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Install validation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -e ".[all]"
+          emcc --version
+
+      - name: Materialize v3.31 from v3.24 plus incremental occupancy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d engine/c/zchezz_v331
+          cp -a engine/c/zchezz_v324 engine/c/zchezz_v331
+          make -C engine/build ENGINE=v331 clean >/dev/null || true
+          python - <<'PY'
+          from pathlib import Path
+
+          def repl(path, old, new, required=False):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              n = s.count(old)
+              if n:
+                  p.write_text(s.replace(old, new), encoding='utf-8')
+                  print(path, n, repr(old), '->', repr(new))
+              elif required and new not in s:
+                  raise SystemExit(f'{path}: missing {old!r}/{new!r}')
+
+          # Release identity: v3.31 is v3.24 compact52 + incremental occupancy.
+          repl('engine/c/zchezz_v331/main.c', '#define ENGINE_VERSION "3.24"', '#define ENGINE_VERSION "3.31"', True)
+          repl('engine/c/zchezz_v331/main.c', 'Zchezz v3.24', 'Zchezz v3.31')
+
+          # True incremental occupancy. Keep occ/occ_w/occ_b synchronized at each
+          # bitboard mutation and remove the full occupancy rebuild at board_make end.
+          p = Path('engine/c/zchezz_v331/board.c')
+          s = p.read_text(encoding='utf-8')
+          old = '''static inline void uf_bb_clr(Board *b, UndoFrame *uf, int bi, int sq) {
+              if ((unsigned)bi >= 12u) return;  /* SMP guard: P2BI[0]=-1 from corrupt TT move */
+              int was = !!(b->bb[bi] & ((uint64_t)1<<sq));
+              uf_bb_record(uf, bi, sq, was);
+              b->bb[bi] &= ~((uint64_t)1<<sq);
+          }
+          static inline void uf_bb_set(Board *b, UndoFrame *uf, int bi, int sq) {
+              if ((unsigned)bi >= 12u) return;  /* SMP guard */
+              int was = !!(b->bb[bi] & ((uint64_t)1<<sq));
+              uf_bb_record(uf, bi, sq, was);
+              b->bb[bi] |= ((uint64_t)1<<sq);
+          }'''
+          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines())
+          new = '''static inline void uf_bb_clr(Board *b, UndoFrame *uf, int bi, int sq) {
+              if ((unsigned)bi >= 12u) return;  /* SMP guard: P2BI[0]=-1 from corrupt TT move */
+              uint64_t bit = (uint64_t)1 << sq;
+              int was = !!(b->bb[bi] & bit);
+              uf_bb_record(uf, bi, sq, was);
+              b->bb[bi] &= ~bit;
+              if (was) {
+                  b->occ &= ~bit;
+                  if (bi < 6) b->occ_w &= ~bit;
+                  else        b->occ_b &= ~bit;
+              }
+          }
+          static inline void uf_bb_set(Board *b, UndoFrame *uf, int bi, int sq) {
+              if ((unsigned)bi >= 12u) return;  /* SMP guard */
+              uint64_t bit = (uint64_t)1 << sq;
+              int was = !!(b->bb[bi] & bit);
+              uf_bb_record(uf, bi, sq, was);
+              b->bb[bi] |= bit;
+              if (!was) {
+                  b->occ |= bit;
+                  if (bi < 6) b->occ_w |= bit;
+                  else        b->occ_b |= bit;
+              }
+          }'''
+          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines())
+          if s.count(old) != 1:
+              raise SystemExit(f'bb helper anchor count={s.count(old)}')
+          s = s.replace(old, new, 1)
+
+          old = '''    /* Incremental occupancy update (Phase 4 v212B):
+           * Instead of rebuilding from 12 ORs, compute occ from the old saved value.
+           * The bb[] array has already been updated, so we can derive occ cheaply
+           * by XOR-ing the from/to/capture bits. But it's even safer and simpler
+           * to just compute from the 6 bb per side (only 5+5 ORs vs 12). */
+              b->occ_w = b->bb[0]|b->bb[1]|b->bb[2]|b->bb[3]|b->bb[4]|b->bb[5];
+              b->occ_b = b->bb[6]|b->bb[7]|b->bb[8]|b->bb[9]|b->bb[10]|b->bb[11];
+              b->occ   = b->occ_w | b->occ_b;'''
+          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines())
+          new = '''    /* v3.31: occupancy is maintained incrementally by uf_bb_clr/set.
+               * board_unmake restores uf->occ/occ_w/occ_b directly. */'''
+          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines())
+          if s.count(old) != 1:
+              raise SystemExit(f'occupancy rebuild anchor count={s.count(old)}')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          # Promote active baseline defaults.
+          Path('engine/ACTIVE_ENGINE').write_text('v331\n', encoding='utf-8')
+          repl('engine/build/Makefile', 'ENGINE       ?= v324', 'ENGINE       ?= v331', True)
+          repl('engine/build/Makefile', "v3.24's NNU3 engine", "v3.31's NNU3 engine")
+          repl('engine/build/Makefile', 'v3.24 participates', 'v3.31 participates')
+          repl('engine/build/build_termux.sh', 'VERSION="${1:-v324}"', 'VERSION="${1:-v331}"', True)
+
+          for path in [
+              'tests/run_arena.py', 'tests/run_selfplay.py',
+              'tests/run_tournament.py', 'tests/run_tournament_quick.py'
+          ]:
+              repl(path, 'zchezz_v324', 'zchezz_v331')
+              repl(path, 'Zchezz-v324', 'Zchezz-v331')
+              repl(path, 'v324-1T', 'v331-1T')
+              repl(path, 'v3.24', 'v3.31')
+          PY
+          git diff --check
+
+      - name: Verify combined-source scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Apart from version identity, v331 must differ from v324 engine source only
+          # in board.c (incremental occupancy). The compact NNUE is inherited exactly.
+          cmp engine/c/zchezz_v324/nnue.c engine/c/zchezz_v331/nnue.c
+          cmp engine/c/zchezz_v324/nnue.h engine/c/zchezz_v331/nnue.h
+          cmp engine/c/zchezz_v324/nnue_weights.bin engine/c/zchezz_v331/nnue_weights.bin
+          for f in Makefile board.h book.c book.h poly_keys.h search.c search.h stdendian.h syzygy.c syzygy.h tbconfig.h; do
+            cmp "engine/c/zchezz_v324/$f" "engine/c/zchezz_v331/$f"
+          done
+
+      - name: Build native v3.31
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v331 clean native
+          test -x engine/c/zchezz_v331/zchezz.exe
+          OUT="$(printf 'uci\nisready\nquit\n' | engine/c/zchezz_v331/zchezz.exe --nnue engine/c/zchezz_v331/nnue_weights.bin 2>&1)"
+          printf '%s\n' "$OUT"
+          grep -q 'id name Zchezz 3.31' <<<"$OUT"
+          grep -q '\[NNUE\] H2 compact runtime: 50 live / 64 file -> 52 SIMD slots' <<<"$OUT"
+          grep -q 'readyok' <<<"$OUT"
+
+      - name: Native regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_perft.py --version v331 --max-depth 4
+          python tests/test_uci_extended.py --version v331
+          python - <<'PY'
+          from utils.repo_paths import active_version, engine_dir
+          assert active_version() == 'v331', active_version()
+          assert engine_dir().name == 'zchezz_v331', engine_dir()
+          print('active baseline:', active_version(), engine_dir())
+          PY
+
+      - name: Compile and validate WASM bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v331 bundle
+          test -s engine/c/zchezz_v331/zchezz_wasm.js
+          test -s engine/c/zchezz_v331/zchezz_wasm.wasm
+          test -s engine/c/zchezz_v331/zchezz_bundle.html
+          python tests/test_browser_html.py --html engine/c/zchezz_v331/zchezz_bundle.html
+          python tests/test_book.py --html engine/c/zchezz_v331/zchezz_bundle.html --evaluate false --write-cleaned false
+          cp engine/c/zchezz_v331/zchezz_bundle.html index.html
+          grep -q 'Zchezz NNUE 3.31' index.html
+
+      - name: Commit and push v3.31 main baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/v331-promote-main.yml
+          git add engine/ACTIVE_ENGINE engine/build/Makefile engine/build/build_termux.sh \
+                  engine/c/zchezz_v331 \
+                  tests/run_arena.py tests/run_selfplay.py tests/run_tournament.py tests/run_tournament_quick.py \
+                  index.html
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'release(v331): combine compact52 NNUE and incremental occupancy'
+          git push origin HEAD:main
