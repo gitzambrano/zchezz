@@ -1,0 +1,219 @@
+name: v324-promote-main
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/v324-promote-main.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      ARCH_FLAGS: -mavx2
+      STATIC_FLAG: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+
+      - name: Install validation dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check -e ".[all]"
+          emcc --version
+
+      - name: Materialize v3.24 compact52 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d engine/c/zchezz_v324
+          cp -a engine/c/zchezz_v323 engine/c/zchezz_v324
+          make -C engine/build ENGINE=v324 clean >/dev/null || true
+          python - <<'PY'
+          from pathlib import Path
+
+          def repl(path, old, new, required=False):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              n = s.count(old)
+              if n:
+                  p.write_text(s.replace(old, new), encoding='utf-8')
+                  print(path, n, repr(old), '->', repr(new))
+              elif required and new not in s:
+                  raise SystemExit(f'{path}: missing {old!r}/{new!r}')
+
+          # Release identity.
+          repl('engine/c/zchezz_v324/main.c', '#define ENGINE_VERSION "3.23"', '#define ENGINE_VERSION "3.24"', True)
+          repl('engine/c/zchezz_v324/main.c', 'Zchezz v3.23', 'Zchezz v3.24')
+
+          # Exact compact runtime: on-disk NNU3 remains 256 -> 64 -> 1.
+          h = Path('engine/c/zchezz_v324/nnue.h')
+          hs = h.read_text(encoding='utf-8')
+          old = "#define NN_L2_OUT   64   /* was 32 — doubled for Phase 1           */\n#define NN_L3_IN    64   /* must equal NN_L2_OUT                   */"
+          new = "#define NN_L2_OUT   52   /* runtime compact: 50 live H2 + 2 zero pad */\n#define NN_L3_IN    52   /* must equal runtime NN_L2_OUT             */"
+          if hs.count(old) != 1:
+              raise SystemExit(f'nnue.h anchor count={hs.count(old)}')
+          h.write_text(hs.replace(old, new, 1), encoding='utf-8')
+
+          c = Path('engine/c/zchezz_v324/nnue.c')
+          s = c.read_text(encoding='utf-8')
+          start = s.index('    const int L1_SZ = NN_L1_IN  * NN_L1_OUT;')
+          end_anchor = '    memcpy(&_nnL3B, buf+off, 4);'
+          end = s.index(end_anchor, start) + len(end_anchor)
+          new_block = r'''    /* The on-disk NNU3 is fixed at 256 -> 64 -> 1.  The trained net has
+           * 14 H2 neurons whose quantized L3 weight is exactly zero.  They can never
+           * influence the output, so compact the 50 live rows at load time and keep
+           * two zero padding rows so the existing 4-way SIMD kernel remains intact.
+           * This is algebraically exact and does not modify the weight file. */
+              enum { NN_FILE_H2 = 64 };
+              const int L1_SZ = NN_L1_IN * NN_L1_OUT;
+              const int L2_FILE_SZ = NN_L2_IN * NN_FILE_H2;
+              const int L2_RUN_SZ = NN_L2_IN * NN_L2_OUT;
+              long need = (long)off + L1_SZ*2 + NN_L1_OUT*4
+                        + L2_FILE_SZ + NN_FILE_H2*4 + NN_FILE_H2 + 4;
+              if ((long)len < need) { fprintf(stderr, "[NNUE] File too small (%zu < %ld)\n", len, need); return -1; }
+
+              zfree32(_nnL1WT); zfree32(_nnL1B);
+              zfree32(_nnL2W);  zfree32(_nnL2B);
+              zfree32(_nnL3W);
+
+              _nnL1WT = (int16_t *)zmalloc32(L1_SZ       * sizeof(int16_t));
+              _nnL1B  = (int32_t *)zmalloc32(NN_L1_OUT   * sizeof(int32_t));
+              _nnL2W  = (int8_t  *)zmalloc32(L2_RUN_SZ   * sizeof(int8_t));
+              _nnL2B  = (int32_t *)zmalloc32(NN_L2_OUT   * sizeof(int32_t));
+              _nnL3W  = (int8_t  *)zmalloc32(NN_L3_IN    * sizeof(int8_t));
+
+              if (!_nnL1WT||!_nnL1B||!_nnL2W||!_nnL2B||!_nnL3W) {
+                  fprintf(stderr, "[NNUE] malloc failed\n"); return -1;
+              }
+
+              memcpy(_nnL1WT, buf+off, L1_SZ     *2); off += L1_SZ*2;
+              memcpy(_nnL1B,  buf+off, NN_L1_OUT *4); off += NN_L1_OUT*4;
+
+              const int8_t *src_l2 = (const int8_t *)(buf + off);
+              off += L2_FILE_SZ;
+              const uint8_t *src_l2b = buf + off;
+              off += NN_FILE_H2 * 4;
+              const int8_t *src_l3 = (const int8_t *)(buf + off);
+              off += NN_FILE_H2;
+              memcpy(&_nnL3B, buf+off, 4);
+
+              memset(_nnL2W, 0, L2_RUN_SZ * sizeof(int8_t));
+              memset(_nnL2B, 0, NN_L2_OUT * sizeof(int32_t));
+              memset(_nnL3W, 0, NN_L3_IN  * sizeof(int8_t));
+
+              int dst = 0;
+              for (int o = 0; o < NN_FILE_H2; o++) {
+                  if (src_l3[o] == 0) continue;
+                  if (dst >= NN_L2_OUT) {
+                      fprintf(stderr, "[NNUE] Too many live H2 neurons for compact runtime (%d)\n", dst + 1);
+                      return -1;
+                  }
+                  /* NNU3 file stores L2 as [input][output] = [256][64]. */
+                  for (int i = 0; i < NN_L2_IN; i++)
+                      _nnL2W[dst * NN_L2_IN + i] = src_l2[i * NN_FILE_H2 + o];
+                  memcpy(&_nnL2B[dst], src_l2b + o * 4, 4);
+                  _nnL3W[dst] = src_l3[o];
+                  dst++;
+              }
+              fprintf(stderr, "[NNUE] H2 compact runtime: %d live / %d file -> %d SIMD slots\n",
+                      dst, NN_FILE_H2, NN_L2_OUT);'''
+          # Remove indentation introduced only to keep this workflow's heredoc readable.
+          new_block = '\n'.join(line[10:] if line.startswith('          ') else line for line in new_block.splitlines())
+          s = s[:start] + new_block + s[end:]
+          s = s.replace('/* L2: [NN_L2_OUT][NN_L2_IN] = [64][256] int8',
+                        '/* L2 runtime: [NN_L2_OUT][NN_L2_IN] = [52][256] int8')
+          s = s.replace('static int8_t  *_nnL2W    = NULL;  /* [NN_L2_OUT][NN_L2_IN] = [64][256] */',
+                        'static int8_t  *_nnL2W    = NULL;  /* compact runtime [52][256] */')
+          s = s.replace('static int32_t *_nnL2B    = NULL;  /* [64] int32 */',
+                        'static int32_t *_nnL2B    = NULL;  /* compact runtime [52] */')
+          s = s.replace('static int8_t  *_nnL3W    = NULL;  /* [64] int8 */',
+                        'static int8_t  *_nnL3W    = NULL;  /* compact runtime [52] */')
+          c.write_text(s, encoding='utf-8')
+
+          # Promote active baseline defaults.
+          Path('engine/ACTIVE_ENGINE').write_text('v324\n', encoding='utf-8')
+          repl('engine/build/Makefile', 'ENGINE       ?= v323', 'ENGINE       ?= v324', True)
+          repl('engine/build/Makefile', "v3.23's NNU3 engine", "v3.24's NNU3 engine")
+          repl('engine/build/Makefile', 'v3.23 participates', 'v3.24 participates')
+          repl('engine/build/build_termux.sh', 'VERSION="${1:-v323}"', 'VERSION="${1:-v324}"', True)
+
+          for path in [
+              'tests/run_arena.py', 'tests/run_selfplay.py',
+              'tests/run_tournament.py', 'tests/run_tournament_quick.py'
+          ]:
+              repl(path, 'zchezz_v323', 'zchezz_v324')
+              repl(path, 'Zchezz-v323', 'Zchezz-v324')
+              repl(path, 'v323-1T', 'v324-1T')
+              repl(path, 'v3.23', 'v3.24')
+          PY
+          git diff --check
+
+      - name: Build native v3.24
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v324 clean native
+          test -x engine/c/zchezz_v324/zchezz.exe
+          OUT="$(printf 'uci\nisready\nquit\n' | engine/c/zchezz_v324/zchezz.exe --nnue engine/c/zchezz_v324/nnue_weights.bin 2>&1)"
+          printf '%s\n' "$OUT"
+          grep -q 'id name Zchezz 3.24' <<<"$OUT"
+          grep -q '\[NNUE\] H2 compact runtime: 50 live / 64 file -> 52 SIMD slots' <<<"$OUT"
+          grep -q 'readyok' <<<"$OUT"
+
+      - name: Native regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/test_perft.py --version v324 --max-depth 4
+          python tests/test_uci_extended.py --version v324
+          python - <<'PY'
+          from utils.repo_paths import active_version, engine_dir
+          assert active_version() == 'v324', active_version()
+          assert engine_dir().name == 'zchezz_v324', engine_dir()
+          print('active baseline:', active_version(), engine_dir())
+          PY
+
+      - name: Compile and validate WASM bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v324 bundle
+          test -s engine/c/zchezz_v324/zchezz_wasm.js
+          test -s engine/c/zchezz_v324/zchezz_wasm.wasm
+          test -s engine/c/zchezz_v324/zchezz_bundle.html
+          python tests/test_browser_html.py --html engine/c/zchezz_v324/zchezz_bundle.html
+          python tests/test_book.py --html engine/c/zchezz_v324/zchezz_bundle.html --evaluate false --write-cleaned false
+          cp engine/c/zchezz_v324/zchezz_bundle.html index.html
+          grep -q 'Zchezz NNUE 3.24' index.html
+
+      - name: Commit and push new main baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/v324-promote-main.yml
+          git add engine/ACTIVE_ENGINE engine/build/Makefile engine/build/build_termux.sh \
+                  engine/c/zchezz_v324 \
+                  tests/run_arena.py tests/run_selfplay.py tests/run_tournament.py tests/run_tournament_quick.py \
+                  index.html
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'release(v324): promote exact H2 compact52 baseline'
+          git push origin HEAD:main
