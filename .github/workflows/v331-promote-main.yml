@@ -1,4 +1,4 @@
-name: v331-promote-main
+name: v331-strength-gate
 
 on:
   push:
@@ -8,62 +8,63 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  promote:
+  ab:
+    name: ab-${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { shard: s1, seed: 3312401 }
+          - { shard: s2, seed: 3312402 }
+          - { shard: s3, seed: 3312403 }
+          - { shard: s4, seed: 3312404 }
+          - { shard: s5, seed: 3312405 }
+          - { shard: s6, seed: 3312406 }
+          - { shard: s7, seed: 3312407 }
+          - { shard: s8, seed: 3312408 }
     env:
       ARCH_FLAGS: -mavx2
       STATIC_FLAG: ""
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - uses: mymindstorm/setup-emsdk@v14
-        with:
-          version: latest
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[all]"
 
-      - name: Install validation dependencies
+      - name: Build exact v3.24 baseline and v3.31 candidate
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check -e ".[all]"
-          emcc --version
-
-      - name: Materialize v3.31 from v3.24 plus incremental occupancy
-        shell: bash
-        run: |
-          set -euo pipefail
+          test "$(cat engine/ACTIVE_ENGINE)" = "v324"
           test ! -d engine/c/zchezz_v331
+          mkdir -p /tmp/base /tmp/cand
+
+          make -C engine/build ENGINE=v324 clean native CC=gcc ARCH_FLAGS="$ARCH_FLAGS" STATIC_FLAG="$STATIC_FLAG"
+          cp engine/c/zchezz_v324/zchezz.exe /tmp/base/zchezz.exe
+          cp engine/c/zchezz_v324/nnue_weights.bin /tmp/base/nnue_weights.bin
+
           cp -a engine/c/zchezz_v324 engine/c/zchezz_v331
-          make -C engine/build ENGINE=v331 clean >/dev/null || true
           python - <<'PY'
           from pathlib import Path
 
-          def repl(path, old, new, required=False):
-              p = Path(path)
-              s = p.read_text(encoding='utf-8')
-              n = s.count(old)
-              if n:
-                  p.write_text(s.replace(old, new), encoding='utf-8')
-                  print(path, n, repr(old), '->', repr(new))
-              elif required and new not in s:
-                  raise SystemExit(f'{path}: missing {old!r}/{new!r}')
+          main = Path('engine/c/zchezz_v331/main.c')
+          s = main.read_text(encoding='utf-8')
+          assert s.count('#define ENGINE_VERSION "3.24"') == 1
+          s = s.replace('#define ENGINE_VERSION "3.24"', '#define ENGINE_VERSION "3.31"', 1)
+          s = s.replace('Zchezz v3.24', 'Zchezz v3.31')
+          main.write_text(s, encoding='utf-8')
 
-          # Release identity: v3.31 is v3.24 compact52 + incremental occupancy.
-          repl('engine/c/zchezz_v331/main.c', '#define ENGINE_VERSION "3.24"', '#define ENGINE_VERSION "3.31"', True)
-          repl('engine/c/zchezz_v331/main.c', 'Zchezz v3.24', 'Zchezz v3.31')
-
-          # True incremental occupancy. Keep occ/occ_w/occ_b synchronized at each
-          # bitboard mutation and remove the full occupancy rebuild at board_make end.
           p = Path('engine/c/zchezz_v331/board.c')
           s = p.read_text(encoding='utf-8')
           old = '''static inline void uf_bb_clr(Board *b, UndoFrame *uf, int bi, int sq) {
@@ -78,7 +79,6 @@ jobs:
               uf_bb_record(uf, bi, sq, was);
               b->bb[bi] |= ((uint64_t)1<<sq);
           }'''
-          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines())
           new = '''static inline void uf_bb_clr(Board *b, UndoFrame *uf, int bi, int sq) {
               if ((unsigned)bi >= 12u) return;  /* SMP guard: P2BI[0]=-1 from corrupt TT move */
               uint64_t bit = (uint64_t)1 << sq;
@@ -103,7 +103,10 @@ jobs:
                   else        b->occ_b |= bit;
               }
           }'''
-          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines())
+          # YAML removes the common run-block indent; Python source indentation
+          # above is literal 4-space C indentation after heredoc parsing.
+          old = old.replace('          ', '')
+          new = new.replace('          ', '')
           if s.count(old) != 1:
               raise SystemExit(f'bb helper anchor count={s.count(old)}')
           s = s.replace(old, new, 1)
@@ -116,38 +119,15 @@ jobs:
               b->occ_w = b->bb[0]|b->bb[1]|b->bb[2]|b->bb[3]|b->bb[4]|b->bb[5];
               b->occ_b = b->bb[6]|b->bb[7]|b->bb[8]|b->bb[9]|b->bb[10]|b->bb[11];
               b->occ   = b->occ_w | b->occ_b;'''
-          old = '\n'.join(line[10:] if line.startswith('          ') else line for line in old.splitlines())
+          old = old.replace('          ', '')
           new = '''    /* v3.31: occupancy is maintained incrementally by uf_bb_clr/set.
-               * board_unmake restores uf->occ/occ_w/occ_b directly. */'''
-          new = '\n'.join(line[10:] if line.startswith('          ') else line for line in new.splitlines())
+           * board_unmake restores uf->occ/occ_w/occ_b directly. */'''
           if s.count(old) != 1:
               raise SystemExit(f'occupancy rebuild anchor count={s.count(old)}')
           p.write_text(s.replace(old, new, 1), encoding='utf-8')
-
-          # Promote active baseline defaults.
-          Path('engine/ACTIVE_ENGINE').write_text('v331\n', encoding='utf-8')
-          repl('engine/build/Makefile', 'ENGINE       ?= v324', 'ENGINE       ?= v331', True)
-          repl('engine/build/Makefile', "v3.24's NNU3 engine", "v3.31's NNU3 engine")
-          repl('engine/build/Makefile', 'v3.24 participates', 'v3.31 participates')
-          repl('engine/build/build_termux.sh', 'VERSION="${1:-v324}"', 'VERSION="${1:-v331}"', True)
-
-          for path in [
-              'tests/run_arena.py', 'tests/run_selfplay.py',
-              'tests/run_tournament.py', 'tests/run_tournament_quick.py'
-          ]:
-              repl(path, 'zchezz_v324', 'zchezz_v331')
-              repl(path, 'Zchezz-v324', 'Zchezz-v331')
-              repl(path, 'v324-1T', 'v331-1T')
-              repl(path, 'v3.24', 'v3.31')
           PY
-          git diff --check
 
-      - name: Verify combined-source scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Apart from version identity, v331 must differ from v324 engine source only
-          # in board.c (incremental occupancy). The compact NNUE is inherited exactly.
+          # The compact NNUE in v3.31 must be exactly the v3.24 NNUE.
           cmp engine/c/zchezz_v324/nnue.c engine/c/zchezz_v331/nnue.c
           cmp engine/c/zchezz_v324/nnue.h engine/c/zchezz_v331/nnue.h
           cmp engine/c/zchezz_v324/nnue_weights.bin engine/c/zchezz_v331/nnue_weights.bin
@@ -155,54 +135,120 @@ jobs:
             cmp "engine/c/zchezz_v324/$f" "engine/c/zchezz_v331/$f"
           done
 
-      - name: Build native v3.31
-        shell: bash
-        run: |
-          set -euo pipefail
-          make -C engine/build ENGINE=v331 clean native
-          test -x engine/c/zchezz_v331/zchezz.exe
-          OUT="$(printf 'uci\nisready\nquit\n' | engine/c/zchezz_v331/zchezz.exe --nnue engine/c/zchezz_v331/nnue_weights.bin 2>&1)"
-          printf '%s\n' "$OUT"
-          grep -q 'id name Zchezz 3.31' <<<"$OUT"
-          grep -q '\[NNUE\] H2 compact runtime: 50 live / 64 file -> 52 SIMD slots' <<<"$OUT"
-          grep -q 'readyok' <<<"$OUT"
+          make -C engine/build ENGINE=v331 clean native CC=gcc ARCH_FLAGS="$ARCH_FLAGS" STATIC_FLAG="$STATIC_FLAG"
+          cp engine/c/zchezz_v331/zchezz.exe /tmp/cand/zchezz.exe
+          cp engine/c/zchezz_v331/nnue_weights.bin /tmp/cand/nnue_weights.bin
 
-      - name: Native regression tests
-        shell: bash
-        run: |
-          set -euo pipefail
+          base_out="$(cd /tmp/base && printf 'uci\nquit\n' | ./zchezz.exe 2>&1)"
+          cand_out="$(cd /tmp/cand && printf 'uci\nquit\n' | ./zchezz.exe 2>&1)"
+          printf '%s\n' "$base_out"
+          printf '%s\n' "$cand_out"
+          grep -Fq 'id name Zchezz 3.24' <<<"$base_out"
+          grep -Fq 'id name Zchezz 3.31' <<<"$cand_out"
+          grep -Fq '[NNUE] H2 compact runtime: 50 live / 64 file -> 52 SIMD slots' <<<"$base_out"
+          grep -Fq '[NNUE] H2 compact runtime: 50 live / 64 file -> 52 SIMD slots' <<<"$cand_out"
+          if printf '%s\n%s\n' "$base_out" "$cand_out" | grep -Fq '[NNUE] Cannot open'; then
+            echo 'ERROR: NNUE failed to load' >&2
+            exit 1
+          fi
           python tests/test_perft.py --version v331 --max-depth 4
-          python tests/test_uci_extended.py --version v331
+
+      - name: Generate deterministic openings
+        shell: bash
+        env:
+          OPENING_SEED: ${{ matrix.seed }}
+        run: |
+          mkdir -p tests/arena_results
           python - <<'PY'
-          from utils.repo_paths import active_version, engine_dir
-          assert active_version() == 'v331', active_version()
-          assert engine_dir().name == 'zchezz_v331', engine_dir()
-          print('active baseline:', active_version(), engine_dir())
+          import os, random, chess
+          from pathlib import Path
+          r = random.Random(int(os.environ['OPENING_SEED']))
+          out, seen = [], set()
+          while len(out) < 600:
+              b = chess.Board()
+              ok = True
+              for _ in range(r.randint(8, 22)):
+                  moves = list(b.legal_moves)
+                  if not moves:
+                      ok = False; break
+                  quiets = [m for m in moves if not b.is_capture(m)]
+                  b.push(r.choice(quiets if quiets and r.random() < 0.72 else moves))
+                  if b.is_game_over(claim_draw=True):
+                      ok = False; break
+              if not ok: continue
+              key = ' '.join(b.fen().split()[:4])
+              if key not in seen:
+                  seen.add(key); out.append(key)
+          Path('tests/arena_results/openings.epd').write_text('\n'.join(out) + '\n')
           PY
 
-      - name: Compile and validate WASM bundle
+      - name: A/B 500 games at 200ms
         shell: bash
         run: |
           set -euo pipefail
-          make -C engine/build ENGINE=v331 bundle
-          test -s engine/c/zchezz_v331/zchezz_wasm.js
-          test -s engine/c/zchezz_v331/zchezz_wasm.wasm
-          test -s engine/c/zchezz_v331/zchezz_bundle.html
-          python tests/test_browser_html.py --html engine/c/zchezz_v331/zchezz_bundle.html
-          python tests/test_book.py --html engine/c/zchezz_v331/zchezz_bundle.html --evaluate false --write-cleaned false
-          cp engine/c/zchezz_v331/zchezz_bundle.html index.html
-          grep -q 'Zchezz NNUE 3.31' index.html
+          python tests/run_arena.py \
+            --player uci:/tmp/cand/zchezz.exe --player uci:/tmp/base/zchezz.exe \
+            --games 500 --movetime 200 --nodes 0 --threads 1 --max-plies 300 \
+            --openings "$GITHUB_WORKSPACE/tests/arena_results/openings.epd" \
+            --opening-plies 0 --seed ${{ matrix.seed }} --tt-mb 8 \
+            --json "tests/arena_results/200ms-${{ matrix.shard }}.json" \
+            --pgn "tests/arena_results/200ms-${{ matrix.shard }}.pgn" \
+            2>&1 | tee "tests/arena_results/arena-${{ matrix.shard }}.log"
+          python - <<'PY'
+          import re
+          from pathlib import Path
+          shard='${{ matrix.shard }}'
+          s=Path(f'tests/arena_results/arena-{shard}.log').read_text()
+          hits=re.findall(r'P0:.*?: \+(\d+) =(\d+) -(\d+) \(500 games\)', s)
+          if not hits: raise SystemExit('result line not found')
+          w,d,l=map(int,hits[-1])
+          Path(f'tests/arena_results/result-{shard}.txt').write_text(f'{w} {d} {l}\n')
+          print('candidate WDL',w,d,l)
+          PY
 
-      - name: Commit and push v3.31 main baseline
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v331-v324-${{ matrix.shard }}
+          path: tests/arena_results/result-${{ matrix.shard }}.txt
+          if-no-files-found: error
+
+  strength-gate:
+    needs: ab
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v331-v324-*
+          path: results
+          merge-multiple: true
+      - name: Aggregate and require positive 95% Elo lower bound
         shell: bash
         run: |
-          set -euo pipefail
-          git rm .github/workflows/v331-promote-main.yml
-          git add engine/ACTIVE_ENGINE engine/build/Makefile engine/build/build_termux.sh \
-                  engine/c/zchezz_v331 \
-                  tests/run_arena.py tests/run_selfplay.py tests/run_tournament.py tests/run_tournament_quick.py \
-                  index.html
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'release(v331): combine compact52 NNUE and incremental occupancy'
-          git push origin HEAD:main
+          python - <<'PY'
+          from pathlib import Path
+          import math
+          files=sorted(Path('results').glob('result-*.txt'))
+          if len(files)!=8: raise SystemExit(f'expected 8 shards, got {len(files)}')
+          W=D=L=0
+          for f in files:
+              w,d,l=map(int,f.read_text().split())
+              print(f.name,w,d,l)
+              W+=w; D+=d; L+=l
+          N=W+D+L
+          if N!=4000: raise SystemExit(f'expected 4000 games, got {N}')
+          p=(W+0.5*D)/N
+          elo=400*math.log10(p/(1-p))
+          mean=p
+          ex2=(W+0.25*D)/N
+          var=(ex2-mean*mean)*N/(N-1)
+          se_p=math.sqrt(var/N)
+          deriv=400/math.log(10)*(1/p+1/(1-p))
+          se_elo=deriv*se_p
+          lo=elo-1.96*se_elo
+          hi=elo+1.96*se_elo
+          print(f'AGGREGATE W={W} D={D} L={L} N={N}')
+          print(f'score={p:.6f} Elo={elo:+.2f} 95%CI=[{lo:+.2f},{hi:+.2f}]')
+          if lo <= 0:
+              raise SystemExit('STRENGTH GATE FAILED: v3.31 is not proven stronger than v3.24 at 95% confidence')
+          print('STRENGTH GATE PASSED: v3.31 is stronger than v3.24 at 95% confidence')
+          PY
