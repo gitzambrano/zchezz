@@ -2,7 +2,7 @@
 
 # The active release line on this branch. Override with ENGINE=vXXX for
 # historical/regression builds. Keep this aligned with engine/ACTIVE_ENGINE.
-ENGINE       ?= v324
+ENGINE       ?= v325
 # Native arena/selfplay/GA use the per-instance NnueNet API introduced in v4.
 # v3.24's NNU3 engine does not expose that API, so shared native tools retain
 # the current NNU4 host. v3.24 participates through architecture-neutral UCI
