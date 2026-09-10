@@ -1,20 +1,11 @@
-# engine/build/Makefile — shared build system for Zchezz engine versions.
-
-# The active release line on this branch. Override with ENGINE=vXXX for
-# historical/regression builds. Keep this aligned with engine/ACTIVE_ENGINE.
+# Shared build entrypoint. Bare invocations always target v325.
 ENGINE       ?= v325
-# Native arena/selfplay/GA use the per-instance NnueNet API introduced in v4.
-# v3.24's NNU3 engine does not expose that API, so shared native tools retain
-# the current NNU4 host. v3.24 participates through architecture-neutral UCI
-# wrappers (tests/run_arena.py, run_selfplay.py, run_tournament*.py).
-TOOLS_ENGINE ?= v403
-# AVX2 is the portable x86-64 release baseline. AVX-VNNI remains opt-in via
-# ARCH_FLAGS="-mavxvnni -mavx2" on CPUs that actually support it.
-ARCH_FLAGS ?= -mavx2
-STATIC_FLAG ?= -static
+# Native in-process arena/selfplay/GA need the NNU4 per-instance API.
+# v500 is the supported NNU4 host; cross-family work uses UCI runners.
+TOOLS_ENGINE ?= v500
+ARCH_FLAGS   ?= -mavx2
+STATIC_FLAG  ?= -static
 
-# GNU Make defines CC=cc as a built-in default. Override only that built-in
-# value. Environment and command-line selections such as CC=clang win.
 ifeq ($(origin CC),default)
 CC = gcc
 endif
@@ -32,8 +23,8 @@ EMWARNS = -Wno-unused-variable -Wno-unused-but-set-variable -Wno-uninitialized \
 LDFLAGS = $(STATIC_FLAG) -lm -pthread
 
 CORE_SRCS = $(EDIR)/main.c $(EDIR)/board.c $(EDIR)/search.c $(EDIR)/nnue.c $(EDIR)/syzygy.c $(EDIR)/book.c
-TB_C      = $(EDIR)/tbprobe.c
-TB_H      = $(EDIR)/tbprobe.h
+TB_C = $(EDIR)/tbprobe.c
+TB_H = $(EDIR)/tbprobe.h
 
 ifneq ($(and $(wildcard $(TB_C)),$(wildcard $(TB_H))),)
 HAVE_FATHOM = 1
@@ -68,8 +59,7 @@ PYTHON = python3
 RUN_LOCAL = ./
 endif
 
-.PHONY: native debug sanitize test-c clean wasm bundle selfplay arena ga_tune \
-        build-info require-tablebases
+.PHONY: native debug sanitize test-c clean wasm bundle selfplay arena ga_tune build-info require-tablebases
 
 build-info:
 	@echo ENGINE=$(ENGINE)
@@ -82,8 +72,6 @@ build-info:
 ifeq ($(HAVE_FATHOM),1)
 require-tablebases:
 	@echo Fathom sources available for $(ENGINE).
-	@echo $(TB_C)
-	@echo $(TB_H)
 else
 require-tablebases:
 	$(error Fathom sources unavailable for $(ENGINE). Required: $(TB_C) and $(TB_H))
@@ -96,35 +84,25 @@ $(TARGET): $(NATIVE_SRCS)
 	$(CC) $(CFLAGS) $(TB_DEFS) $(WARNS) -o $@ $^ $(LDFLAGS)
 
 debug: $(NATIVE_SRCS)
-	$(CC) -O0 -g3 -D_GNU_SOURCE -std=c11 -I$(EDIR) $(TB_DEFS) \
-		-Wall -Wextra -Wpedantic -Wshadow \
-		-o $(EDIR)/zchezz_debug.exe $(NATIVE_SRCS) -lm -pthread
+	$(CC) -O0 -g3 -D_GNU_SOURCE -std=c11 -I$(EDIR) $(TB_DEFS) -Wall -Wextra -Wpedantic -Wshadow -o $(EDIR)/zchezz_debug.exe $(NATIVE_SRCS) -lm -pthread
 
 sanitize: $(NATIVE_SRCS)
-	$(CC) -O1 -g3 -fno-omit-frame-pointer -fsanitize=address,undefined \
-		-D_GNU_SOURCE -std=c11 -I$(EDIR) $(TB_DEFS) \
-		-o $(EDIR)/zchezz_sanitize.exe $(NATIVE_SRCS) \
-		-lm -pthread -fsanitize=address,undefined
+	$(CC) -O1 -g3 -fno-omit-frame-pointer -fsanitize=address,undefined -D_GNU_SOURCE -std=c11 -I$(EDIR) $(TB_DEFS) -o $(EDIR)/zchezz_sanitize.exe $(NATIVE_SRCS) -lm -pthread -fsanitize=address,undefined
 
 test-c: ../c/tests/test_engine_invariants.c $(EDIR)/board.c $(EDIR)/nnue.c
-	$(CC) -O2 -g -D_GNU_SOURCE -std=c11 -I$(EDIR) \
-		-o test_engine_invariants.exe \
-		../c/tests/test_engine_invariants.c $(EDIR)/board.c $(EDIR)/nnue.c -lm
+	$(CC) -O2 -g -D_GNU_SOURCE -std=c11 -I$(EDIR) -o test_engine_invariants.exe ../c/tests/test_engine_invariants.c $(EDIR)/board.c $(EDIR)/nnue.c -lm
 	$(RUN_LOCAL)test_engine_invariants.exe $(EDIR)/nnue_weights.bin
 
 SELFPLAY_SRCS = $(TOOLDIR)/selfplay.c $(TOOLDIR)/opening_pool.c $(TEDIR)/board.c $(TEDIR)/search.c $(TEDIR)/nnue.c
 selfplay: $(SELFPLAY_SRCS)
-	@echo Building selfplay with NNU4 tool host $(TOOLS_ENGINE).
 	$(CC) $(TOOL_CFLAGS) $(WARNS) -DNO_TABLEBASES -DNO_BOOK -o selfplay.exe $(SELFPLAY_SRCS) $(LDFLAGS)
 
 ARENA_SRCS = $(TOOLDIR)/arena.c $(TOOLDIR)/opening_pool.c $(TEDIR)/board.c $(TEDIR)/search.c $(TEDIR)/nnue.c
 arena: $(ARENA_SRCS)
-	@echo Building arena with NNU4 tool host $(TOOLS_ENGINE).
 	$(CC) $(TOOL_CFLAGS) $(WARNS) -DNO_TABLEBASES -DNO_BOOK -o arena.exe $(ARENA_SRCS) $(LDFLAGS)
 
 GA_TUNE_SRCS = $(TOOLDIR)/ga_tune.c $(TOOLDIR)/arena.c $(TOOLDIR)/opening_pool.c $(TEDIR)/board.c $(TEDIR)/search.c $(TEDIR)/nnue.c
 ga_tune: $(GA_TUNE_SRCS)
-	@echo Building GA tuner with NNU4 tool host $(TOOLS_ENGINE).
 	$(CC) $(TOOL_CFLAGS) $(WARNS) -DNO_TABLEBASES -DNO_BOOK -DARENA_NO_MAIN -o ga_tune.exe $(GA_TUNE_SRCS) $(LDFLAGS)
 
 wasm: $(WASM_SRCS)

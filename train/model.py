@@ -5,11 +5,11 @@ Architecture (must match engine/c/zchezz_v400/nnue.h and PARTE 5 of
 zchezz_v400_implementation_plan.md):
 
     Features  : HalfKP-4Bucket, 2560 per perspective (encoding.py)
-    L1        : 2560 -> 512, SHARED between both perspectives
+    L1        : 2560 -> 48, SHARED between both perspectives
     Act L1    : SCReLU  —  c = clamp(x, 0, 1); out = c*c
-    Concat    : [L1(stm) 512 | L1(opp) 512] = 1024   (STM ALWAYS FIRST)
-    L2        : 1024 -> 32, ClippedReLU [0, 1]
-    L3        : 32   -> 1,  sigmoid -> WDL probability, STM-relative
+    Concat    : [L1(stm) 48 | L1(opp) 48] = 96   (STM ALWAYS FIRST)
+    L2        : 96 -> 20, ClippedReLU [0, 1]
+    L3        : 20 -> 1, sigmoid -> WDL probability, STM-relative
 
 Every weight tensor is QAT-fake-quantized on every forward pass with the
 straight-through estimator (STE) pattern ported verbatim from v3.14's
@@ -90,9 +90,9 @@ QA_EFF = (QA * QA) >> NN_SHIFT   # = 254 — effective scale of SCReLU's output
 assert QA_EFF == 254
 
 INPUT_DIM = 2560    # per-perspective HalfKP-4Bucket feature count
-HIDDEN1 = 512       # L1 output width, per perspective (shared weights)
-CONCAT_DIM = HIDDEN1 * 2   # 1024, [stm | opp]
-HIDDEN2 = 32        # L2 output width
+HIDDEN1 = 48        # v5 L1 output width, per perspective (shared weights)
+CONCAT_DIM = HIDDEN1 * 2   # 96, [stm | opp]
+HIDDEN2 = 20        # v5 L2 output width
 # ════════════════════════════════════════════════════════════════════════════════════
 
 
@@ -219,7 +219,7 @@ class NNUE(nn.Module):
         h_opp = h_opp + (h_opp_q - h_opp).detach()
 
         # ── Concat: STM ALWAYS FIRST ─────────────────────────────────
-        h = torch.cat([h_stm, h_opp], dim=1)   # (batch, 1024)
+        h = torch.cat([h_stm, h_opp], dim=1)   # (batch, 96)
 
         # ── L2 ────────────────────────────────────────────────────────
         w2 = fake_quant_int8(self.l2.weight, QB)

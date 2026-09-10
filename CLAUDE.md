@@ -1,172 +1,88 @@
-# Zchezz — Claude Project Guide
+# Zchezz Claude Instructions
 
-## Project status
+These instructions are repository contracts. Follow them for every change.
 
-Zchezz is a C11 UCI chess engine with NNUE evaluation. It targets native builds
-and WebAssembly.
+## Supported engine profiles
 
-- Active development candidate: `engine/c/zchezz_v403/`.
-- Stable comparison baseline for this branch: `engine/c/zchezz_v402/`.
-- Do not assume that v403 and v402 are identical. Verify source and artifact
-  hashes when that fact matters.
-- Released engine source directories are immutable. Create a new version
-  directory for a new engine release.
+- Treat `v325` as the repository default and released working line.
+- Treat `v500` as a supported secondary experimental line.
+- Keep `engine/ACTIVE_ENGINE` equal to `v325` unless the user explicitly requests a promotion.
+- Do not create or restore `engine/c/zchezz_v4xx` directories.
+- Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
+- Keep NNU3 and NNU4 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
 
-Detailed architecture belongs in `README.md` and `docs/`. This file contains
-cross-agent development rules.
+## Bare-run contract
 
-## Canonical validation workflow
+- Every public operational script must run with no command-line arguments.
+- A bare run must select `v325` unless the script is a family-specific implementation module whose profile is explicit in its file name.
+- Optional CLI arguments may override defaults; they must not be required for normal execution.
+- `--show-config` or an equivalent non-destructive inspection mode must not build engines, start games, train, delete files, or change repository state.
+- Missing optional external prerequisites must produce a clear diagnostic. Scripts intended for inspection or orchestration must not fail merely because Stockfish, CUDA, tablebases, or an opening corpus is absent.
 
-`tests/run_tests.py` is the canonical test entry point. The authoritative test
-catalog, purpose of every gate, pass criteria, prerequisites, and failure
-meaning are in `docs/testing.md`.
+## Generic orchestration
 
-Use these profiles:
+- Build, self-play, data generation, teacher labeling, training orchestration, export orchestration, tournaments, benchmarks, and test orchestration must select behavior from an engine profile.
+- Keep raw training data architecture-neutral. Store positions, side to move, game result, evaluation, move, and provenance; encode NNUE features only inside the selected trainer.
+- Use UCI process boundaries for cross-family matches and generic engine-vs-engine tooling.
+- Do not make a generic runner depend on NNU3 or NNU4 binary layout.
+- Do not duplicate runners for individual versions or experimental rounds.
 
-```bash
-python tests/run_tests.py smoke --version v403 --baseline v402
-python tests/run_tests.py full --version v403 --baseline v402 --keep-going
-python tests/run_tests.py web --version v403 --baseline v402 --keep-going
-python tests/run_tests.py regression --version v403 --baseline v402
-python tests/run_tests.py release --version v403 --baseline v402 --keep-going
-```
+## Stockfish
 
-Rules:
+- Use Stockfish as the canonical external teacher and benchmark opponent.
+- Resolve Stockfish through `ZCHEZZ_STOCKFISH`, repository-local `engine/stockfish/`, or PATH.
+- Teacher output must normalize scores to a documented common point of view before writing training data.
+- Benchmark defaults are `movetime=200 ms`, engine `Threads=1`, one concurrent game, paired openings with colors reversed, and tablebases disabled unless the test explicitly targets tablebases.
+- Do not use a hosted CI timing result as promotion evidence.
 
-1. Run `smoke` after native engine changes and after build/test infrastructure
-   changes.
-2. Run `full` before review or merge of engine changes.
-3. Run `web` when WASM, browser, bundle, opening-book HTML, or web assets change.
-4. Run `release` before calling a candidate release-ready.
-5. A `SKIP` is not evidence that a feature works. It means a prerequisite was
-   unavailable. Read `docs/testing.md` before interpreting a skipped gate.
-6. Strength-affecting changes also require the statistical procedure in
-   `docs/regression-testing.md`. A deterministic green suite does not prove
-   equal playing strength.
-7. Do not change a golden baseline only to make a failing test green. Explain
-   and review the behavior change first.
+## Training checkpoints
 
-## Bug workflow
+- Maintain `checkpoints/<profile>/latest.pt` as the canonical resumable checkpoint for every supported profile.
+- Before training, create `latest.pt` from installed engine weights when no PyTorch checkpoint exists.
+- After every successful training run, atomically refresh `latest.pt` from the newest completed checkpoint.
+- Reject checkpoint architecture mismatches before loading weights.
+- Keep installed engine weights and the corresponding importer sufficient to reconstruct a resumable checkpoint.
+- Do not commit transient optimizer checkpoints unless the user explicitly requests tracked training artifacts.
 
-For a logic defect:
+## Builds and tests
 
-1. Reproduce the defect.
-2. Add a focused regression test when practical.
-3. Confirm that the test fails before the fix when the environment permits.
-4. Implement the smallest correct fix.
-5. Run the focused test.
-6. Run `smoke`.
-7. Run `full` if engine behavior can change.
-8. Run statistical strength testing only when the change can affect strength.
+- Bare native builds use `ENGINE=v325`.
+- `ENGINE=v500` must build independently without changing the default marker.
+- Run deterministic local tests before considering a change complete.
+- Test both supported profiles for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure.
+- Run perft, UCI smoke, NNUE artifact validation, C invariants, and Python contract tests when their dependencies are available.
+- Treat skipped tests as missing evidence, not as passes.
+- Keep generated test evidence under `artifacts/`; do not overwrite source files as a test side effect.
 
-Do not hide real defects by weakening tests. Remove brittle assertions only
-when they test an implementation accident, machine performance, optional local
-data, or text formatting rather than the intended contract.
+## Git and branches
 
-## Statistical regression rule
+- Do not delete, create, rename, merge, rebase, or force-update unrelated branches as a side effect of testing.
+- Do not make experiment branches depend on workflow files or branch-name patterns.
+- Do not auto-promote experimental code to `main`.
+- Keep experimental rounds isolated by branch, data/output directory, or explicit configuration rather than by copying workflows.
+- Preserve user work that is unrelated to the requested change.
 
-Playing strength is statistical. Follow `docs/regression-testing.md`.
+## GitHub Actions
 
-- Use paired openings and reverse colors.
-- Record candidate and baseline Git SHA, NNUE hashes, opening source and seed,
-  time control, Threads, Hash, concurrency, W/D/L, crashes, time losses, and
-  the Elo confidence interval or SPRT state.
-- Prefer SPRT for promotion decisions.
-- A short fixed-game H2H is an early warning, not the promotion gate.
-- Documentation-only and repository-only changes do not require Elo testing.
-- Search, evaluation, NNUE, tablebase, threading, and time-management changes do.
+- Keep Actions minimal and generic.
+- Automatic CI may run on `main` and pull requests. Do not trigger broad automatic jobs solely because a branch name starts with a version prefix.
+- Workflows must not commit, push, merge, delete branches, create branches, publish releases, or modify source files.
+- Workflows use read-only repository permissions unless a user-requested publishing task requires a separate explicit workflow.
+- Do not create version-specific or round-specific workflow files.
+- Local scripts remain the authoritative way to run tests and experiments; Actions are optional verification.
 
-## Build rules
+## Source and documentation
 
-The shared build entry point is `engine/build/Makefile`. See `docs/build.md`.
+- Keep comments technical, current, and conditional. State what must be true and what a caller may rely on.
+- In `AGENTS.md`, do not include project history, migration narratives, or explanations of why a previous design changed.
+- Keep `CLAUDE.md` and `AGENTS.md` bodies identical; only the first title line may differ.
+- Update comments, tests, and docs when a public contract changes.
+- Use repository-relative paths in tracked configuration whenever possible.
 
-- The default active engine is v403 on this branch.
-- The caller-selected compiler must be respected. CI must genuinely compile
-  with both GCC and Clang.
-- Local Fathom files are optional repository resources. If both Fathom source
-  and header are present, the native build enables Syzygy. If they are absent,
-  a clean checkout builds with `NO_TABLEBASES`.
-- Use `require-tablebases` when the test or release claim specifically requires
-  a tablebase-capable native binary.
-- Never delete ignored datasets, checkpoints, openings, tablebases, local
-  engines, or other user resources as part of build cleanup.
+## Safety invariants
 
-## Critical engine invariants
-
-These are correctness landmines. Keep them true.
-
-- NNUE concatenation order is always `[stm, opp]`.
-- A king move that crosses that perspective's king-bucket boundary invalidates
-  that perspective's accumulator. The dirty state belongs to the accumulator
-  stack frame and must survive push/pop correctly.
-- TT probe occurs before TB probe.
-- Self-play shares one `TTable` between colors of one game and physically
-  clears it between games.
-- Arena isolates a `TTable` per player.
-- Lazy-SMP helpers share the main thread's `TTable`.
-- Only the main search thread increments TT generation.
-- Board square encoding is `a8=0` through `h1=63`.
-- Piece encoding uses `COL_W=8`, `COL_B=16`, piece types 1..6.
-- Native engine code is C11.
-
-Executable representation invariants are tested by
-`engine/c/tests/test_engine_invariants.c`.
-
-## Training-data convention
-
-Use only these semantic names:
-
-| Name | Meaning | Frame / range |
-|---|---|---|
-| `result` | real game outcome | White-relative, 0.0 / 0.5 / 1.0 |
-| `cp` | centipawn evaluation | White-relative integer |
-| `wdl` | `sigmoid(cp / 320)` | White-relative, 0..1 |
-
-The training target is computed at training time:
-
-```text
-target = lambda * result + (1 - lambda) * wdl
-```
-
-Do not bake this blend into generated datasets. `wdl` is derived from `cp`;
-when both exist, training code must treat `cp` as the primitive and detect
-inconsistency.
-
-The packed native `.bin` sample format may use STM-relative internal fields;
-the reader is responsible for converting them to the canonical training frame.
-
-## Tool configuration
-
-Every configurable test, training, labeling, or native utility must have a
-documented configuration block near the top of the file. CLI defaults must
-refer to those constants rather than duplicate literals.
-
-Keep path defaults repository-relative or derive them through
-`utils/repo_paths.py`. Existing machine-local defaults are tracked as explicit
-migration debt. Do not add new `C:\Zchezz` roots.
-
-## Native and Python tools
-
-Native tools are faster execution paths, not reduced replacements.
-
-- Preserve required output formats.
-- Preserve opening-book support and random opening support where applicable.
-- Native arena is for engine-version A/B and promotion testing.
-- Stockfish-anchored absolute Elo remains a Python tournament responsibility.
-- Before replacing a harness, inventory capabilities and document any
-  deliberate difference.
-
-## Documentation
-
-- `CLAUDE.md` and `AGENTS.md` must have identical bodies; only the title line
-  may differ.
-- `docs/testing.md` is the canonical deterministic-test catalog.
-- `docs/regression-testing.md` is the canonical statistical-strength policy.
-- `docs/build.md` is the canonical build reference.
-- `docs/release-process.md` defines release evidence.
-- `docs/syzygy.md` defines tablebase availability and validation.
-- All English technical prose follows the mirrored writing-rules skills under
-  `.agents/skills/writing-rules/` and `.claude/skills/writing-rules/`.
-
-When documentation and executable behavior disagree, fix one of them in the
-same change. Do not leave stale instructions as historical folklore.
+- Validate engine/profile compatibility before a long run starts.
+- Never silently mix evaluation targets from different evaluators in a training column without provenance.
+- Never silently reinterpret NNU3 data as NNU4 weights or vice versa.
+- Fail before games or training begin when a required artifact has the wrong magic, dimensions, size, or profile.
+- Keep deterministic seeds, paired openings, and test parameters in output metadata for reproducibility.

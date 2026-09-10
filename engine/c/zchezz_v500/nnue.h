@@ -3,14 +3,14 @@
  * ── Architecture (v4.00) ─────────────────────────────────────────
  *
  *   Features  : HalfKP-4Bucket, 2560 per perspective
- *   L1        : 2560 → 512   (int16 accumulator, fully incremental)
+ *   L1        : 2560 → 48    (int16 accumulator, fully incremental)
  *   Act L1    : SCReLU  —  c = clamp(x, 0, QA); out = (c*c) >> 8
- *   Concat    : [L1(stm) 512 | L1(opp) 512] = 1024 uint8
- *   L2        : 1024 → 32    (int8, maddubs kernel)
+ *   Concat    : [L1(stm) 48 | L1(opp) 48] = 96 uint8
+ *   L2        : 96 → 20       (int8, maddubs kernel)
  *   Act L2    : ClippedReLU [0, QB]
- *   L3        : 32   → 1     (int8 → float32)
+ *   L3        : 20 → 1        (int8 → float32)
  *   Output    : centipawns, STM-relative, clamped to [-2000, +2000]
- *   Weights   : NNU4 binary, ~2.6 MB
+ *   Weights   : NNU4 binary, ~248 KB
  *
  * ── What changed vs v3.14 (and why) ──────────────────────────────
  *
@@ -139,10 +139,10 @@ extern NnueNet *g_nnue_net;
 #define NN_FEAT_PER_BUCKET 640   /* 10 relative piece planes x 64 squares */
 #define NN_FEAT_IN        2560   /* NN_KING_BUCKETS * NN_FEAT_PER_BUCKET  */
 #define NN_L1_IN          2560   /* alias of NN_FEAT_IN (per perspective) */
-#define NN_L1_OUT          512
-#define NN_L2_IN          1024   /* concat of both perspectives: 2*L1_OUT */
-#define NN_L2_OUT           32
-#define NN_L3_IN            32   /* must equal NN_L2_OUT                  */
+#define NN_L1_OUT          48
+#define NN_L2_IN          96   /* concat of both perspectives: 2*L1_OUT */
+#define NN_L2_OUT           20
+#define NN_L3_IN            20   /* must equal NN_L2_OUT                  */
 #define NN_L3_OUT            1
 
 /* ── Quantization constants ────────────────────────────────────── */
@@ -167,10 +167,10 @@ extern NnueNet *g_nnue_net;
 /* ── Per-thread NNUE accumulator state ─────────────────────────
  *
  * Memory layout (~257 KB, 32-byte aligned for AVX2):
- *   acc_stack_w[128][512]  White-POV accumulator stack   (128 KB)
- *   acc_stack_b[128][512]  Black-POV accumulator stack   (128 KB)
+ *   acc_stack_w[128][48]  White-POV accumulator stack   (128 KB)
+ *   acc_stack_b[128][48]  Black-POV accumulator stack   (128 KB)
  *   acc_ptr                current frame index
- *   acc_w/acc_b[512]       scratch used by nnue_rebuild  (2 KB)
+ *   acc_w/acc_b[48]       scratch used by nnue_rebuild  (2 KB)
  *   bucket_w/b_stack[128]  king bucket per frame         (256 B)
  *   dirty_w/b_stack[128]   "perspective needs rebuild"   (256 B)
  *   acc_dirty              whole-accumulator rebuild flag
@@ -189,6 +189,14 @@ typedef struct {
     int16_t  acc_stack_w[NN_ACC_STACK][NN_L1_OUT] __attribute__((aligned(32)));
     int16_t  acc_stack_b[NN_ACC_STACK][NN_L1_OUT] __attribute__((aligned(32)));
     int      acc_ptr;
+    /* Lazy materialization metadata.  Each move needs at most four
+     * non-king feature operations (castle rook: 2; EP/promotion/capture: <=3). */
+    uint8_t  acc_valid_w[NN_ACC_STACK];
+    uint8_t  acc_valid_b[NN_ACC_STACK];
+    uint8_t  delta_n[NN_ACC_STACK];
+    uint8_t  delta_piece[NN_ACC_STACK][4];
+    uint8_t  delta_sq[NN_ACC_STACK][4];
+    int8_t   delta_sign[NN_ACC_STACK][4];
     int16_t  acc_w[NN_L1_OUT]                     __attribute__((aligned(32)));
     int16_t  acc_b[NN_L1_OUT]                     __attribute__((aligned(32)));
     uint8_t  bucket_w_stack[NN_ACC_STACK];

@@ -178,7 +178,7 @@ static int tt_hashfull(void) {
     int sample = 1000;
     if (sample > TT_SIZE) sample = TT_SIZE;
     for (int i = 0; i < sample; i++) {
-        if (g_tt->H[i] != 0 && g_tt->G[i] == g_tt->gen) used++;
+        if (g_tt->e[i].hash != 0 && g_tt->e[i].gen == g_tt->gen) used++;
     }
     return used;  /* per-mille */
 }
@@ -823,6 +823,9 @@ static void cmd_go(const char *line) {
         p.node_limit    = 0;
     } else if (mate > 0) {
         p.max_depth = mate * 2;
+        p.time_limit_ms = 0;
+    } else if (p.node_limit > 0) {
+        p.max_depth = MAX_PLY - 1;
         p.time_limit_ms = 0;
     } else if (wtime > 0 || btime > 0) {
         int is_white = (g_board.turn == COL_W);

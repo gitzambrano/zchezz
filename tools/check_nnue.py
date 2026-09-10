@@ -1,87 +1,30 @@
 #!/usr/bin/env python3
-"""Validate a Zchezz NNUE artifact without running a tournament."""
+"""Validate the installed NNUE artifact for a supported profile."""
 from __future__ import annotations
-
-import argparse
-import hashlib
-import struct
-import sys
+import argparse, hashlib, struct, sys
 from pathlib import Path
-
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "utils"))
-from repo_paths import active_version, nnue_weights  # noqa: E402
+from engine_profiles import profile
+FORMATS = {"NNU3": {"dims": (799,256,256,64,64), "size": 426_864}, "NNU4": {"dims": (2560,48,96,20,20), "size": 248_020}}
 
-NNU3_DIMS = (799, 256, 256, 64, 64)
-NNU3_SIZE = 426_864
-NNU4_DIMS = (2560, 512, 1024, 32, 32)
-
-
-def _header(data: bytes) -> tuple[bytes, int, tuple[int, ...], tuple[float, ...]]:
-    if len(data) < 44:
-        raise ValueError(f"file is too small: {len(data)} bytes")
-    magic = data[:4]
-    epoch = struct.unpack_from("<I", data, 4)[0]
-    dims = struct.unpack_from("<5I", data, 8)
-    scales = struct.unpack_from("<4f", data, 28)
-    return magic, epoch, dims, scales
-
-
-def _validate_nnu3(data: bytes, dims: tuple[int, ...]) -> None:
-    if dims != NNU3_DIMS:
-        raise ValueError(f"NNU3 dimension mismatch: {dims} != {NNU3_DIMS}")
-    if len(data) != NNU3_SIZE:
-        raise ValueError(f"NNU3 size mismatch: {len(data)} != {NNU3_SIZE}")
-
-
-def _validate_nnu4(data: bytes, dims: tuple[int, ...]) -> None:
-    if dims != NNU4_DIMS:
-        raise ValueError(f"NNU4 dimension mismatch: {dims} != {NNU4_DIMS}")
-    l1 = 2560 * 512 * 2
-    l1b = 512 * 4
-    l2 = 32 * 1024
-    l2b = 32 * 4
-    l3 = 32
-    expected_min = 44 + l1 + l1b + l2 + l2b + l3 + 4
-    if len(data) < expected_min:
-        raise ValueError(f"truncated NNU4: {len(data)} < {expected_min}")
-
-
-def inspect(path: Path) -> dict[str, object]:
-    data = path.read_bytes()
-    magic, epoch, dims, scales = _header(data)
-    if magic == b"NNU3":
-        _validate_nnu3(data, dims)
-    elif magic == b"NNU4":
-        _validate_nnu4(data, dims)
-    else:
-        raise ValueError(f"bad magic {magic!r}; expected NNU3 or NNU4")
-    return {
-        "path": str(path),
-        "format": magic.decode("ascii"),
-        "bytes": len(data),
-        "epoch": epoch,
-        "dims": dims,
-        "scales": scales,
-        "sha256": hashlib.sha256(data).hexdigest(),
-    }
-
+def inspect(path: Path, expected_format: str | None = None) -> dict[str, object]:
+    data=path.read_bytes()
+    if len(data)<44: raise ValueError(f"file is too small: {len(data)} bytes")
+    magic=data[:4].decode("ascii",errors="replace")
+    if magic not in FORMATS: raise ValueError(f"unsupported NNUE magic {magic!r}")
+    if expected_format and magic!=expected_format: raise ValueError(f"profile expects {expected_format}, artifact is {magic}")
+    epoch=struct.unpack_from("<I",data,4)[0]; dims=struct.unpack_from("<5I",data,8); scales=struct.unpack_from("<4f",data,28)
+    spec=FORMATS[magic]
+    if dims!=spec["dims"]: raise ValueError(f"{magic} dimension mismatch: {dims} != {spec['dims']}")
+    if len(data)!=spec["size"]: raise ValueError(f"{magic} size mismatch: {len(data)} != {spec['size']}")
+    return {"path":str(path),"format":magic,"bytes":len(data),"epoch":epoch,"dims":dims,"scales":scales,"sha256":hashlib.sha256(data).hexdigest()}
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", nargs="?", default="")
-    parser.add_argument("--version", default="")
-    args = parser.parse_args()
-    path = Path(args.path) if args.path else nnue_weights(args.version or active_version())
-    try:
-        result = inspect(path)
-    except (OSError, ValueError) as exc:
-        print(f"FAIL: {exc}")
-        return 1
-    for key, value in result.items():
-        print(f"{key}: {value}")
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument("path",nargs="?",default=""); p.add_argument("--profile","--version",dest="profile_name",default="")
+    a=p.parse_args(); selected=profile(a.profile_name or None); path=Path(a.path) if a.path else selected.weights
+    try: result=inspect(path,selected.network_format)
+    except (OSError,ValueError) as exc: print(f"FAIL: {exc}"); return 1
+    for k,v in result.items(): print(f"{k}: {v}")
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__=="__main__": raise SystemExit(main())

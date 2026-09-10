@@ -1,21 +1,17 @@
 # Repository Layout
 
 ```text
-.github/                 CI and manually triggered workflows
-.agents/                 cross-agent skills
-.claude/                 Claude Code skill mirrors
-docs/                    durable architecture and process documentation
-engine/build/            shared build/bundle entry points
-engine/c/zchezz_vXXX/    versioned engine source (current transition model)
-engine/c/tools/           native selfplay/arena/tuning tools
-engine/c/tests/           native invariant harnesses
-openings/                 opening inputs when present
-tests/                    correctness, integration, benchmark and game harnesses
-tools/                    repository/release maintenance tools
-train/                    NNUE data/training pipeline
-utils/                    shared Python infrastructure
-artifacts/                generated test/regression/release output; ignored
+.github/workflows/       one minimal read-only CI workflow
+engine/ACTIVE_ENGINE     default profile marker (`v325`)
+engine/c/zchezz_v3xx/    supported/current and retained v3-family sources
+engine/c/zchezz_v500/    supported secondary v5 source
+engine/c/tools/          native in-process tools
+engine/build/            shared build entrypoint
+train/                   architecture-neutral data plus family-specific trainers/exporters
+utils/engine_profiles.py canonical profile and Stockfish resolution
+utils/cliconf.py         small optional CLI override helper
+tests/                   local correctness and benchmark harnesses
+artifacts/               generated evidence
 ```
 
-`tests/` and `train/` remain version-less. Engine-version discovery belongs to `utils/repo_paths.py`.
-
+Operational scripts must work without command-line arguments. Optional flags only override in-file defaults. Cross-family orchestration selects a profile rather than importing a network binary layout directly.

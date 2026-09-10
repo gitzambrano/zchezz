@@ -57,7 +57,7 @@ CHECKPOINT
 A dict saved with torch.save holding the state_dict, the optimizer, the
 epoch, the metrics and an 'arch' sub-dict:
 
-    'arch': {'input': 2560, 'h1': 512, 'concat': 1024, 'h2': 32,
+    'arch': {'input': 2560, 'h1': 48, 'concat': 96, 'h2': 20,
               'encoding': 'halfkp_4bucket'}
 
 A run resumes only when --dataset-name matches the tag stored in the
@@ -125,14 +125,14 @@ import dataset
 #  never a literal (CLAUDE.md rule 8). Edit here to change the defaults
 #  used when a flag is not passed on the command line.
 # ════════════════════════════════════════════════════════════════════════
-CKPT_DIR = "checkpoints/v402"     # where the per-epoch .pt checkpoints are written
+CKPT_DIR = "checkpoints/v500"     # where the per-epoch .pt checkpoints are written
 CHECKPOINT_SOURCE = "auto"        # checkpoint to resume or transfer from:
                                    #   'auto'         -> check CKPT_DIR first; if empty, find the newest .pt
                                    #                     in any subfolder under checkpoints/ for weight transfer
                                    #   'new' / '' / False -> start fresh from random init (no checkpoint)
                                    #   'path/to/dir'  -> pick the newest checkpoint inside that folder
                                    #   'path/to/file.pt' -> load this exact checkpoint
-DATASET_NAME = "halfkp4b_v402_ft"  # tag stored in the checkpoint; resume only continues if this matches
+DATASET_NAME = "halfkp4b_v500_48x20"  # tag stored in the checkpoint; resume only continues if this matches
 EPOCHS = 100                      # number of training epochs. This also sets the LR
                                    # schedule: CosineAnnealingLR(T_max=EPOCHS), so a small
                                    # EPOCHS anneals the learning rate to eta_min quickly.
@@ -1197,9 +1197,9 @@ def stream_split(sources: list[SourceSpec], split: Literal["train", "val"],
 
 ARCH_DICT = {
     "input": 2560,
-    "h1": 512,
-    "concat": 1024,
-    "h2": 32,
+    "h1": 48,
+    "concat": 96,
+    "h2": 20,
     "encoding": "halfkp_4bucket",
 }
 

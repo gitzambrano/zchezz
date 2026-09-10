@@ -1,17 +1,10 @@
 # NNUE Engineering Notes
 
-The v403 core uses an NNU4 HalfKP-4Bucket network.
+The repository supports two NNUE formats.
 
-Compiled dimensions are 2560 input features per perspective, 512 L1 outputs, 1024 concatenated L2 inputs, 32 L2 outputs, and one scalar output. Mutable accumulator state is per thread. Network weights are immutable after loading.
+- `v325`: NNU3, `799 -> 256 -> 64 -> 1`, 426864-byte installed weight file.
+- `v500`: NNU4 HalfKP-4-Bucket, `2560 -> 48`, perspective concat `96`, `20 -> 1`, 248020-byte installed weight file.
 
-Critical contracts:
+Training data remains architecture-neutral until encoding. Each trainer/exporter must reject incompatible checkpoint architecture metadata. `checkpoints/<profile>/latest.pt` is the canonical resumable checkpoint. Installed engine weights plus the profile importer must be sufficient to reconstruct a resumable checkpoint when no PyTorch checkpoint exists.
 
-- feature encoding and king buckets must match the trainer/exporter exactly;
-- kings are not direct features;
-- concat order is `[stm, opp]`;
-- a king-bucket transition marks one perspective dirty;
-- lazy rebuild occurs from the post-move board before that perspective is evaluated;
-- incremental evaluation must equal a full rebuild.
-
-Use `python tools/check_nnue.py` for NNU4 header, dimension, length, and SHA-256 sanity. Use the native invariant harness for incremental/full-rebuild equivalence.
-
+Use `python tools/check_nnue.py` for the default v325 artifact or `python tools/check_nnue.py --profile v500` for v500.
