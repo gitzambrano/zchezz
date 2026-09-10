@@ -21,7 +21,7 @@ typedef struct SearchState SearchState;
 #define TT_LOWER  1
 #define TT_UPPER  2
 
-/* Dynamic cache-line TT. Four 16-byte entries live in each 64-byte cluster. */
+/* Stockfish-like compact TT. Three 10-byte entries live in each 32-byte cluster. */
 extern uint16_t TT_GEN;
 int  tt_resize_mb(int mb);
 void tt_clear(void);
