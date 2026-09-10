@@ -51,7 +51,7 @@ no anchor syntax to forward.
 ── BUILD RESOLUTION ────────────────────────────────────────────────
 
   ref == "HEAD" (case-insensitive): built IN PLACE, in this checkout's
-  own engine/c/zchezz_v324/ (the active v3.24 folder — see
+  own active engine folder (resolved from engine/ACTIVE_ENGINE — see
   ENGINE_DIR_FOR_HEAD below), no git worktree involved. This is the
   common "test my current uncommitted work" case — a worktree can only
   check out a COMMITTED ref, so a dirty working tree has to be built
@@ -166,7 +166,30 @@ import argparse
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_DIR = os.path.join(REPO_ROOT, ".arena_build_cache")
-ENGINE_DIR_FOR_HEAD = os.path.join(REPO_ROOT, "engine", "c", "zchezz_v324")
+def active_engine_dir(root):
+    """Return the engine directory named by engine/ACTIVE_ENGINE, or None.
+
+    The marker is authoritative for release/benchmark selection. Historical
+    trees without a valid marker fall back to find_engine_dir()'s legacy
+    highest-version heuristic.
+    """
+    marker = os.path.join(root, "engine", "ACTIVE_ENGINE")
+    try:
+        with open(marker, "r", encoding="utf-8") as f:
+            active = f.read().strip()
+    except OSError:
+        return None
+    if not active:
+        return None
+    candidate = os.path.join(root, "engine", "c", f"zchezz_{active}")
+    if os.path.isdir(candidate) and os.path.isfile(os.path.join(candidate, "board.c")):
+        return candidate
+    return None
+
+
+ENGINE_DIR_FOR_HEAD = active_engine_dir(REPO_ROOT)
+if ENGINE_DIR_FOR_HEAD is None:
+    raise RuntimeError("engine/ACTIVE_ENGINE does not resolve to a valid engine directory")
 BUILD_DIR = os.path.join(REPO_ROOT, "engine", "build")
 TOOLS_DIR = os.path.join(REPO_ROOT, "engine", "c", "tools")
 # arena.exe is a SHARED tool binary, built in engine/build/ (NOT inside
@@ -229,8 +252,8 @@ DEFAULT_GAUNTLET_SPEC    = ""       # "" = round-robin (no gauntlet candidate)
 # any --player on the CLI overrides this list in its entirety (see main()).
 # Same net:/uci:/ref: syntax as the CLI flag.
 DEFAULT_PLAYERS: list[str] = [
-    r"uci:engine/c/zchezz_v324/zchezz.exe",
-    r"uci:engine/c/zchezz_v324/zchezz.exe",
+    r"ref:HEAD",
+    r"ref:HEAD",
 ]
 
 # Mirrors CLAUDE.md's "Build Instructions -> Native (Windows/Linux)"
@@ -282,11 +305,15 @@ def git_rev_parse(ref, cwd=REPO_ROOT):
 
 
 def find_engine_dir(root):
-    """Highest-numbered engine/c/zchezz_v* folder under `root` — see
-    header comment 'BUILD RESOLUTION' for why this has to be a
-    heuristic (the project's one-folder-per-version convention means
-    the folder name at an arbitrary historical commit isn't knowable
-    in advance)."""
+    """Resolve the authoritative active engine for a checkout.
+
+    Prefer engine/ACTIVE_ENGINE. Only historical commits without a valid
+    marker fall back to the highest-numbered engine/c/zchezz_v* directory.
+    """
+    active = active_engine_dir(root)
+    if active is not None:
+        return active
+
     candidates = glob.glob(os.path.join(root, "engine", "c", "zchezz_v*"))
     candidates = [c for c in candidates if os.path.isdir(c) and os.path.isfile(os.path.join(c, "board.c"))]
     if not candidates:
@@ -301,8 +328,9 @@ def find_engine_dir(root):
             return -1
 
     candidates.sort(key=version_key)
-    return candidates[-1]
-
+    chosen = candidates[-1]
+    log(f"WARNING: no valid engine/ACTIVE_ENGINE in checkout; falling back to {chosen}")
+    return chosen
 
 def build_in_dir(engine_dir, label):
     """Runs BUILD_CMD_TEMPLATE inside `engine_dir`. Returns the path to
