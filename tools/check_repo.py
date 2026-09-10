@@ -34,7 +34,7 @@ def main() -> int:
             try: ast.parse(path.read_text(encoding='utf-8'),filename=str(path))
             except Exception as exc: error(f"Python syntax error in {path.relative_to(ROOT)}: {exc}")
     offenders=sorted(new_absolute_root_files(ROOT))
-    if offenders: error(f"new hard-coded C:/Zchezz roots: {offenders}")
+    if offenders: error(f"new hard-coded absolute repository roots: {offenders}")
     make=(ROOT/'engine/build/Makefile').read_text(encoding='utf-8')
     if not re.search(r'^ENGINE\s*\?=\s*v325\b',make,re.M): error('Makefile default must be v325')
     if not re.search(r'^TOOLS_ENGINE\s*\?=\s*v500\b',make,re.M): error('native tool host must be v500')
