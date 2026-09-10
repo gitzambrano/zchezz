@@ -161,12 +161,14 @@ static void test_nnue_feature_contracts(void) {
     CHECK(nnue_king_bucket_b(4) == 1,
           "black king e8 bucket mapping changed");
 #else
-    /* NNU3 / HM+extras contracts. */
+    /* NNU3 / HM+extras contracts. The current compact runtime keeps 50
+     * live H2 outputs plus two zero-padding SIMD slots, so L2/L3 are 52. */
     CHECK(NN_L1_IN == 799, "NNU3 input dimension changed");
     CHECK(NN_HM_IN == 768, "NNU3 HM feature dimension changed");
     CHECK(NN_EXTRA == 31, "NNU3 extra feature count changed");
-    CHECK(NN_L1_OUT == 256 && NN_L2_IN == 256 && NN_L2_OUT == 64,
-          "NNU3 layer dimensions changed");
+    CHECK(NN_L1_OUT == 256 && NN_L2_IN == 256 &&
+          NN_L2_OUT == 52 && NN_L3_IN == 52 && NN_L3_OUT == 1,
+          "NNU3 compact layer dimensions changed");
 #endif
 }
 
