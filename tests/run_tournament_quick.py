@@ -17,8 +17,8 @@ def _exe(p):
     return p.engine_dir/'zchezz.exe'
 
 def main():
-    ap=argparse.ArgumentParser(description=__doc__); ap.add_argument('--profile',default=DEFAULT_PROFILE); ap.add_argument('--opponent-profile',default=''); ap.add_argument('--show-config',action='store_true'); a,rest=ap.parse_known_args(); pa=profile(a.profile); pb=profile(a.opponent_profile or a.profile)
-    cmd=[sys.executable,str(ROOT/'tests/_run_tournament_quick_core.py'),'--engine-a',str(_exe(pa)),'--label-a',pa.name,'--engine-b',str(_exe(pb)),'--label-b',pb.name,'--threads','1','--movetime','200','--concurrency','1']
-    if a.show_config: cmd.append('--show-config')
-    return subprocess.run([*cmd,*rest],cwd=ROOT).returncode
+    ap=argparse.ArgumentParser(description=__doc__); ap.add_argument('--profile',default=DEFAULT_PROFILE); ap.add_argument('--opponent-profile',default=''); ap.add_argument('--show-config',action='store_true'); a,rest=ap.parse_known_args(); pa=profile(a.profile); pb=profile(a.opponent_profile or a.profile); ea,eb=_exe(pa),_exe(pb)
+    if a.show_config:
+        print(f'profile={pa.name}\nopponent_profile={pb.name}\nengine_a={ea}\nengine_b={eb}\nmovetime_ms=200\nthreads=1\nconcurrency=1'); return 0
+    return subprocess.run([sys.executable,str(ROOT/'tests/_run_tournament_quick_core.py'),'--engine-a',str(ea),'--label-a',pa.name,'--engine-b',str(eb),'--label-b',pb.name,'--threads','1','--movetime','200','--concurrency','1',*rest],cwd=ROOT).returncode
 if __name__=='__main__': raise SystemExit(main())

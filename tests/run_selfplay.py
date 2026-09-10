@@ -17,8 +17,8 @@ def _exe(p):
     return p.engine_dir/'zchezz.exe'
 
 def main():
-    ap=argparse.ArgumentParser(description=__doc__,add_help=True); ap.add_argument('--profile',default=DEFAULT_PROFILE); ap.add_argument('--show-config',action='store_true'); a,rest=ap.parse_known_args(); p=profile(a.profile)
-    cmd=[sys.executable,str(ROOT/'tests/_run_selfplay_core.py'),'--engine',str(_exe(p)),'--engine-label',p.name,'--movetime','200','--concurrency','1']
-    if a.show_config: cmd.append('--show-config')
-    return subprocess.run([*cmd,*rest],cwd=ROOT).returncode
+    ap=argparse.ArgumentParser(description=__doc__); ap.add_argument('--profile',default=DEFAULT_PROFILE); ap.add_argument('--show-config',action='store_true'); a,rest=ap.parse_known_args(); p=profile(a.profile); exe=_exe(p)
+    if a.show_config:
+        print(f'profile={p.name}\nengine={exe}\nmovetime_ms=200\nconcurrency=1'); return 0
+    return subprocess.run([sys.executable,str(ROOT/'tests/_run_selfplay_core.py'),'--engine',str(exe),'--engine-label',p.name,'--movetime','200','--concurrency','1',*rest],cwd=ROOT).returncode
 if __name__=='__main__': raise SystemExit(main())
