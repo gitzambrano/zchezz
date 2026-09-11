@@ -10,6 +10,7 @@ These instructions are repository contracts. Follow them for every change.
 - Do not create or restore `engine/c/zchezz_v4xx` directories.
 - Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
 - Keep NNU3 and NNU4 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
+- Treat `v314` through `v324` and version-named migration utilities as historical snapshots; do not retarget their source comments to the current release.
 
 ## Bare-run contract
 
@@ -33,6 +34,7 @@ These instructions are repository contracts. Follow them for every change.
 - Resolve Stockfish through `ZCHEZZ_STOCKFISH`, repository-local `engine/stockfish/`, or PATH.
 - Teacher output must normalize scores to a documented common point of view before writing training data.
 - Benchmark defaults are `movetime=200 ms`, engine `Threads=1`, one concurrent game, paired openings with colors reversed, and tablebases disabled unless the test explicitly targets tablebases.
+- Fixed-node (`go nodes`) runs may be used for deterministic search-effort or labeling work, but they are not equivalent to the standard movetime strength protocol and must not replace it for promotion evidence.
 - Do not use a hosted CI timing result as promotion evidence.
 
 ## Training checkpoints
@@ -74,6 +76,7 @@ These instructions are repository contracts. Follow them for every change.
 ## Source and documentation
 
 - Keep comments technical, current, and conditional. State what must be true and what a caller may rely on.
+- Historical source comments may retain the version they document; current v325/v500 comments must not present an older family as the active implementation.
 - In `AGENTS.md`, do not include project history, migration narratives, or explanations of why a previous design changed.
 - Keep `CLAUDE.md` and `AGENTS.md` bodies identical; only the first title line may differ.
 - Update comments, tests, and docs when a public contract changes.

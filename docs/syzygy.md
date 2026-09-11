@@ -1,58 +1,24 @@
-# Syzygy Integration
+# Syzygy Tablebases
 
-Syzygy has separate build-time and runtime prerequisites.
+Both supported engine families contain a Syzygy bridge. Native tablebase probing depends on local Fathom source/header availability and tablebase files; these resources are intentionally not required for a clean checkout build.
 
-## Build-time Fathom availability
+## Build behavior
 
-The native build enables tablebases only when the selected engine directory
-contains the complete Fathom source/header pair expected by the Makefile.
+The shared Makefile enables Fathom only when the expected source/header pair is available for the selected engine. Otherwise it defines `NO_TABLEBASES`.
 
-A clean checkout that does not contain local Fathom files remains buildable:
-the Makefile defines `NO_TABLEBASES`.
-
-Check the state with:
-
-```bat
-mingw32-make -C engine/build ENGINE=v403 build-info
+```bash
+make -C engine/build ENGINE=v325 native
+make -C engine/build ENGINE=v500 native
 ```
 
-Require tablebase capability with:
+Both commands must remain buildable without local tablebases.
 
-```bat
-mingw32-make -C engine/build ENGINE=v403 require-tablebases
-```
+## UCI options
 
-A PASS from `require-tablebases` means the Fathom sources required by the
-native build are present. It does not prove that runtime tablebase files exist.
+The engine exposes Syzygy path/probe controls. An empty path disables probing. Probe depth/limit settings are applied by the UCI layer to the search globals used by the selected engine.
 
-## Runtime tablebase availability
+## Testing policy
 
-A tablebase-capable binary still needs a configured Syzygy directory.
+Normal 200 ms strength comparisons keep tablebases off so results are portable and do not depend on local TB cache/storage. Tests specifically targeting tablebases may enable them and must record the available piece count/path.
 
-`tests/test_uci_extended.py` group T3 behaves as follows:
-
-- missing tablebase directory → SKIP with an explicit reason;
-- available directory → set `SyzygyPath`, require readiness, run tablebase
-  positions, and require functional probe evidence (`tbhits`) where applicable.
-
-The test does not require a particular human-readable "loaded" message because
-diagnostic wording and stdout/stderr routing are not part of the UCI contract.
-
-## WebAssembly
-
-WebAssembly always builds without native tablebases.
-
-## Square convention
-
-Zchezz uses `a8=0` through `h1=63`. Mapping to Fathom's convention is a
-correctness boundary. Keep direct mapping fixtures and end-to-end probe tests
-when changing this code.
-
-## Release claims
-
-Do not claim native Syzygy coverage from a clean no-Fathom CI build. A release
-that changes tablebase code must include evidence from an environment where:
-
-1. `require-tablebases` passes;
-2. the required tablebase files exist;
-3. UCI T3 runs rather than skips.
+A build that compiled with `NO_TABLEBASES` is not evidence that probing works; it only proves the no-tablebase configuration builds.

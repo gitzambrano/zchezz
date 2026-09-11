@@ -1,96 +1,37 @@
-# Statistical Regression Testing
+# Regression and Strength Testing
 
-Playing-strength evidence is statistical. A deterministic green suite proves
-correctness contracts, not equal Elo.
+Correctness tests and playing-strength tests answer different questions. A build/perft/UCI pass is required, but it does not establish Elo.
 
-## When required
+## Standard strength protocol
 
-Statistical testing is required for changes that can alter playing strength:
+Unless a specific experiment states otherwise, Zchezz strength evidence uses:
 
-- search or evaluation;
-- NNUE architecture, weights, or feature handling;
-- tablebase logic;
-- threading/search parallelism;
-- time management;
-- move ordering or pruning parameters.
-
-Documentation, repository organization, CI-only, and test-harness-only changes
-do not require Elo evidence unless they also alter an engine/runtime input.
-
-## Pairing
-
-Use paired openings and reverse colors. Keep engine settings identical except
-for the tested change.
-
-Record the opening source and seed.
-
-## Required metadata
-
-Every promotion run records:
-
-- candidate Git SHA;
-- baseline Git SHA;
-- candidate and baseline labels;
-- candidate and baseline NNUE SHA-256;
-- opening source and seed;
-- time control;
-- Threads;
-- Hash;
-- concurrency;
-- W/D/L;
-- crashes;
-- time losses;
-- Elo estimate and confidence interval, or SPRT state;
-- PGN/result artifact path.
-
-## Quick H2H
-
-The runner profile:
-
-```bash
-python tests/run_tests.py regression --version v403 --baseline v402
+```text
+movetime        200 ms per move
+Threads         1 per engine
+concurrency     1 game at a time
+openings        paired; same opening with colors reversed
+tablebases      off
 ```
 
-is an early smoke test. It catches large regressions and harness problems. It
-is not sufficient for promotion.
+Record the exact engine SHA/profile, NNUE SHA, opening source, game count, W/D/L, Elo estimate/interval and any deviation from these defaults.
 
-## Promotion decision
+## Fixed-node tests
 
-Prefer SPRT when the native arena supports the required experiment.
+`go nodes` is useful for deterministic search-effort comparisons, debugging and some data-labeling workflows. It is not equivalent to the 200 ms movetime promotion protocol because different versions may convert nodes to wall-clock work at different rates.
 
-Before the run, define:
+Do not promote a strength claim by replacing movetime H2H evidence with fixed-node results.
 
-- H0: unacceptable regression boundary;
-- H1: acceptable change boundary;
-- alpha;
-- beta.
+## Quick sanity vs promotion evidence
 
-Do not move the boundaries after observing results.
+A short paired H2H can detect catastrophic regressions. Promotion requires enough paired games for the uncertainty to be decision-useful. Report W/D/L and confidence/uncertainty rather than only a point Elo estimate.
 
-If fixed-game testing is used instead, report the Elo confidence interval and
-use a predeclared acceptance rule. Never promote from a point estimate alone.
+## Cross-family matches
 
-## Tablebase experiments
+Use UCI subprocesses for v325-v500 or Zchezz-vs-Stockfish comparisons. Native in-process `arena` uses the v500-compatible host ABI and is intended for same-family native experiments.
 
-When comparing tablebase behavior:
+## Stockfish
 
-- use the same engine binary/configuration except for tablebase enablement;
-- use paired positions;
-- record whether Fathom was compiled into the binary;
-- record the tablebase path/set;
-- do not compare raw endgame NPS as if it measured the same search tree.
-  Tablebase cutoffs change the number of searched nodes.
+`tests/benchmark.py` resolves Stockfish through `ZCHEZZ_STOCKFISH`, repository-local `engine/stockfish/`, or PATH and uses the same 200 ms / one-thread / one-game-at-a-time defaults.
 
-## Threading experiments
-
-Separate game concurrency from engine `Threads`.
-
-A threading validation must record both. A run with 14 concurrent games and
-`Threads=1` is not a test of a four-thread engine.
-
-## Interpretation
-
-- Confidence interval crossing zero: no clear strength conclusion.
-- Large positive/negative point estimate with wide CI: collect more evidence.
-- Crashes/time losses: correctness failure regardless of Elo.
-- SPRT accepted H1/H0: use the predeclared decision.
+Hosted CI timing is smoke evidence only; do not use hosted-runner NPS/timing as promotion evidence.

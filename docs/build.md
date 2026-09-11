@@ -2,118 +2,73 @@
 
 The shared build entry point is `engine/build/Makefile`.
 
-## Native build
+## Defaults
+
+```text
+ENGINE ?= v325
+TOOLS_ENGINE ?= v500
+```
+
+`ENGINE` selects the UCI engine build. `TOOLS_ENGINE` selects the native in-process tool host because the current tool API follows the v500/NNU4 family.
+
+## Native engine
+
+Linux/macOS:
+
+```bash
+make -C engine/build native
+make -C engine/build ENGINE=v325 native
+make -C engine/build ENGINE=v500 native
+```
 
 Windows:
 
 ```bat
-mingw32-make -C engine/build ENGINE=v403 build-info
-mingw32-make -C engine/build ENGINE=v403 native
+mingw32-make -C engine/build native
+mingw32-make -C engine/build ENGINE=v325 native
+mingw32-make -C engine/build ENGINE=v500 native
 ```
 
-Linux/macOS with GNU Make:
+A bare shared build means v325.
+
+## Tablebases
+
+If both Fathom source and header files are present for the selected profile, native builds may include tablebase support. If the pair is absent, the shared build defines `NO_TABLEBASES`. This allows a clean checkout to compile without local Fathom files.
+
+The normal strength benchmark keeps tablebases disabled so results do not depend on a local TB installation.
+
+## Other targets
 
 ```bash
-make -C engine/build ENGINE=v403 build-info
-make -C engine/build ENGINE=v403 native
+make -C engine/build ENGINE=v325 debug
+make -C engine/build ENGINE=v325 sanitize
+make -C engine/build ENGINE=v325 test-c
+make -C engine/build ENGINE=v325 wasm
+make -C engine/build ENGINE=v325 bundle
+
+make -C engine/build ENGINE=v500 debug
+make -C engine/build ENGINE=v500 sanitize
+make -C engine/build ENGINE=v500 test-c
 ```
 
-`build-info` prints the selected engine, compiler, and Fathom state.
-
-## Compiler selection
-
-GNU Make supplies a built-in `CC=cc`. The Makefile replaces only that built-in
-default with GCC. A compiler selected by the caller remains authoritative.
-
-Examples:
+Native in-process data/arena tools use the tool host:
 
 ```bash
-make -C engine/build ENGINE=v403 CC=gcc native
-make -C engine/build ENGINE=v403 CC=clang ARCH_FLAGS=-mavx2 STATIC_FLAG= native
+make -C engine/build selfplay
+make -C engine/build arena
+make -C engine/build ga_tune
 ```
 
-CI uses this to compile the same candidate with GCC and Clang.
+Do not use those native tools as a cross-family ABI; use the Python/UCI runners when v325 and v500 must play each other.
 
-## Architecture flags
+## CI portability
 
-The local production default is:
-
-```text
--mavxvnni -mavx2
-```
-
-Hosted CI can override `ARCH_FLAGS`, for example to `-mavx2`, when the runner
-CPU contract does not guarantee VNNI.
-
-Changing architecture flags changes the binary/toolchain contract. Do not
-interpret an NPS difference caused by a different ISA as an engine-algorithm
-regression.
-
-## Syzygy / Fathom
-
-Native tablebase support requires both local Fathom source and header files in
-the selected engine directory.
-
-The Makefile behaves as follows:
-
-- both files present → include Fathom and enable tablebases;
-- either file absent → compile with `NO_TABLEBASES`.
-
-Use the strict gate when a tablebase-capable build is required:
-
-```bat
-mingw32-make -C engine/build ENGINE=v403 require-tablebases
-```
-
-This must fail if the Fathom pair is unavailable.
-
-See `docs/syzygy.md`.
-
-## Debug build
-
-```bash
-make -C engine/build ENGINE=v403 debug
-```
-
-Uses low optimization plus stronger warnings.
-
-## Sanitizer build
-
-```bash
-make -C engine/build ENGINE=v403 sanitize
-```
-
-The release profile treats sanitizer execution as a supported-POSIX gate. A
-Windows environment may report this step as SKIP; GitHub Actions supplies the
-Linux sanitizer evidence.
-
-## Native invariant harness
-
-```bat
-mingw32-make -C engine/build ENGINE=v403 test-c
-```
-
-This compiles and executes `engine/c/tests/test_engine_invariants.c`.
+CI clears `STATIC_FLAG` and `ARCH_FLAGS` for the smoke builds so hosted runners are not required to support the local production ISA or static runtime. Performance comparisons must use the same compiler/flags on both sides.
 
 ## WebAssembly
 
-The `wasm` target requires Emscripten. The `bundle` target additionally uses
-the tracked shared template `engine/build/zchezz_wasm.html`.
+`wasm` requires Emscripten. `bundle` combines the selected WASM/NNUE payload with the shared HTML template. Web builds disable native tablebase/book file I/O.
 
-```bash
-make -C engine/build ENGINE=v403 bundle
-```
+## Cleanup
 
-WebAssembly always defines `NO_TABLEBASES` and `NO_BOOK` for native file I/O.
-The WASM export list includes `_nnue_reset_global`, matching the browser worker.
-See `docs/wasm.md` and `docs/testing.md`.
-
-## Safe cleanup
-
-```bat
-mingw32-make -C engine/build ENGINE=v403 clean
-```
-
-Cleanup delegates to `engine/build/clean_generated.py`. It removes only known
-generated build outputs. It does not traverse or delete ignored datasets,
-checkpoints, tablebases, openings, local engines, or other user resources.
+Use the shared `clean` target. Cleanup must remove only generated build artifacts and must not delete datasets, checkpoints, openings, tablebases, external engines, or source files.

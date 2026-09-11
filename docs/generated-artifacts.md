@@ -1,13 +1,23 @@
-# Generated Artifact Policy
+# Generated Artifacts
 
-Generated files must have one declared role.
+Generated files are evidence or build output, not source-of-truth configuration.
 
-- `artifacts/tests/` — ignored test logs and summaries.
-- `artifacts/regression/` — ignored/local regression manifests, PGNs, and reports unless deliberately attached to a release.
-- `artifacts/releases/` — generated release provenance manifests.
-- `zchezz_wasm.js`, `zchezz_wasm.wasm`, `zchezz_bundle.html` — build artifacts in the selected engine directory under the current build model.
-- root `index.html` — committed deployment artifact under the current GitHub Pages model. A future CI deployment can replace this policy after equivalent coverage exists.
-- NNUE weights inside a release folder — versioned model artifact, identified by SHA-256.
+## Engine builds
 
-Do not write benchmark screenshots, temporary executables, PGNs, or logs into source directories unless an existing compatibility workflow requires it.
+Native executables, WASM glue/binaries and generated bundle output are produced by `engine/build/`. The selected profile owns its generated engine artifact.
 
+## Test evidence
+
+Longer test runners place summaries/logs under `artifacts/`. Generated evidence may be deleted and reproduced; it must not overwrite engine source or installed NNUE weights.
+
+## Training
+
+Training checkpoints live under `checkpoints/<profile>/`. `latest.pt` is the canonical resumable checkpoint for a supported profile. Large datasets and transient optimizer outputs are local/generated resources unless explicitly promoted to tracked artifacts.
+
+## Installed NNUE weights
+
+`engine/c/zchezz_v325/nnue_weights.bin` and `engine/c/zchezz_v500/nnue_weights.bin` are runtime inputs tracked with their engine profiles. They are not disposable build output.
+
+## Browser bundle
+
+A bundled HTML file embeds the WASM engine and NNUE payload. It is generated from the selected engine plus the shared web template; do not infer its evaluator architecture from the template alone.

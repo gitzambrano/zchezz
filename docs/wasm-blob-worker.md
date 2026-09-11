@@ -1,33 +1,15 @@
-# WASM Blob-worker loading
+# WebAssembly Blob Worker
 
-The offline Zchezz bundle runs Emscripten-generated JavaScript inside a Web
-Worker created from a Blob URL.
+The standalone browser bundle creates its worker from embedded JavaScript/WASM payloads so the generated HTML can run from `file://` without a server.
 
-Newer Emscripten runtimes can still resolve the `.wasm` filename through
-`Module.locateFile()`. Inside a Blob worker, the default script prefix is a
-`blob:` URL; treating that prefix like a normal directory can produce:
+The worker/bootstrap contract is shared build infrastructure; it must not assume NNU3 or NNU4 solely from the HTML template. The selected engine profile supplies the matching WASM module and NNUE bytes during bundling.
 
-```text
-Failed to execute 'open' on 'XMLHttpRequest': Invalid URL
-```
+When changing worker bootstrap code, validate that:
 
-The worker already receives the complete WASM ArrayBuffer. Its initialization
-therefore creates a temporary `application/wasm` Blob URL from those bytes and
-returns that URL from `locateFile()` for `.wasm` lookups.
+- the worker can be created from the embedded blob;
+- engine initialization reaches UCI readiness;
+- the embedded NNUE payload is loaded for the selected profile;
+- analysis continues beyond opening-book moves;
+- no external network fetch is required by the standalone bundle.
 
-Repair and verify:
-
-```bat
-python tools\repair_wasm_blob_worker.py
-python tools\repair_wasm_blob_worker.py --check
-python -m pytest tests\test_wasm_blob_worker.py -q
-```
-
-Then rebuild the bundle:
-
-```bat
-python tests\run_tests.py web --version v403 --baseline v402 --keep-going
-```
-
-An old `zchezz_bundle.html` still contains the old worker and must not be used
-to validate this repair.
+See `tests/test_wasm_blob_worker.py`, `tests/test_wasm_wiring.py` and `docs/wasm.md`.

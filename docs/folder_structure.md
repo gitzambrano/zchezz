@@ -1,295 +1,49 @@
-# Zchezz — Folder Structure
+# Folder Structure
 
-Regenerated from the actual repository tree. See `.gitignore` for the authoritative list
-of excluded paths (summarized inline below as *(gitignored)*).
+This document describes the current supported repository surfaces. Historical version directories remain tracked as snapshots but are not the default operational target.
 
-## Root Files
+```text
+.github/workflows/ci.yml       one small read-only smoke workflow
+AGENTS.md / CLAUDE.md          repository operating contracts
+Readme.md                      project overview
 
-| File | Description |
-|------|-------------|
-| `README.md` | Full project documentation — architecture, training pipeline, v4.00 status |
-| `CLAUDE.md` | AI assistant instructions — build commands, conventions, key decisions |
-| `.gitignore` | Excludes binaries, data, external engines, tablebases, openings |
+docs/                          maintained project documentation
+engine/ACTIVE_ENGINE           `v325`
+engine/build/                   shared build/bundle infrastructure
+engine/c/zchezz_v325/          default UCI engine, NNU3
+engine/c/zchezz_v500/          supported secondary UCI engine, NNU4
+engine/c/zchezz_v314..v324/    historical v3 snapshots
+engine/c/tools/                 native self-play/arena/GA tools, v500-host API
+engine/c/tests/                 C invariant harness
 
----
-
-## `docs/` — Project Documentation
-
-| File | Description |
-|------|-------------|
-| `folder_structure.md` | This file — explains every folder and file |
-| `v402_implementation_plan.md` | Plan + results: v4.00/v4.01 NNUE rewrite and the v4.02 search campaign |
-
----
-
-## `engine/` — All Engines
-
-### `engine/build/` — SHARED Build System
-
-Build files and tool sources are shared across engine versions instead of being
-duplicated per `vXXX` folder — only `engine/c/zchezz_vXXX/` itself is version-suffixed.
-Every target takes `ENGINE=vXXX` (default: newest version) to select which engine
-folder to build.
-
-| File | Description |
-|------|-------------|
-| `Makefile` | Build targets: `native`, `wasm`, `bundle`, `selfplay`, `arena` — all parameterized by `ENGINE=` |
-| `build_native.bat` | Windows one-click native compile (MinGW); optional `ENGINE` arg |
-| `build_wasm.bat` | Windows WASM build script (calls emcc + bundle.py); optional `ENGINE` arg |
-| `build_termux.sh` | Automated Termux test suite (moved from `utils/RunZchezzTermux.sh`) |
-| `termux.md` | Termux quick reference guide (moved from `utils/RunZchezzTermux.md`) |
-| `bundle.py` | HTML bundler (WASM + weights + JS + SVG pieces → single offline HTML file) |
-| `pieces/` | SVG piece sets `bundle.py` embeds (moved from repo-root `pieces/`) — `cburnett/`, `merida/`, `staunty/`, 12 SVGs each |
-
-### `engine/c/tools/` — SHARED Native C Tool Sources
-
-Shared across engine versions, **tracking the CURRENT engine API only** — they use
-`TTable`, `NnueNet`, `SearchParams.mpv_share_budget`, etc., which do not exist in older
-frozen releases like `zchezz_v314`, so they will not compile against those. This is
-intentional: `arena.c` compares older versions through its `uci:` external-process
-player (an already-built `zchezz.exe`), never by linking an old version's `.c` files.
-See the root `README.md`, "engine/c/tools/" section.
-
-| File | Description |
-|------|-------------|
-| `selfplay.c` | Native N-games-in-parallel selfplay generator, shares the engine's core sources |
-| `arena.c` / `arena.h` | Native A/B strength-gate harness — SPRT gate for the training bootstrap loop |
-| `test_sprt_synthetic.c` | Throwaway synthetic SPRT/Elo math verification, not part of the normal build |
-
-### `engine/c/zchezz_v402/` — v4.02: Current Engine (trained Gen-1 net + search rework)
-
-HalfKP-4Bucket NNUE architecture with a TRAINED Gen-1 network plus the v4.02 search
-rework (stable-TT policy, packed TT entries, AVX-VNNI eval kernel, GA-tuned pruning
-constants — see `README.md` § Search for the full writeup and measured strength, and
-`docs/v402_implementation_plan.md` ("RESULTADO DA CAMPANHA DE BUSCA") for the change
-log. Contains **only** core sources plus a couple of
-generated/version-specific files — build files and tool sources live in `engine/build/`
-and `engine/c/tools/` respectively (see above).
-
-| File | Description |
-|------|-------------|
-| `main.c` | UCI protocol handler, entry point, Lazy SMP thread management |
-| `board.c` / `board.h` | Board state, bitboards, magic attacks, make/unmake move |
-| `search.c` / `search.h` | Alpha-beta, TT (`TTable`, per-instance), LMR, NMP, move ordering, Lazy SMP |
-| `nnue.c` / `nnue.h` | NNUE inference (`NnueNet`, per-instance), incremental accumulator, NNU4 loader |
-| `syzygy.c` / `syzygy.h` | Zchezz ↔ Fathom integration layer (bitboard mapping) |
-| `tbconfig.h` | Fathom library configuration for Zchezz |
-| `stdendian.h` | Endianness compatibility shim |
-| `book.c` / `book.h` | Polyglot opening book support |
-| `poly_keys.h` | Polyglot Zobrist key constants |
-| `tbprobe.c` / `tbprobe.h` | Fathom library *(gitignored — fetch from upstream)* |
-| `tbchess.c` | Fathom library *(gitignored — fetch from upstream)* |
-| `nnue_weights.bin` | Trained NNUE weights (NNU4 format, ~2.6 MB) — absent until training completes |
-| `zchezz_wasm.html` | Browser UI source (chessboard, analysis panel, settings) |
-| `zchezz_wasm.js` | Emscripten-generated JS glue *(auto-generated, gitignored)* |
-| `zchezz_wasm.wasm` | WebAssembly binary *(gitignored)* |
-| `zchezz_bundle.html` | Standalone HTML (works offline, double-click to play) — generated by `engine/build/bundle.py` |
-| `zchezz.exe` | Native Windows binary — generated *(gitignored via `*.exe`)*, built per-version (unlike `arena.exe`/`selfplay.exe`, which build into `engine/build/`) |
-
-### `engine/c/zchezz_v314/` — v3.14: Previous Stable Engine — FROZEN
-
-Last engine version with a trained network; currently what's actually deployed and
-playable at the GitHub Pages link. Kept in the repo as the previous stable baseline
-(per the versioning rule: new work happens in a new `vXXX` folder, this one is not
-modified). Unlike `zchezz_v402/`, this folder is **self-contained**: it keeps its own
-`Makefile`, `build_wasm.bat`, `compile_zchezz.bat`, and `bundle.py` — released versions
-are frozen and don't get migrated into the shared build system retroactively. The
-**only** change made to this folder when `pieces/` moved to `engine/build/pieces/` was
-updating the piece-lookup path constant inside its own `bundle.py` (2 lines) so the
-bundler could still find the SVGs; nothing else in this folder was touched. Uses the
-NNU3 (799→256→64→1) NNUE architecture.
-
-### `engine/stockfish/`, `engine/stockfish_fast/`, `engine/maia/`, `engine/old/` *(gitignored)*
-
-External engines and archived Zchezz versions, downloaded/built locally, not tracked.
-
----
-
-## `openings/` — Opening Books *(gitignored)*
-
-| Subpath | Description |
-|---------|-------------|
-| `lines/*.pgn` | PGN opening lines, flat "1.e4 e5 2.Nf3 ..." format, no comments/variations/NAGs |
-| `positions/*.epd` | Opening position EPDs |
-| `book.bin` | Polyglot binary opening book |
-
-Downloaded/generated locally rather than tracked in git. Key files under `lines/`:
-
-| File | Description |
-|------|-------------|
-| `Blitz_Testing_4moves.pgn` | 4-move openings, main testing book |
-| `8moves_v3.pgn` | 8-move deep openings |
-| `2moves_LT_1000.pgn` | 2-move short openings |
-| `Noomen_Testsuite_2012.pgn` | Standard test suite |
-| `UHO_MEGA_2022_+110_+149.pgn` | Balanced UHO openings |
-
-## `endgames/` *(gitignored)*
-
-EPD position sets used to seed test games from endgame positions — downloaded/generated
-locally, not tracked in git.
-
----
-
-## `tests/` — Test & Match Scripts
-
-Flat and version-less (tracks the current engine, not a specific `vXXX`). Naming
-convention (documented in full in `CLAUDE.md`): `test_*` = pass/fail correctness,
-`bench_*` = performance measurement, `run_*` = harness that plays games / long jobs,
-`debug_*` = one-off scratch (gitignored), bare noun = shared library or fixture
-generator.
-
-| File | Description |
-|------|-------------|
-| `run_tournament.py` | **Universal tournament runner** — H2H, anchor ELO estimation, full tournament. Config-block driven. |
-| `run_tournament_quick.py` | **Quick H2H regression test** — same engine as `run_tournament.py`, fast preset |
-| `run_selfplay.py` | Python (UCI-subprocess based) self-play data generation for NNUE training |
-| `run_suite.py` | EPD test suite runner (WAC, STS, etc.) |
-| `run_arena.py` | Python driver for the native A/B arena (`engine/c/tools/arena.c`, built via `engine/build/Makefile`) |
-| `elo_calc.py` | **Shared ELO calculator** — trinomial model, 95% CI, cutechess-style (used by both tournament scripts) |
-| `bench_nps.py` | 50-position NPS + eval sanity benchmark |
-| `compare_suites.py` | Compare EPD suite results between engine versions |
-| `make_random_nnu4.py` | Generates a valid random-weight NNU4 fixture, unblocking C-side tests before any net is trained |
-| `test_perft.py` | Perft correctness (37 positions) |
-| `test_uci.py` | UCI command tests |
-| `test_uci_extended.py` | Extended UCI protocol compliance tests |
-| `test_browser.py` | Browser/WASM interaction tests (Playwright) |
-| `test_browser_html.py` | HTML feature validation (parses HTML, no browser needed) |
-| `test_move_parsing.py` | Move parsing correctness tests |
-| `test_book.py` | Opening book legality and quality validation |
-| `test_nnue_accumulator.py` | Verifies the incremental NNUE accumulator matches a from-scratch rebuild |
-| `test_selfplay_bin.py` | Validates the packed binary selfplay sample format |
-| `test_two_nets.c` | Verifies two independent `NnueNet` instances coexist correctly in one process |
-| `debug_engine.py`, `debug_game.py` | One-off scratch scripts *(gitignored — `tests/debug_*.py`)* |
-| `random_nnu4*.bin` | Regenerable test fixtures produced by `make_random_nnu4.py` *(gitignored)* |
-
----
-
-## `tests/suites/` — EPD Test Suites
-
-17 EPD files for tactical/strategic testing:
-
-| Suite | Focus |
-|-------|-------|
-| `wacnew.epd` | Win At Chess — 300 tactical puzzles |
-| `sts1-sts15_v6.epd` | Strategic Test Suite (15 categories) |
-| `kaufman.epd` | Kaufman positions (25 puzzles) |
-| `bratko-kopec.epd` | Bratko-Kopec endgame/middlegame test |
-| `nolot.epd` | Nolot difficult positions |
-| `lct2.epd` | Louguet Chess Test v2 |
-| `eigenmann_endgame_test.epd`, `eigenmann_rapid_engine_test.epd` | Endgame / rapid testing |
-| `zugzwang.epd` | Zugzwang positions |
-| `fortresses.epd` | Fortress/drawn positions |
-| `destructive.epd`, `grief-causers.epd`, `hard-mates-blass-uri.epd`, `hardtestpos-clean.epd`, `silent-but-deadly.epd`, `spill-the-tea_pool_10sec.epd`, `ssm_4_5_men.epd`, `benchmark-2.epd` | Additional tactical/positional suites |
-
----
-
-## `train/` — NNUE Training Code (PyTorch)
-
-Flat and version-less, same as `tests/`. Naming convention: a bare noun (`encoding`,
-`model`, `dataset`) is a library module imported by other scripts; `verb_noun`
-(`train_nnue`, `export_nnu4`, `check_parity`) is an executable script. v3.14's training
-code path remains functionally superseded but the v4.00 scripts are new, parallel code —
-`train/test/` (the old ad-hoc verification scripts) has been deleted; its history is
-still in git.
-
-| File | Description |
-|------|-------------|
-| `encoding.py` | `king_bucket`, `halfkp_features` — sparse/dense feature encoders (library) |
-| `model.py` | SCReLU, ClippedReLU, fake-quant/QAT, `clamp_weights_`, NNUE model definition (library) |
-| `dataset.py` | Reader for the packed `.bin` selfplay format (multi-shard memmap, streaming) + `wl_target` blend (library) |
-| `train_nnue.py` | Training script — CLI, QAT schedule, NNU4 target architecture, `--k` per data source, train/val split |
-| `export_nnu4.py` | Converts a PyTorch checkpoint → NNU4 binary weight file |
-| `check_parity.py` | Compiles the real `nnue.c` and cross-checks its feature indices against the Python encoder |
-
-### `train/labeling/` — Stockfish-Based Dataset Labeling
-
-Scripts for generating analyzed training data using Stockfish (previously `sf_analyze/`
-at the repo root).
-
-| File | Description |
-|------|-------------|
-| `process_positions.py` | The one position pipe: reads .epd/.pgn/.bin/.parquet, optional filters and Stockfish relabelling, writes parquet/bin/epd/pgn. `--filters none` makes it a pure format converter |
-| `generate_endgames.py` | Generate synthetic endgame positions and label them with Stockfish |
-| `normalize_columns.py` | Rewrite a dataset to the canonical fen/cp/result shape |
-| `merge_datasets.py` | Hash-join two extractions of the same positions into one dataset |
-| `fix_column_names.py` | Rename or drop a mislabelled column, re-verified per file |
-
----
-
-## `utils/` — Utility Files
-
-| File | Description |
-|------|-------------|
-| `cliconf.py` | Config-block + CLI plumbing for every Python tool; holds the one copy of the shared configuration vocabulary |
-| `kill_ghosts.py` | Kill orphaned engine/helper processes |
-
-`RunZchezzTermux.sh`/`.md` moved to `engine/build/build_termux.sh` / `termux.md` (shared
-build system, see `engine/build/` above). The Polyglot opening book lives at
-`openings/book.bin` *(gitignored)*.
-
----
-
-## Gitignored Data Directories
-
-These directories exist locally but are excluded from git (see `.gitignore` for the
-exact patterns):
-
-| Directory | Description |
-|-----------|-------------|
-| `data/` | Training data (PGN, EPD, WDL-labeled positions) |
-| `checkpoints/` | PyTorch training checkpoints |
-| `tablebases/` | Syzygy tablebases (3-4-5 piece, ~938 MB) |
-| `openings/` | Opening books — `lines/*.pgn`, `positions/*.epd`, `book.bin` — large downloadable files |
-| `endgames/` | Endgame training/testing EPDs |
-| `engine/stockfish/`, `engine/stockfish_fast/` | Stockfish binaries |
-| `engine/maia/` | Maia engine binaries |
-| `engine/old/` | Archived pre-v300 Zchezz versions |
-| `train/logs/` | Training run logs |
-| `tests/results*/`, `tests/*_results/`, `tests/__pycache__/` | Regenerated test output |
-| `.arena_build_cache/` | `run_arena.py`'s `ref:` git-worktree build cache |
-
----
-
-## Build Commands
-
-All build commands run from `engine/build/` (shared build system, see above), not from
-inside `engine/c/zchezz_vXXX/`. Every target accepts `ENGINE=vXXX` (default: `v402`).
-
-### Windows (GCC/MinGW)
-```bash
-cd engine/build
-build_native.bat v402        # Windows one-click compile; ENGINE arg optional
-mingw32-make ENGINE=v402 native   # or via Makefile — Windows
-make ENGINE=v402 native            # Linux
-
-# Or manually — output goes INTO the version folder, not engine/build/:
-gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavxvnni -mavx2 -I../c/zchezz_v402 \
-    -o ../c/zchezz_v402/zchezz.exe ../c/zchezz_v402/main.c ../c/zchezz_v402/board.c \
-    ../c/zchezz_v402/search.c ../c/zchezz_v402/nnue.c ../c/zchezz_v402/syzygy.c \
-    ../c/zchezz_v402/tbprobe.c ../c/zchezz_v402/book.c -static -lm -pthread
+train/                         architecture-neutral data + profile-specific NNUE code
+train/labeling/                dataset import/normalization/labeling utilities
+tests/                         correctness, UCI, benchmark and game runners
+tools/                         repository/artifact checks + retained historical migration utilities
+utils/                         profile, path, CLI and policy helpers
+artifacts/                     generated test/evidence output
 ```
 
-### WASM (Emscripten)
-```bash
-build_wasm.bat v402          # Windows (emcc + bundle.py); ENGINE arg optional
-# Or:
-mingw32-make ENGINE=v402 wasm     # Produces ../c/zchezz_v402/zchezz_wasm.{js,wasm}
-mingw32-make ENGINE=v402 bundle   # Produces ../c/zchezz_v402/zchezz_bundle.html
-```
+## Supported engine files
 
-### HTML Bundle
-```bash
-python bundle.py ../c/zchezz_v402/zchezz_wasm.html ../c/zchezz_v402/zchezz_wasm.js \
-    ../c/zchezz_v402/zchezz_wasm.wasm ../c/zchezz_v402/nnue_weights.bin
-```
+Both `zchezz_v325/` and `zchezz_v500/` contain the engine-facing source modules:
 
-### Native tools
-```bash
-cd engine/build
-mingw32-make ENGINE=v402 selfplay   # -> engine/build/selfplay.exe
-mingw32-make ENGINE=v402 arena      # -> engine/build/arena.exe
-# engine/c/tools/selfplay.c and engine/c/tools/arena.c link against the
-# selected version's board.c / search.c / nnue.c sources, same as the UCI
-# binary — but they are SHARED sources tracking the current engine API
-# only. See root README.md, "engine/c/tools/" section.
-```
+- `main.c` — UCI process, options and search-thread orchestration;
+- `board.c/.h` — position representation, move generation/make-unmake, hashing;
+- `search.c/.h` — search, TT and heuristics;
+- `nnue.c/.h` — family-specific evaluator/runtime;
+- `syzygy.c/.h` — tablebase bridge;
+- `book.c/.h`, `poly_keys.h` — Polyglot opening book support;
+- `nnue_weights.bin` — installed network for that profile.
+
+The evaluator contracts differ; never copy an NNU3 binary into v500 or an NNU4 binary into v325.
+
+## Training
+
+`train/run.py` is the profile-aware training entry point. `train/_train_nnu3_core.py` and `train/_train_nnu4_core.py` are family implementations. `encoding_nnu3.py` / `model_nnu3.py` belong to v325; `encoding.py` / `model.py` belong to v500.
+
+`checkpoints/v325/latest.pt` and `checkpoints/v500/latest.pt` are the canonical resumable checkpoints when present.
+
+## Historical utilities
+
+Version-named utilities such as `tools/v321_*`, `tools/v322_*` and `tools/apply_v320_source_upgrade.py` are retained historical migration/experiment helpers. Their version names are intentional and must not be interpreted as current defaults.

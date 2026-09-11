@@ -1,95 +1,42 @@
 # Release Process
 
-A release is an evidence package, not only a successful compile.
+A release is an evidence package, not just a successful compile.
 
-## 1. Identify candidate and baseline
+## 1. Identify the profile and exact inputs
 
-Record:
+Record candidate Git SHA/profile, baseline SHA/profile, installed NNUE SHA-256 and relevant local resources. The repository default is v325; v500 remains secondary until explicitly promoted.
 
-- candidate version and Git SHA;
-- stable baseline version and Git SHA;
-- NNUE hashes;
-- relevant local runtime resources.
+## 2. Repository and deterministic checks
 
-For this branch, the normal candidate/baseline pair is v403/v402.
-
-## 2. Deterministic native validation
-
-Run:
+At minimum:
 
 ```bash
-python tests/run_tests.py smoke --version v403 --baseline v402
-python tests/run_tests.py full --version v403 --baseline v402 --keep-going
+python tools/check_repo.py
+python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py -q
+make -C engine/build ENGINE=v325 STATIC_FLAG= ARCH_FLAGS= native
+make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= native
+python tools/check_nnue.py --profile v325
+python tools/check_nnue.py --profile v500
 ```
 
-Required FAIL entries must be resolved.
+Run additional perft, UCI, C-invariant, sanitizer or web gates relevant to the changed surface. A skipped gate is missing evidence, not a pass.
 
-## 3. Web validation
+## 3. Strength evidence
 
-For web-affecting changes:
+For a strength-affecting candidate, follow `docs/regression-testing.md`. Do not substitute deterministic tests, NPS or fixed-node matches for movetime Elo evidence.
 
-```bash
-python tests/run_tests.py web --version v403 --baseline v402 --keep-going
-```
+## 4. Web evidence
 
-A SKIP means the web feature was not validated. Obtain evidence on an
-environment with Emscripten, the tracked shared HTML template, and Playwright before
-making a web-release claim.
+If browser/WASM delivery changed, build the selected bundle and run the browser/static checks available on the validation platform. State explicitly when Emscripten or browser automation was unavailable.
 
-## 4. Sanitizers
+## 5. Provenance
 
-The `release` profile runs ASan/UBSan on supported POSIX environments.
+Retain SHA/profile/network hash, compiler/platform/flags, test summaries and strength artifact references together. A release result without reproducible inputs is incomplete.
 
-Windows may skip this step. The corresponding GitHub Actions Linux job supplies
-the sanitizer evidence.
+## 6. Source immutability
 
-## 5. Playing strength
+Do not modify historical engine directories to make a new release. New engine behavior belongs in the active supported line or a new explicit profile. Repository-only documentation/infrastructure fixes may be applied without changing historical engine snapshots.
 
-If the change can affect playing strength, follow
-`docs/regression-testing.md`.
+## 7. Promotion
 
-Do not substitute a deterministic release profile for Elo/SPRT evidence.
-
-## 6. Release profile
-
-```bash
-python tests/run_tests.py release --version v403 --baseline v402 --keep-going
-```
-
-Review `summary.json` and all WARN/SKIP entries.
-
-## 7. Provenance manifest
-
-`tools/release_manifest.py` records:
-
-- Git SHA and branch;
-- dirty/clean working-tree state;
-- platform/Python/compiler;
-- engine path and SHA-256;
-- NNUE path and SHA-256;
-- Fathom file availability;
-- latest discovered test summaries;
-- optional regression artifact reference.
-
-Keep this manifest with the release evidence.
-
-## 8. Source immutability
-
-Do not edit an already released version directory to implement the next engine
-change. Create a new version directory and compare it against the stable
-baseline.
-
-Repository/test/documentation fixes that do not change released engine source
-may be applied on the active development branch, but still require the
-appropriate deterministic profile.
-
-## 9. Final review
-
-Before promotion:
-
-- no unexplained required FAIL;
-- no ignored WARN;
-- every relevant SKIP has replacement evidence or a documented limitation;
-- source hashes changed only where intended;
-- ignored/local resources were not deleted or accidentally staged;
-- documentation describes the commands that actually ran.
+Promotion changes `engine/ACTIVE_ENGINE` and profile/documentation defaults only after the user explicitly requests it and the required correctness + strength evidence exists.
