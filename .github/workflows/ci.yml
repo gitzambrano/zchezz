@@ -20,11 +20,13 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: python tools/check_repo.py
-      - run: python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py -q
+      - run: python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py tests/test_teaching_format.py tests/test_teaching_methods.py -q
       - name: Public entrypoint smoke
         run: |
           python train/run.py --show-config
           python train/teacher.py --show-config
+          python train/teaching/inspect.py --show-config
+          python train/teaching/seeds.py --show-config
           python tests/run_selfplay.py --show-config
           python tests/run_tournament_quick.py --show-config
           python tests/benchmark.py --show-config
