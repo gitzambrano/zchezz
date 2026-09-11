@@ -4,6 +4,8 @@
 
 Raw datasets should store chess-domain information such as position/FEN, side to move, result, evaluation, move and evaluator provenance. NNU3/NNU4 feature encoding belongs inside the selected training family.
 
+The reusable teaching format under `train/teaching/` follows the same rule. It stores a standard chess-domain board, White-relative raw scores, sparse move labels, method flags, and provenance. It deliberately does not bake NNU3/NNU4 features or a fixed policy softmax into the dataset.
+
 ## Profile entry point
 
 ```bash
@@ -40,6 +42,38 @@ The installed runtime artifact is compact NNU4.
 
 `checkpoints/<profile>/latest.pt` is the canonical resumable checkpoint. Before loading tensors, training/export code must verify architecture metadata and fail on cross-family mismatches. When no checkpoint exists, the profile importer may reconstruct a resumable checkpoint from the installed engine weights.
 
-## Teacher
+## Teaching and distillation
 
-`train/teacher.py` resolves Stockfish through the common profile helper and writes architecture-neutral labeled EPD. Teacher effort is independent of the 200 ms strength-promotion protocol; fixed depth/nodes may be appropriate for labeling when clearly recorded as labeling configuration.
+`train/teacher.py` is the public architecture-neutral teacher entry point. Its implementation lives in `train/teaching/teacher.py` and follows the repository bare-run convention: all defaults are editable constants near the top of the file and CLI arguments are optional overrides.
+
+The default teaching cascade is designed for very large corpora:
+
+1. direct Stockfish evaluator/NNUE (`eval`) on every position;
+2. teacher/source disagreement mining using an existing Zchezz `eval_cp` when available;
+3. static child policy on all hard cases plus a deterministic uniform sample;
+4. policy margin/entropy scoring;
+5. shallow MultiPV only when the cheap interest score passes a gate;
+6. deeper search only on the hardest subset.
+
+If a Stockfish binary does not expose the non-standard `eval` command, the backend falls back to a tiny fixed-node search. Fixed-node work here is labeling effort, not strength-promotion evidence; the standard 200 ms protocol remains the strength comparison rule.
+
+The finished teaching dataset is a directory containing `metadata.json`, `positions.bin`, and sparse `moves.bin`. All centipawn labels are White-relative. `moves.bin` stores raw move scores and ranks so policy temperature, top-K, pairwise ranking, or future policy-head losses can be changed without relabeling.
+
+Supported position sources are Zchezz `.bin`, `.epd`, `.fen`, and `.pgn`, recursively from files/directories/globs. Zchezz `.bin` files are memory-mapped and their side-to-move `eval_cp` is converted to White POV. `SOURCE_MODE = "random"` or `"mixed"` can also generate new legal positions.
+
+Teaching methods are extensible. Built-in methods register by name in `train/teaching/methods.py`; external modules can register additional methods and be loaded through `PLUGIN_MODULES` or `--plugin` without changing the core runner.
+
+Useful commands:
+
+```bash
+python train/teacher.py --show-config
+python train/teacher.py
+python train/teacher.py --methods static_value,gap_mining
+python train/teacher.py --policy-sample-rate 1.0 --limit 100000
+python train/teaching/inspect.py
+python train/teaching/seeds.py
+```
+
+`train/teaching/seeds.py` exports hard/high-interest roots for targeted self-play and can optionally expand each root by a few random legal plies. This supports an active-learning loop in which teacher compute and new self-play concentrate on regions where the current student disagrees most.
+
+See `train/teaching/README.md` for format details, quiet-position modes, cost knobs, and extension points.
