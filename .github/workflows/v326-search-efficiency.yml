@@ -1,0 +1,68 @@
+name: v326 search efficiency diagnostics
+
+on:
+  push:
+    branches: [v326-search-efficiency]
+    paths:
+      - "tests/instrument_v325_search.py"
+      - "tests/bench_search_efficiency.py"
+      - ".github/workflows/v326-search-efficiency.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate diagnostic scripts
+        run: |
+          set -euo pipefail
+          python -m py_compile tests/instrument_v325_search.py tests/bench_search_efficiency.py
+          git diff --check
+
+      - name: Build baseline v3.25
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+          printf 'uci\nquit\n' | engine/c/zchezz_v325/zchezz_baseline.exe > artifacts-baseline-uci.txt 2>&1
+          grep -q "id name Zchezz 3.25" artifacts-baseline-uci.txt
+          ! grep -qi "weights not loaded" artifacts-baseline-uci.txt
+
+      - name: Build diagnostic-only v3.25
+        run: |
+          set -euo pipefail
+          python tests/instrument_v325_search.py --diagnostics --no-stale-miss
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_diag.exe
+
+      - name: Build stale-generation-miss candidate
+        run: |
+          set -euo pipefail
+          git checkout -- engine/c/zchezz_v325/search.c
+          python tests/instrument_v325_search.py --no-diagnostics --stale-miss
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_stale_miss.exe
+          git checkout -- engine/c/zchezz_v325/search.c
+
+      - name: Run fresh-tree diagnostics and stale-TT screen
+        run: |
+          set -euo pipefail
+          python tests/bench_search_efficiency.py
+          cat artifacts/search-efficiency/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v326-search-efficiency-${{ github.run_id }}
+          path: |
+            artifacts/search-efficiency
+            artifacts-baseline-uci.txt
