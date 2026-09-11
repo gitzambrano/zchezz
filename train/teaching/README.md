@@ -1,6 +1,6 @@
 # Zchezz teaching pipeline
 
-This directory turns large chess corpora into reusable architecture-neutral teacher datasets. Expensive teacher work is performed once; v325/NNU3, v500/NNU4, and future networks can consume the same labels.
+This directory turns large chess corpora into reusable architecture-neutral teacher datasets. Expensive teacher work is performed once; v325/NNU3, v500/NNU4, and future value/policy networks can consume the same labels.
 
 ## Bare run
 
@@ -10,6 +10,7 @@ All public Python tools have editable defaults at the top of the file and work w
 python train/teacher.py
 python train/teaching/inspect.py
 python train/teaching/seeds.py
+python train/teaching/export_eval_bin.py
 ```
 
 CLI flags only override defaults. `--show-config` is non-destructive.
@@ -28,7 +29,7 @@ CLI flags only override defaults. `--show-config` is non-destructive.
 
 A teaching dataset directory contains:
 
-- `metadata.json`: format version, provenance, configuration and run statistics;
+- `metadata.json`: format version, teacher fingerprint, recipe signature, provenance, configuration and run statistics;
 - `positions.bin`: fixed-size position/value records;
 - `moves.bin`: sparse move labels referenced by offset/count from each position.
 
@@ -36,11 +37,36 @@ All scores are **White-relative centipawns**. The board uses standard chess-doma
 
 Move labels store raw `static_cp`, optional refined `search_cp`, and ranks. The dataset deliberately does **not** store a fixed softmax policy. Training can later choose temperature, top-K, best-move classification, pairwise ranking, or another policy loss without relabeling.
 
+Resume is fail-closed. The writer fingerprints the teacher binary and hashes all label-semantic settings. It may resume with different worker/batch/checkpoint settings, but refuses to append if the teacher, methods, source recipe, search effort, sampling or teaching thresholds changed.
+
 ## Existing data
 
 `teacher.py` recursively streams `.bin`, `.epd`, `.fen`, and `.pgn` inputs. Zchezz packed `.bin` files are memory-mapped. Existing `eval_cp` is converted from side-to-move POV to White POV and becomes `source_cp`, which is reused as the student signal for gap mining.
 
 Set `INPUTS` to a file, glob, or directory containing millions of positions. The output writer is resumable. Worker processes keep long-lived Stockfish instances, so engines are not restarted per position.
+
+For Parquet-heavy archives, `train/labeling/process_positions.py` remains the general format-conversion front-end; convert once to packed `.bin` and teach from the memory-mapped result.
+
+## Training current and future networks
+
+`train/teaching/loader.py` is the architecture-neutral training adapter. It derives, at training time:
+
+- value targets from `search_cp`, `static_cp`, or source labels;
+- White- or side-to-move probability targets;
+- soft policy distributions with arbitrary temperature/top-K;
+- pairwise `(better_move, worse_move, margin)` targets for move ordering.
+
+For the **current v325 and v500 value trainers**, use the compatibility exporter:
+
+```bash
+python train/teaching/export_eval_bin.py
+python train/run.py --profile v325 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v500 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+```
+
+`k=0` is required for this evaluator-only export: it tells the current trainer to learn the teacher evaluation instead of an unknown/placeholder game outcome. The exporter writes a JSON provenance manifest next to the `.bin`.
+
+A future policy head should consume the teaching dataset directly through `loader.py`; do not squeeze sparse teacher move scores into the legacy `SAMPLE_DTYPE`.
 
 ## New data and active learning
 
