@@ -194,15 +194,8 @@ def apply_diagnostics(text: str) -> str:
 """
     text = replace_exact(text, tt_cut, tt_cut_diag, count=1, label="main TT score cutoffs")
 
-    cutoff = "            if (alpha >= beta) goto cutoff;\n"
-    cutoff_diag = (
-        "            if (alpha >= beta) {\n"
-        "                diag_cutoff(legal_count, &best_move, &pv_move, tte_hit, b);\n"
-        "                goto cutoff;\n"
-        "            }\n"
-    )
-    text = replace_exact(text, cutoff, cutoff_diag, count=3, label="beta cutoff rank sites")
-
+    # Replace the more-indented TT/PV stage first. Otherwise the generic
+    # 12-space pattern is also a substring of this 20-space statement.
     cutoff_tt = "                    if (alpha >= beta) goto cutoff;\n"
     cutoff_tt_diag = (
         "                    if (alpha >= beta) {\n"
@@ -211,6 +204,15 @@ def apply_diagnostics(text: str) -> str:
         "                    }\n"
     )
     text = replace_exact(text, cutoff_tt, cutoff_tt_diag, count=1, label="TT-stage beta cutoff site")
+
+    cutoff = "            if (alpha >= beta) goto cutoff;\n"
+    cutoff_diag = (
+        "            if (alpha >= beta) {\n"
+        "                diag_cutoff(legal_count, &best_move, &pv_move, tte_hit, b);\n"
+        "                goto cutoff;\n"
+        "            }\n"
+    )
+    text = replace_exact(text, cutoff, cutoff_diag, count=3, label="generated-stage beta cutoff sites")
 
     zw_call = "sc = -alpha_beta(ss, b, depth-1-reduce+check_ext, -alpha-1, -alpha, null_pv, &null_len, ply+1, gives_check);"
     text = replace_exact(
