@@ -11,6 +11,7 @@ codes are 0 empty, 1..6 white P/N/B/R/Q/K, 7..12 black P/N/B/R/Q/K.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -38,6 +39,7 @@ FLAG_DEEP_REFINED = 1 << 9
 FLAG_GENERATED = 1 << 10
 FLAG_SOURCE_CP = 1 << 11
 FLAG_POLICY = 1 << 12
+FLAG_INSTABILITY = 1 << 13
 
 METHOD_STATIC_VALUE = 1 << 0
 METHOD_STATIC_POLICY = 1 << 1
@@ -76,6 +78,40 @@ MOVE_DTYPE = np.dtype([
     ("rank_search", "<u2"),
     ("flags", "<u2"),
 ], align=False)
+
+_OPERATIONAL_CONFIG_KEYS = {
+    "OUTPUT", "LIMIT", "RESUME", "WORKERS", "BATCH_SIZE", "CHECKPOINT_EVERY"
+}
+
+
+def _sha256_file(path: str | os.PathLike) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def teaching_recipe_signature(meta: dict) -> str:
+    """Hash only label semantics, not throughput/checkpoint knobs.
+
+    Resume may safely change worker/batch/checkpoint settings, but it must not
+    append labels from a different teacher, source set, method order, policy
+    sampling recipe, search effort, or active-learning thresholds.
+    """
+    config = dict(meta.get("config") or {})
+    for key in _OPERATIONAL_CONFIG_KEYS:
+        config.pop(key, None)
+    payload = {
+        "teacher": meta.get("teacher"),
+        "teacher_sha256": meta.get("teacher_sha256"),
+        "teacher_path": meta.get("teacher_path"),
+        "inputs": meta.get("inputs"),
+        "methods": meta.get("methods"),
+        "config": config,
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def missing_cp(value: int | None) -> np.int16:
@@ -217,9 +253,22 @@ class TeachingWriter:
         self.pos_path = self.root / "positions.bin"
         self.move_path = self.root / "moves.bin"
         self.metadata = dict(metadata or {})
+        teacher_path = self.metadata.get("teacher_path")
+        if teacher_path and "teacher_sha256" not in self.metadata:
+            try:
+                self.metadata["teacher_sha256"] = _sha256_file(teacher_path)
+            except OSError:
+                self.metadata["teacher_sha256"] = "unavailable"
+        new_signature = teaching_recipe_signature(self.metadata)
+        self.metadata["recipe_signature"] = new_signature
         if append and self.meta_path.exists():
             old = json.loads(self.meta_path.read_text(encoding="utf-8"))
             self._validate_meta(old)
+            old_signature = old.get("recipe_signature") or teaching_recipe_signature(old)
+            if old_signature != new_signature:
+                raise ValueError(
+                    "refusing to resume into a teaching dataset produced by a "
+                    "different teacher/labeling recipe; use a new OUTPUT or RESUME=False")
             old.update(self.metadata)
             self.metadata = old
         elif not append:
@@ -303,8 +352,12 @@ class TeachingDataset:
             raise ValueError("positions.bin size is not a multiple of POSITION_DTYPE")
         if move_path.stat().st_size % MOVE_DTYPE.itemsize:
             raise ValueError("moves.bin size is not a multiple of MOVE_DTYPE")
-        self.positions = np.memmap(pos_path, dtype=POSITION_DTYPE, mode="r")
-        self.moves = np.memmap(move_path, dtype=MOVE_DTYPE, mode="r")
+        self.positions = (
+            np.memmap(pos_path, dtype=POSITION_DTYPE, mode="r")
+            if pos_path.stat().st_size else np.empty(0, dtype=POSITION_DTYPE))
+        self.moves = (
+            np.memmap(move_path, dtype=MOVE_DTYPE, mode="r")
+            if move_path.stat().st_size else np.empty(0, dtype=MOVE_DTYPE))
 
     def __len__(self) -> int:
         return len(self.positions)
