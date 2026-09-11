@@ -3,15 +3,25 @@
 The on-disk corpus stores raw chess-domain labels. This module derives value
 probabilities, soft policies, or pairwise move-order targets at training time,
 so loss/temperature/top-k choices never require relabeling the corpus.
+
+The file is both importable as ``train.teaching.loader`` and directly
+executable as required by the repository bare-run convention.
 """
 from __future__ import annotations
 
 import math
+import sys
 from pathlib import Path
 
 import numpy as np
 
-from .format import MISSING_CP, TeachingDataset, move_scores_to_policy, unpack_move_uci
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from train.teaching.format import (  # noqa: E402
+    MISSING_CP, TeachingDataset, move_scores_to_policy, unpack_move_uci,
+)
 
 VALUE_SCALE_CP = 320.0
 
@@ -109,6 +119,5 @@ class TeachingBatchAdapter:
         return rows, targets, valid
 
 
-# Bare execution is a harmless module smoke/contract report.
 if __name__ == "__main__":
     print("Teaching loader ready: value, soft-policy, and pairwise move-order targets.")
