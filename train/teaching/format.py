@@ -80,7 +80,8 @@ MOVE_DTYPE = np.dtype([
 ], align=False)
 
 _OPERATIONAL_CONFIG_KEYS = {
-    "OUTPUT", "LIMIT", "RESUME", "WORKERS", "BATCH_SIZE", "CHECKPOINT_EVERY"
+    "OUTPUT", "LIMIT", "RESUME", "WORKERS", "BATCH_SIZE",
+    "MAX_IN_FLIGHT_BATCHES", "CHECKPOINT_EVERY",
 }
 
 
@@ -93,12 +94,7 @@ def _sha256_file(path: str | os.PathLike) -> str:
 
 
 def teaching_recipe_signature(meta: dict) -> str:
-    """Hash only label semantics, not throughput/checkpoint knobs.
-
-    Resume may safely change worker/batch/checkpoint settings, but it must not
-    append labels from a different teacher, source set, method order, policy
-    sampling recipe, search effort, or active-learning thresholds.
-    """
+    """Hash label semantics, excluding only throughput/checkpoint knobs."""
     config = dict(meta.get("config") or {})
     for key in _OPERATIONAL_CONFIG_KEYS:
         config.pop(key, None)
@@ -131,11 +127,11 @@ def pack_move_uci(uci: str) -> int:
         raise ValueError(f"invalid UCI move {uci!r}")
 
     def sq(token: str) -> int:
-        f = ord(token[0]) - ord("a")
-        r = ord(token[1]) - ord("1")
-        if not (0 <= f < 8 and 0 <= r < 8):
+        file_index = ord(token[0]) - ord("a")
+        rank_index = ord(token[1]) - ord("1")
+        if not (0 <= file_index < 8 and 0 <= rank_index < 8):
             raise ValueError(f"invalid UCI square {token!r}")
-        return r * 8 + f
+        return rank_index * 8 + file_index
 
     fr, to = sq(uci[:2]), sq(uci[2:4])
     promo = 0
@@ -147,8 +143,8 @@ def pack_move_uci(uci: str) -> int:
 def unpack_move_uci(value: int) -> str:
     value = int(value)
 
-    def name(s: int) -> str:
-        return chr(ord("a") + (s & 7)) + chr(ord("1") + (s >> 3))
+    def name(square: int) -> str:
+        return chr(ord("a") + (square & 7)) + chr(ord("1") + (square >> 3))
 
     fr = value & 63
     to = (value >> 6) & 63
@@ -253,6 +249,7 @@ class TeachingWriter:
         self.pos_path = self.root / "positions.bin"
         self.move_path = self.root / "moves.bin"
         self.metadata = dict(metadata or {})
+
         teacher_path = self.metadata.get("teacher_path")
         if teacher_path and "teacher_sha256" not in self.metadata:
             try:
@@ -261,6 +258,7 @@ class TeachingWriter:
                 self.metadata["teacher_sha256"] = "unavailable"
         new_signature = teaching_recipe_signature(self.metadata)
         self.metadata["recipe_signature"] = new_signature
+
         if append and self.meta_path.exists():
             old = json.loads(self.meta_path.read_text(encoding="utf-8"))
             self._validate_meta(old)
@@ -269,16 +267,36 @@ class TeachingWriter:
                 raise ValueError(
                     "refusing to resume into a teaching dataset produced by a "
                     "different teacher/labeling recipe; use a new OUTPUT or RESUME=False")
+            self._truncate_to_committed(old)
             old.update(self.metadata)
             self.metadata = old
         elif not append:
             self.pos_path.write_bytes(b"")
             self.move_path.write_bytes(b"")
+
         self.pos_f = self.pos_path.open("ab")
         self.move_f = self.move_path.open("ab")
         self.positions = self.pos_path.stat().st_size // POSITION_DTYPE.itemsize
         self.moves = self.move_path.stat().st_size // MOVE_DTYPE.itemsize
         self._write_meta()
+
+    def _truncate_to_committed(self, old: dict) -> None:
+        """Discard an uncheckpointed tail left by a hard process/machine crash."""
+        committed_positions = int(old.get("positions", 0))
+        committed_moves = int(old.get("moves", 0))
+        expected = (
+            (self.pos_path, committed_positions * POSITION_DTYPE.itemsize),
+            (self.move_path, committed_moves * MOVE_DTYPE.itemsize),
+        )
+        for path, committed_size in expected:
+            actual_size = path.stat().st_size if path.exists() else 0
+            if actual_size < committed_size:
+                raise ValueError(
+                    f"{path.name} is shorter than its committed metadata "
+                    f"({actual_size} < {committed_size}); dataset is corrupted")
+            if actual_size > committed_size:
+                with path.open("r+b") as handle:
+                    handle.truncate(committed_size)
 
     @staticmethod
     def _validate_meta(meta: dict) -> None:
