@@ -88,6 +88,25 @@ def test_resume_rejects_recipe_changes_but_allows_operational_changes(tmp_path):
         TeachingWriter(tmp_path, changed_recipe, append=True)
 
 
+def test_resume_truncates_uncheckpointed_tail(tmp_path):
+    meta = {"teacher": "unit", "config": {"SHALLOW_NODES": 2000}}
+    position = np.zeros(1, dtype=POSITION_DTYPE)
+    moves = np.zeros(1, dtype=MOVE_DTYPE)
+    with TeachingWriter(tmp_path, meta) as writer:
+        writer.write(position, moves)
+    committed_pos = (tmp_path / "positions.bin").stat().st_size
+    committed_moves = (tmp_path / "moves.bin").stat().st_size
+    with (tmp_path / "positions.bin").open("ab") as handle:
+        position.tofile(handle)
+    with (tmp_path / "moves.bin").open("ab") as handle:
+        moves.tofile(handle)
+    assert (tmp_path / "positions.bin").stat().st_size > committed_pos
+    with TeachingWriter(tmp_path, meta, append=True):
+        pass
+    assert (tmp_path / "positions.bin").stat().st_size == committed_pos
+    assert (tmp_path / "moves.bin").stat().st_size == committed_moves
+
+
 def test_eval_export_converts_board_and_white_score_to_sample_contract():
     row = np.zeros(1, dtype=POSITION_DTYPE)[0]
     row["board"][0] = 4       # white rook a1 -> Zchezz square 56, code 12
