@@ -63,8 +63,8 @@ jobs:
           BASE="$(realpath engine/c/zchezz_v325/zchezz_baseline.exe)"
           CAND="$(realpath engine/c/zchezz_v325/zchezz_stale_miss.exe)"
           ./engine/build/arena.exe \
-            --player "baseline=uci:${BASE}" \
-            --player "stale-miss=uci:${CAND}" \
+            --player "uci:${BASE}" \
+            --player "uci:${CAND}" \
             --games 40 \
             --threads 1 \
             --movetime 200 \
@@ -75,7 +75,6 @@ jobs:
             --tt-mb 64 \
             --uci-timeout 15000 \
             --json artifacts/v326-stale-h2h/result.json \
-            --pgn artifacts/v326-stale-h2h/games.pgn \
             2>&1 | tee artifacts/v326-stale-h2h/arena.log
 
       - name: Verify protocol and publish summary
