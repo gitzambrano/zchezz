@@ -10,6 +10,7 @@ All public Python tools have editable defaults at the top of the file and work w
 python train/teacher.py
 python train/teaching/inspect_dataset.py
 python train/teaching/seeds.py
+python train/teaching/targeted_selfplay.py
 python train/teaching/export_eval_bin.py
 ```
 
@@ -37,13 +38,13 @@ All scores are **White-relative centipawns**. The board uses standard chess-doma
 
 Move labels store raw `static_cp`, optional refined `search_cp`, and ranks. The dataset deliberately does **not** store a fixed softmax policy. Training can later choose temperature, top-K, best-move classification, pairwise ranking, or another policy loss without relabeling.
 
-Resume is fail-closed. The writer fingerprints the teacher binary and hashes all label-semantic settings. It may resume with different worker/batch/checkpoint settings, but refuses to append if the teacher, methods, source recipe, search effort, sampling or teaching thresholds changed.
+Resume is fail-closed and crash-consistent. The writer fingerprints the teacher binary and hashes all label-semantic settings. It may resume with different worker/batch/checkpoint settings, but refuses to append if the teacher, methods, source recipe, search effort, sampling or teaching thresholds changed. An uncheckpointed binary tail left by a hard crash is truncated to the last committed metadata counts before append resumes.
 
 ## Existing data
 
 `teacher.py` recursively streams `.bin`, `.epd`, `.fen`, and `.pgn` inputs. Zchezz packed `.bin` files are memory-mapped. Existing `eval_cp` is converted from side-to-move POV to White POV and becomes `source_cp`, which is reused as the student signal for gap mining.
 
-Set `INPUTS` to a file, glob, or directory containing millions of positions. The output writer is resumable. Worker processes keep long-lived Stockfish instances, so engines are not restarted per position.
+Set `INPUTS` to a file, glob, or directory containing millions of positions. The output writer is resumable. Worker processes keep long-lived Stockfish instances, so engines are not restarted per position. The process pool uses bounded back-pressure (`MAX_IN_FLIGHT_BATCHES`) rather than pre-enqueuing a huge corpus in RAM.
 
 For Parquet-heavy archives, `train/labeling/process_positions.py` remains the general format-conversion front-end; convert once to packed `.bin` and teach from the memory-mapped result.
 
@@ -72,9 +73,11 @@ A future policy head should consume the teaching dataset directly through `loade
 
 Set `SOURCE_MODE = "random"` or `"mixed"` to add newly generated legal positions.
 
-More importantly, `python train/teaching/seeds.py` exports hard/high-interest positions to `hard_seeds.epd`. They can be reused as starting/opening seeds for targeted self-play. Optional `EXPAND_PLIES` and `BRANCHES_PER_SEED` perturb hard roots into nearby legal positions.
+`python train/teaching/seeds.py` exports hard/high-interest positions to an EPD. Optional `EXPAND_PLIES` and `BRANCHES_PER_SEED` perturb hard roots into nearby legal positions.
 
-This creates an active-learning loop: find where Zchezz disagrees with the teacher, spend search only there, generate nearby games, retrain, and repeat.
+`python train/teaching/targeted_selfplay.py` closes the loop automatically: it exports those hard roots into an opening directory and launches the existing persistent-engine self-play runner in book mode. It reuses the mature self-play implementation instead of duplicating engine lifecycle, opening, EPD, or packed-bin logic.
+
+The intended active-learning cycle is therefore: label cheaply, identify teacher/student gaps, spend deeper search only on hard cases, self-play from those regions, add the new positions to the corpus, retrain, and repeat.
 
 ## Quiet filtering
 
@@ -95,6 +98,7 @@ For very large runs tune these first:
 - `SEARCH_INTEREST` — shallow-search gate;
 - `DEEP_INTEREST` — deep-search gate;
 - `WORKERS` — long-lived Stockfish processes;
+- `MAX_IN_FLIGHT_BATCHES` — upper bound on queued batches/RAM pressure;
 - `SF_THREADS = 1` — normally parallelize across positions rather than inside one teacher.
 
 Run a pilot shard, inspect it with `inspect_dataset.py`, then tune the gates before committing compute to the full corpus.
