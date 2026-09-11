@@ -1,38 +1,24 @@
 #define _POSIX_C_SOURCE 200809L
-/* nnue.c — Zchezz NNUE evaluation layer (v4.00: HalfKP-4Bucket)
+/* nnue.c — Zchezz v500 compact NNU4 HalfKP-4Bucket evaluator
  *
- * See nnue.h for the full architecture description, the coordinate
- * conventions, and the lazy bucket-refresh contract.  This file is the
- * implementation; the invariants live in the header.
+ * See nnue.h for the public architecture, coordinate and lazy-refresh
+ * contracts. The current installed/runtime network is:
  *
- * ── Pipeline per evaluated node ──────────────────────────────────
+ *   features  2560 per perspective
+ *   L1        2560 -> 48
+ *   SCReLU    clamp to QA, square, then >> 8
+ *   concat    [stm 48 | opp 48] = 96
+ *   L2        96 -> 20
+ *   L3        20 -> 1
  *
- *   Step 0  Lazy refresh: if this frame's perspective was invalidated
- *           by a king move that crossed a bucket border, rebuild that
- *           perspective from the board.  Rare.
- *   Step 1  Accumulators are already up to date (nnue_push_na keeps
- *           acc_stack_w/b[acc_ptr] incremental).
- *   Step 2  SCReLU: relu1[1024] uint8 = [stm 512 | opp 512], where
- *           c = clamp(acc + L1B, 0, 255) and out = (c*c) >> 8.
- *   Step 3  L2: 1024 -> 32, int8 weights, _mm256_maddubs_epi16 kernel
- *           (uint8 x int8 -> int16 pairwise) with a 4-wide output
- *           unroll so each relu1 block is loaded once for 4 rows.
- *   Step 4  ClippedReLU: relu2[32] = clamp(acc2 >> NN_SHIFT, 0, QB).
- *   Step 5  L3: int32 dot product, one float conversion at the end.
- *   Step 6  cp = l3_sum * OUT_SCALE + L3B * 320, clamped to +/-2000.
+ * Per evaluated node, a pending king-bucket transition first triggers a lazy
+ * perspective rebuild. Clean accumulator chains are materialized only when a
+ * node actually evaluates. The forward pass then applies SCReLU, the 96x20
+ * quantized L2 kernel, ClippedReLU and the scalar L3 output.
  *
- * ── What was deleted vs v3.14 ────────────────────────────────────
- *
- *   _compute_extra_feat / _compute_extra_feat_bb  (31 endgame features)
- *   _project_feat_add / _project_feat_full / _project_feat_incremental
- *   _pp_span_w/_pp_span_b/_init_extra_masks       (passed-pawn masks)
- *   _build_bb_from_board                          (bb[] no longer used)
- *   the ext cache (cache_key/cache_buf) and ext_dirty bookkeeping
- *
- * That removal is worth roughly O(31 x 256) SIMD per node — the merge
- * that used to sit between the accumulator and the activation.  It is
- * also why nnue_eval and nnue_eval_bb are now the same function: the
- * bitboards and the Zobrist hash only ever existed to feed the extras.
+ * This NNU4 path has no NNU3-style 31-feature projection/cache. `nnue_eval_bb`
+ * keeps its bitboard/hash parameters only for source compatibility with the
+ * search interface.
  *
  * Compile standalone self-test:
  *   gcc -O3 -march=native -std=c11 -o test_nnue nnue.c -DNNUE_TEST -lm
@@ -80,33 +66,22 @@ static void zfree32(void *ptr) {
 
 /* ── Weight storage (per-instance NnueNet; read-only after load: MT-safe)
  *
- * This used to be a set of file-scope statics (_nnL1WT, _nnL1B, ...) —
- * one net per process, period. Packaged into NnueNet so a process can
- * hold several independently loaded nets at once (native A/B arena:
- * gen_{i+1} vs gen_i in the same process). Mirrors TTable in search.h
- * field-for-field in spirit: a struct + create/destroy + a process-wide
- * default pointer (g_nnue_net, declared in nnue.h) that every legacy
- * caller implicitly uses.
- *
- * Once loaded, every field is read-only, so concurrent search threads
- * (or two arena players, each with their own NnueAccum bound to a
- * different NnueNet) may share a NnueNet freely — exactly like the old
- * globals were safe to share, just now there can be more than one. */
+ * NnueNet lets one process hold independent networks for native A/B and
+ * self-play tools. The UCI/WASM compatibility API uses g_nnue_net as its
+ * process-wide default. Once loaded, all weight arrays are read-only and may
+ * be shared by search threads; mutable accumulator state remains per thread. */
 struct NnueNet {
-    /* L1: [NN_L1_IN][NN_L1_OUT] = [2560][512] int16, feature-major so
-     * that one feature's contribution is a single contiguous 1 KB row. */
+    /* L1: [2560][48] int16, feature-major. One feature row is 96 bytes. */
     int16_t *L1WT;
-    int32_t *L1B;      /* [512] int32                     */
+    int32_t *L1B;      /* [48] int32 */
 
-    /* L2: [NN_L2_OUT][NN_L2_IN] = [32][1024] int8, row-major per OUTPUT
-     * neuron — the layout the maddubs kernel wants.  The NNU4 file
-     * already stores it this way, so the loader is a straight memcpy
-     * (NNU3 needed a transpose on load; that is gone). */
+    /* L2: [20][96] int8, row-major per output neuron. The NNU4 file stores
+     * this layout directly, so loading is a straight memcpy. */
     int8_t  *L2W;
-    int32_t *L2B;      /* [32] int32                      */
+    int32_t *L2B;      /* [20] int32 */
 
     /* L3 */
-    int8_t  *L3W;      /* [32] int8                       */
+    int8_t  *L3W;      /* [20] int8 */
     float    L3B;
     float    OutScale;
 
@@ -144,9 +119,9 @@ extern NnueAccum g_nnue_accum;
 /* ════════════════════════════════════════════════════════════════
  * FEATURE ENCODING — HalfKP-4Bucket
  *
- * Must stay bit-identical to halfkp_features() in
- * train/train_nnue.py.  See nnue.h for the convention table and
- * train/check_parity.py for the automated cross-check.
+ * Must stay bit-identical to the v500 Python encoder in train/encoding.py.
+ * See nnue.h for the convention table and train/check_parity.py for the
+ * cross-language parity check.
  * ════════════════════════════════════════════════════════════════ */
 
 /* Bucket of a king standing on POV square `s` (0 = own a1 corner). */
@@ -285,11 +260,11 @@ static inline void _acc_sub_piece(int16_t *accW, int16_t *accB,
  *   epoch                        uint32
  *   dims[5]                      L1_IN, L1_OUT, L2_IN, L2_OUT, L3_IN
  *   scales[4]                    QA, QB, SHIFT, OUT_SCALE   (float32)
- *   L1W  [2560][512] int16       feature-major
- *   L1B  [512]       int32
- *   L2W  [32][1024]  int8        output-major (NO transpose on load)
- *   L2B  [32]        int32
- *   L3W  [32]        int8
+ *   L1W  [2560][48]  int16       feature-major
+ *   L1B  [48]        int32
+ *   L2W  [20][96]    int8        output-major
+ *   L2B  [20]        int32
+ *   L3W  [20]        int8
  *   L3B                          float32
  */
 static int _load_weights(NnueNet *net, const uint8_t *buf, size_t len) {
@@ -298,9 +273,8 @@ static int _load_weights(NnueNet *net, const uint8_t *buf, size_t len) {
     }
     size_t off = 4 + 4;                     /* magic + epoch */
 
-    /* Validate the dims header against the compiled-in architecture.
-     * Loading a net with mismatched dims used to be silent corruption;
-     * with a 2.6 MB file it is worth one explicit check. */
+    /* Validate the file header against the compiled compact architecture before
+     * any payload copy. A mismatch is an incompatible network, not a fallback. */
     uint32_t dims[5];
     memcpy(dims, buf + off, 5 * sizeof(uint32_t)); off += 5 * 4;
     const uint32_t want[5] = { NN_L1_IN, NN_L1_OUT, NN_L2_IN, NN_L2_OUT, NN_L3_IN };
@@ -317,8 +291,8 @@ static int _load_weights(NnueNet *net, const uint8_t *buf, size_t len) {
     memcpy(scales, buf + off, 4 * sizeof(float)); off += 16;
     net->OutScale = scales[3];
 
-    const size_t L1_SZ = (size_t)NN_L1_IN  * NN_L1_OUT;   /* 2560*512 int16 */
-    const size_t L2_SZ = (size_t)NN_L2_OUT * NN_L2_IN;    /* 32*1024  int8  */
+    const size_t L1_SZ = (size_t)NN_L1_IN  * NN_L1_OUT;   /* 2560*48 int16 */
+    const size_t L2_SZ = (size_t)NN_L2_OUT * NN_L2_IN;    /* 20*96 int8 */
     size_t need = off + L1_SZ*2 + NN_L1_OUT*4 + L2_SZ + NN_L2_OUT*4 + NN_L3_IN + 4;
     if (len < need) {
         fprintf(stderr, "[NNUE] File too small (%zu < %zu)\n", len, need); return -1;
@@ -647,13 +621,11 @@ static inline void _ensure_lazy_perspective(NnueAccum *na, int white_pov) {
     }
 }
 
-/* Pop restores the parent frame.  Bucket and dirty state come back
- * automatically because they are stored per frame, not as flat fields —
- * this is what makes a king move that crosses a bucket border safe to
- * undo. */
+/* Pop restores the parent frame. Bucket and dirty state are stored per frame,
+ * so undo restores the parent's perspective contract without extra work. */
 void nnue_pop_na(NnueAccum *na) { if (na->acc_ptr > 0) na->acc_ptr--; }
 
-/* Legacy global push/pop (WASM / tests): same logic, global accumulator. */
+/* Global compatibility push/pop for WASM/tests. */
 void nnue_push(const uint8_t *board, const NNMove *m) { nnue_push_na(&g_nnue_accum, board, m); }
 void nnue_pop(void) { nnue_pop_na(&g_nnue_accum); }
 
@@ -673,16 +645,8 @@ static inline int32_t _hsum_epi32(__m256i v) {
 }
 #endif
 
-/* ── Step 2: SCReLU over one perspective ─────────────────────────
- *
- *   c   = clamp(acc[o] + L1B[o], 0, 255)     int32
- *   out = (c * c) >> 8                       -> [0, 254] uint8
- *
- * The squaring is done in the int32 domain BEFORE the pack, which lets
- * the pack sequence stay byte-identical to the one v3.14 already used
- * (packus_epi32 -> permute4x64(3,1,2,0) -> packus_epi16).  Doing it
- * after packing would need an extra unpack and is where lane-order bugs
- * come from.  c <= 255 so c*c <= 65025 — no int32 overflow. */
+/* SCReLU over one 48-value perspective accumulator.
+ * c=clamp(acc+bias,0,255); output=(c*c)>>8, therefore [0,254]. */
 static inline void _screlu_perspective(const int16_t *acc, const int32_t *L1B, uint8_t *dst) {
 #ifdef __AVX2__
     const __m256i zero = _mm256_setzero_si256();
@@ -809,11 +773,8 @@ static void _verify_accumulator(NnueAccum *na, const uint8_t *board) {
 }
 #endif /* NNUE_VERIFY_ACC */
 
-/* ── The shared forward pass ─────────────────────────────────────
- *
- * Returns centipawns from the point of view of `stm` (0 = White to
- * move, 1 = Black to move).  The concat order is [stm | opp] — see
- * APPENDIX D of the v400 plan; reversing it inverts the engine. */
+/* Shared forward pass. Returns centipawns from the point of view of `stm`.
+ * The 96-byte L2 input is always concatenated as [stm 48 | opp 48]. */
 static int _nnue_forward(NnueAccum *na, int stm, const uint8_t *board) {
     /* na->net == NULL is treated exactly like acc_dirty: fail safe (eval
      * 0) instead of dereferencing a net that was never bound. This is
@@ -827,9 +788,7 @@ static int _nnue_forward(NnueAccum *na, int stm, const uint8_t *board) {
      * exactly once per forward pass. The struct indirection (na->net->X)
      * only happens here; every helper below receives plain pointers, so
      * the compiler can keep them in registers through the SIMD loops
-     * instead of re-touching net on every access. This is what keeps
-     * per-instance nets from costing the ~2% the task called out as the
-     * risk of `net->field` sitting in the innermost loops. */
+     * instead of re-touching net on every access. */
     const int16_t *L1WT     = net->L1WT;
     const int32_t *L1B      = net->L1B;
     const int8_t  *L2W      = net->L2W;
@@ -839,11 +798,10 @@ static int _nnue_forward(NnueAccum *na, int stm, const uint8_t *board) {
     const float    OutScale = net->OutScale;
 
     int ptr = na->acc_ptr;
-    /* Step 0a: materialize clean lazy chains only if this node evaluates. */
+    /* Materialize clean lazy chains only if this node evaluates. */
     if (!na->dirty_w_stack[ptr]) _ensure_lazy_perspective(na, 1);
     if (!na->dirty_b_stack[ptr]) _ensure_lazy_perspective(na, 0);
-    /* Step 0b: a king-bucket crossing is still rebuilt exactly from the
-     * current board, preserving the original v5 bucket semantics. */
+    /* A king-bucket crossing is rebuilt exactly from the current board. */
     if (na->dirty_w_stack[ptr]) _refresh_perspective(na, board, 1);
     if (na->dirty_b_stack[ptr]) _refresh_perspective(na, board, 0);
 
@@ -856,24 +814,18 @@ static int _nnue_forward(NnueAccum *na, int stm, const uint8_t *board) {
     const int16_t *acc_stm = (stm == 0) ? na->acc_stack_w[ptr] : na->acc_stack_b[ptr];
     const int16_t *acc_opp = (stm == 0) ? na->acc_stack_b[ptr] : na->acc_stack_w[ptr];
 
-    /* Step 2: SCReLU -> relu1[1024] = [stm 512 | opp 512] */
+    /* SCReLU -> relu1[96] = [stm 48 | opp 48]. */
     uint8_t relu1[NN_L2_IN] __attribute__((aligned(32)));
     _screlu_perspective(acc_stm, L1B, relu1);
     _screlu_perspective(acc_opp, L1B, relu1 + NN_L1_OUT);
 
-    /* Step 3: L2 — 1024 inputs, 32 outputs, 4-wide output unroll.
-     * The unroll loads each relu1 block once and reuses it for 4 weight
-     * rows, which is what keeps this kernel memory-bound rather than
-     * load-bound.  NN_L2_OUT=32 is divisible by 4 and NN_L2_IN=1024 by
-     * 32/16, so neither loop needs a tail. */
+    /* L2: 96 inputs, 20 outputs, four output rows at a time. NN_L2_OUT=20
+     * is divisible by four and NN_L2_IN=96 has exact AVX2/WASM vector tails. */
     int32_t acc2[NN_L2_OUT] __attribute__((aligned(32)));
 #if defined(__AVXVNNI__)
-    /* v4.02: AVX-VNNI path — VPDPBUSD fuses the unsigned-byte × signed-byte
-     * dot product + int32 accumulate into ONE instruction per 32 inputs,
-     * replacing the maddubs+madd+add triple of the plain AVX2 path (~half
-     * the uops for the same exact integer result; relu1 is uint8 in
-     * [0,254], L2W is int8, so the dpbusd "unsigned a × signed b"
-     * semantics match this layer exactly). */
+    /* AVX-VNNI VPDPBUSD fuses unsigned-byte x signed-byte dot product and
+     * int32 accumulation. relu1 is uint8 [0,254] and L2W is int8, so the
+     * instruction semantics exactly match this layer. */
     {
         for (int o = 0; o < NN_L2_OUT; o += 4) {
             const int8_t *row0 = L2W + (size_t)(o+0) * NN_L2_IN;
@@ -976,20 +928,19 @@ static int _nnue_forward(NnueAccum *na, int stm, const uint8_t *board) {
     }
 #endif
 
-    /* Step 4: shift + ClippedReLU -> relu2[32] uint8 in [0, QB] */
+    /* Shift + ClippedReLU -> 20 uint8 values in [0,QB]. */
     uint8_t relu2[NN_L2_OUT];
     for (int o = 0; o < NN_L2_OUT; o++) {
         int32_t v = acc2[o] >> NN_SHIFT;
         relu2[o] = (uint8_t)(v < 0 ? 0 : v > NN_QB ? NN_QB : v);
     }
 
-    /* Step 5: L3 — integer dot product, one float conversion */
+    /* L3: integer dot product, followed by one float scale/bias conversion. */
     int32_t l3_sum = 0;
     for (int i = 0; i < NN_L3_IN; i++) l3_sum += (int32_t)L3W[i] * relu2[i];
 
-    /* Step 6: scale + bias -> centipawns.  The 320.0f matches the
-     * cp<->WDL temperature used by to_wdl() in training (APPENDIX D.2);
-     * changing one without the other silently rescales every eval. */
+    /* 320 cp is the evaluator/training WDL temperature. Keep this scale paired
+     * with the v500 training target conversion. */
     float cp = (float)l3_sum * OutScale + L3B * 320.0f;
     if (cp < -2000.f) cp = -2000.f;
     if (cp >  2000.f) cp =  2000.f;
@@ -1000,25 +951,15 @@ int nnue_eval(NnueAccum *na, int stm, const uint8_t *board) {
     return _nnue_forward(na, stm, board);
 }
 
-/* bb[] and board_hash existed only for the v3.14 extra-feature cache,
- * which no longer exists.  The signature is kept so search.c does not
- * have to change. */
+/* bb[] and board_hash are retained for the common search signature; compact
+ * NNU4 does not use the NNU3 extra-feature cache that required them. */
 int nnue_eval_bb(NnueAccum *na, int stm, const uint8_t *board,
                  const uint64_t bb[12], uint64_t board_hash) {
     (void)bb; (void)board_hash;
     return _nnue_forward(na, stm, board);
 }
 
-/* ════════════════════════════════════════════════════════════════
- * Standalone self-test / benchmark  (gcc ... -DNNUE_TEST)
- *
- * Checks the two things that silently break a HalfKP port:
- *   1. push/pop round-trip — an incremental accumulator after N moves
- *      must equal a rebuild of the same position (this is what catches
- *      a missed bucket refresh or a forgotten capture-by-king).
- *   2. feature index bounds and the ally/enemy swap between the two
- *      perspectives.
- * ════════════════════════════════════════════════════════════════ */
+/* Standalone self-test/benchmark (compile with -DNNUE_TEST). */
 #ifdef NNUE_TEST
 #include <assert.h>
 
@@ -1032,13 +973,12 @@ static void _dump_fail(const char *what) {
 int main(int argc, char **argv) {
     (void)argc; (void)argv;
 
-    /* --- Feature encoding checks (no weights needed) --- */
-    /* White king on e1 (mailbox 60): POV sq = 60^56 = 4 -> file 4, rank 0
-     * -> bucket bit0 set, bit1 clear -> 1. */
+    /* Feature encoding checks (no weights needed). */
+    /* White king on e1 (mailbox 60): POV sq = 60^56 = 4 -> bucket 1. */
     if (nnue_king_bucket_w(60) != 1) _dump_fail("king_bucket_w(e1) != 1");
-    /* Black king on e8 (mailbox 4): POV sq = 4 -> bucket 1 (mirror image). */
+    /* Black king on e8 (mailbox 4): POV sq = 4 -> bucket 1. */
     if (nnue_king_bucket_b(4) != 1) _dump_fail("king_bucket_b(e8) != 1");
-    /* c1 (mailbox 58): POV 58^56 = 2 -> file 2 -> bucket 0. */
+    /* c1 (mailbox 58): POV 58^56 = 2 -> bucket 0. */
     if (nnue_king_bucket_w(58) != 0) _dump_fail("king_bucket_w(c1) != 0");
 
     /* A white pawn is ally=0 from White's POV, enemy=5 from Black's. */
