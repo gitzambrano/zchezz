@@ -16,7 +16,7 @@ jobs:
       - run: python tools/check_repo.py
       - run: python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py tests/test_teaching_format.py tests/test_teaching_methods.py -q
       - name: Public entrypoint smoke
-        run: python train/run.py --show-config && python train/teacher.py --show-config && python train/teaching/inspect.py --show-config && python train/teaching/seeds.py --show-config && python tests/run_selfplay.py --show-config && python tests/run_tournament_quick.py --show-config && python tests/benchmark.py --show-config && bash -n engine/build/build_termux.sh
+        run: python train/run.py --show-config && python train/teacher.py --show-config && python train/teaching/inspect.py --show-config && python train/teaching/seeds.py --show-config && python train/teaching/export_eval_bin.py --show-config && python train/teaching/loader.py && python tests/run_selfplay.py --show-config && python tests/run_tournament_quick.py --show-config && python tests/benchmark.py --show-config && bash -n engine/build/build_termux.sh
       - run: make -C engine/build ENGINE=v325 STATIC_FLAG= ARCH_FLAGS= native && make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= native
       - name: UCI startup smoke
         run: for profile in v325 v500; do exe="engine/c/zchezz_${profile}/zchezz.exe"; output="$(printf 'uci\nisready\nquit\n' | "$exe" 2>&1)"; printf '%s\n' "$output"; grep -q '^uciok$' <<< "$output"; grep -q '^readyok$' <<< "$output"; done
