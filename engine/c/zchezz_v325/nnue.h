@@ -1,113 +1,65 @@
-/* nnue.h — Zchezz NNUE evaluation layer (v3.14: per-thread acc stacks)
+/* nnue.h — Zchezz v3.25 NNU3 evaluation API
  *
- * Architecture : 768 → 256 → 64 → 1   (int16/int8/float32)
- * Weight file  : NNU3 binary (quantized)
- * Perspective  : dual-accumulator (White-POV + Black-POV)
- * Output       : centipawns, White-relative, clamped to [-2000, +2000]
- *                cp = logit * 320.0f
+ * Installed-file contract:
+ *   input      799 = 768 half-mirror piece features + 31 endgame features
+ *   L1         799 -> 256
+ *   H2 on disk 256 -> 64
+ *   output     64 -> 1
+ *   format     NNU3, int16/int8 quantized
  *
- * ── Thread safety model (v3.14) ──────────────────────────────────
+ * Runtime contract:
+ *   the tracked network has 50 H2 neurons with non-zero quantized L3 weights.
+ *   The loader copies those 50 live rows into 52 SIMD slots (two zero padding
+ *   rows). This is exact dead-neuron elimination; the NNU3 file stays 64-wide.
  *
- * PROBLEM (v3.12 and earlier):
- *   The NNUE accumulator buffers (_acc_buf_w, _acc_buf_b, _ext_buf,
- *   _ext_cache_*) were global statics.  When Lazy SMP helper threads
- *   call nnue_eval concurrently, they corrupt each other's accumulator
- *   state, producing garbage evaluations.  Result: 4T scored 0.5/50
- *   against 1T.
- *
- * SOLUTION (v3.14):
- *   Each thread has its own NnueAccum with a per-thread HM accumulator
- *   stack (acc_stack_w/b[NN_ACC_STACK]).  board_make/unmake call
- *   nnue_push_na/pop_na to incrementally update the per-thread stack.
- *   nnue_eval_bb reads from na->acc_stack_w[na->acc_ptr].
- *
- *   This eliminates the global _acc_buf race that made 4T lose 30-0
- *   against 1T.  Each helper now produces correct evaluations.
- *
- *   Legacy nnue_push/pop still update global _acc_buf for WASM
- *   (single-threaded) and test functions.  They are NOT called by
- *   board_make/unmake in the native search path.
- *
- *   Memory: NnueAccum grows to ~68 KB (2×128×256×2 = 64 KB stacks
- *   + 4.3 KB ext cache).  Helpers heap-allocate via zmalloc32.
- *
- * WHAT REMAINS GLOBAL (read-only, safe for MT):
- *   All weight matrices (_nnL1WT, _nnL2W, _nnL3W, biases) are loaded
- *   once at startup and never modified.  They are safely shared.
+ * Threading:
+ *   every search thread owns an NnueAccum. Weight arrays are loaded once and
+ *   then read-only. The 768 half-mirror contribution is maintained on a
+ *   per-thread accumulator stack; the 31 extra features use cached projections.
+ *   PK17 passed-pawn/king-distance state is maintained incrementally as part of
+ *   the current v3.25 accumulator.
  */
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
 
-/* ── Layer dimensions ──────────────────────────────────────────── */
-/* Input = 768 half-mirror (HM) features + 31 endgame features = 799 */
-#define NN_L1_IN   799   /* 768 HM + 31 manual endgame features    */
+/* File/input and compact runtime layer dimensions. */
+#define NN_L1_IN   799   /* 768 half-mirror + 31 endgame features */
 #define NN_L1_OUT  256
 #define NN_L2_IN   256
-#define NN_L2_OUT   52   /* runtime compact: 50 live H2 + 2 zero pad */
-#define NN_L3_IN    52   /* must equal runtime NN_L2_OUT             */
+#define NN_L2_OUT   52   /* runtime: 50 live H2 + 2 zero SIMD padding */
+#define NN_L3_IN    52
 #define NN_L3_OUT    1
 
-/* HM-only slice of the input (first 768 features).
- * The accumulator covers only these; the extra 31 endgame features
- * are appended in nnue_eval() each call from the live board state. */
-#define NN_HM_IN   768   /* half-mirror encoding size (unchanged)  */
-#define NN_EXTRA   31    /* manual endgame features appended after  */
+#define NN_HM_IN   768
+#define NN_EXTRA    31
 
-/* ── Quantization constants ────────────────────────────────────── */
+/* Quantization constants shared with the NNU3 exporter/runtime. */
 #define NN_QA      255
 #define NN_QB      64
 #define NN_SHIFT   8
 
-/* ── Piece-type index (matches JS _NN_PT) ──────────────────────
- * P=0 N=1 B=2 R=3 Q=4 K=5                                        */
+/* Piece-type indexing used by feature code: P,N,B,R,Q,K -> 0..5. */
 #define NN_NOTYPES  6
 #define NN_NOCOLORS 2
 
-/* ── Accumulator stack depth ───────────────────────────────────── */
-/* Per-thread acc stack for nnue_push_na/pop_na (called by board_make/unmake).
- * NN_ACC_STACK must be > MAX_PLY (64) to avoid overflow.
- * 128 provides comfortable headroom. */
+/* Per-thread accumulator stack must exceed search MAX_PLY (64). */
 #define NN_ACC_STACK 128
 
-/* Legacy global stack depth (for WASM / test nnue_push/pop). */
+/* Legacy global stack used only by compatibility/test entry points. */
 #define NN_ACC_DEPTH 512
 
-/* ── Extra-feature cache slots ─────────────────────────────────── */
-/* Small direct-mapped cache to avoid recomputing the 31 endgame
- * feature projections when the same position is evaluated from
- * both sides (White-POV then Black-POV) or revisited.
- * 4 slots × 512 bytes = 2 KB overhead per thread. */
+/* Direct-mapped cache for projected endgame-feature contributions. */
 #define EXT_CACHE_SLOTS 16
 
-/* ── Per-thread NNUE accumulator state (v3.14) ─────────────────
- *
- * Contains all mutable state needed for nnue_eval / nnue_eval_bb.
- * Each search thread (main + Lazy SMP helpers) owns one instance.
- *
- * Memory layout (~68 KB, 32-byte aligned for AVX2 SIMD):
- *   acc_stack_w[128][256] — White HM acc stack (32 KB)
- *   acc_stack_b[128][256] — Black HM acc stack (32 KB)
- *   acc_ptr               — current stack pointer (4 B)
- *   acc_w[256]            — scratch for rebuild (512 B)
- *   acc_b[256]            — scratch for rebuild (512 B)
- *   ext_buf[2][256]       — extra-feature projection buffers (1 KB)
- *   ext_feat[2][31]       — raw extra-feature values (248 B)
- *   ext_dirty[2]          — dirty flags per perspective (2 B)
- *   acc_dirty             — rebuild-needed flag (4 B)
- *   cache_key[4]          — ext cache hash keys (32 B)
- *   cache_buf[4][256]     — ext cache projected buffers (2 KB)
- *
- * Allocation strategy:
- *   Main thread  → static global `g_nnue_accum` (declared in board.h)
- *   SMP helpers  → heap-allocated in helper_thread_fn (main.c)
- *   WASM         → static global (single-threaded) */
+/* Incremental PK17 state used by the v3.25 endgame feature path. */
 typedef struct {
     uint64_t pawns_w, pawns_b;
     uint8_t  king_w, king_b;
     uint8_t  passed_w, passed_b, king_dist;
 } NnuePk17State;
 
+/* Mutable NNUE state owned by one search thread / Board binding. */
 typedef struct {
     int16_t  acc_stack_w[NN_ACC_STACK][NN_L1_OUT] __attribute__((aligned(32)));
     int16_t  acc_stack_b[NN_ACC_STACK][NN_L1_OUT] __attribute__((aligned(32)));
@@ -118,10 +70,6 @@ typedef struct {
     float    ext_feat[2][NN_EXTRA];
     int8_t   ext_dirty[2];
 
-    /* v3.23 PK17 experiment. Passed-pawn files + king distance are kept
-     * incrementally in their own first-layer accumulator. Undo state is only
-     * written on moves that can change PK17, so ordinary quiet piece moves
-     * pay essentially no extra-feature cost. */
     NnuePk17State pk17_state;
     NnuePk17State pk17_undo[NN_ACC_STACK];
     uint8_t  pk17_changed[NN_ACC_STACK];
@@ -134,76 +82,40 @@ typedef struct {
     int16_t  cache_buf[EXT_CACHE_SLOTS][NN_L1_OUT] __attribute__((aligned(32)));
 } NnueAccum;
 
-/* ── Public API ────────────────────────────────────────────────── */
-
-/* Load NNU3 binary from path.  Returns 0 on success, -1 on error.
- * Thread safety: call once from main thread before any search. */
+/* Load the process-wide NNU3 weights. Call before launching search threads. */
 int  nnue_load(const char *path);
-
-/* True after a successful nnue_load(). Thread-safe (read-only flag). */
 int  nnue_ready(void);
 
-/* Fully rebuild the accumulator from scratch.
- * Writes acc_w[] and acc_b[] in `na` by scanning all 768 HM features
- * from board[64].  Called once at the start of each search iteration.
- *
- * na:       per-thread accumulator (Board::nnue)
- * board[64]: piece constants (WP=9..BK=22, empty=0) */
+/* Rebuild the thread accumulator from the current board position. */
 void nnue_rebuild(NnueAccum *na, const uint8_t *board);
 
-/* NNMove — describes a move for incremental accumulator push.
- * Used by board_make to pass move info to nnue_push_na. */
+/* Move metadata consumed by the incremental accumulator update. */
 typedef struct {
     uint8_t from_sq;
     uint8_t to_sq;
     uint8_t prom;       /* 0 = not a promotion */
-    uint8_t is_epc;     /* en-passant capture flag */
+    uint8_t is_epc;     /* en-passant capture */
     uint8_t castle;     /* 0|1|2|3|4 */
 } NNMove;
 
-/* Per-thread incremental accumulator update — push/pop on na->acc_stack.
- * Called by board_make/board_unmake in native search path.
- * Thread-safe: each thread has its own NnueAccum. */
+/* Native search make/unmake hooks; each thread passes its own NnueAccum. */
 void nnue_push_na(NnueAccum *na, const uint8_t *board, const NNMove *m);
 void nnue_pop_na(NnueAccum *na);
 
-/* Legacy global push/pop (for WASM / test functions only).
- * NOT called by board_make/unmake in the native search path. */
+/* Legacy global compatibility hooks used by WASM/tests, not native search. */
 void nnue_push(const uint8_t *board, const NNMove *m);
 void nnue_pop(void);
 
-/* Reset accumulator state.  Marks `na` as dirty (needs rebuild)
- * and clears the extra-feature cache.
- * Called at start of every search (search_best). */
+/* Mark the supplied accumulator dirty and reset its caches/stack state. */
 void nnue_reset(NnueAccum *na);
 
-/* Forward pass (basic).  Computes the 31 endgame features from
- * board[64] on every call.
- *
- * na:       per-thread accumulator
- * stm:      0 = White to move, 1 = Black
- * board[64]: current position
- * Returns:  centipawns, White-relative, clamped [-2000, +2000] */
+/* Forward passes return White-relative centipawns, clamped by the runtime. */
 int  nnue_eval(NnueAccum *na, int stm, const uint8_t *board);
-
-/* Fast path for search.  Accepts precomputed bb[12] bitboards
- * from Board and the Zobrist hash for a per-thread ext cache.
- * Avoids the 64-square _build_bb_from_board scan on every call.
- *
- * na:         per-thread accumulator
- * stm:        0 = White, 1 = Black
- * board[64]:  current mailbox
- * bb[12]:     precomputed bitboards (Board::bb)
- * board_hash: Zobrist hash (Board::hash), used as cache key */
 int  nnue_eval_bb(NnueAccum *na, int stm, const uint8_t *board,
                   const uint64_t bb[12], uint64_t board_hash);
 
-/* Load weights from a memory buffer (for WebAssembly / browser use).
- * data must point to the raw NNU3 binary content, len is the byte count.
- * Returns 0 on success, -1 on error.  Thread safety: call once. */
+/* In-memory NNU3 load used by the browser bundle. */
 int nnue_load_from_mem(const uint8_t *data, size_t len);
 
-/* WASM backward-compatibility wrapper.
- * JS worker calls nnue_reset() with no args — this passes the global
- * accumulator.  For native builds, use nnue_reset(na) directly. */
+/* Single-threaded/WASM compatibility reset for the global accumulator. */
 void nnue_reset_global(void);
