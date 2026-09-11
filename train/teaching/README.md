@@ -8,7 +8,7 @@ All public Python tools have editable defaults at the top of the file and work w
 
 ```bash
 python train/teacher.py
-python train/teaching/inspect.py
+python train/teaching/inspect_dataset.py
 python train/teaching/seeds.py
 python train/teaching/export_eval_bin.py
 ```
@@ -97,4 +97,4 @@ For very large runs tune these first:
 - `WORKERS` — long-lived Stockfish processes;
 - `SF_THREADS = 1` — normally parallelize across positions rather than inside one teacher.
 
-Run a pilot shard, inspect it with `inspect.py`, then tune the gates before committing compute to the full corpus.
+Run a pilot shard, inspect it with `inspect_dataset.py`, then tune the gates before committing compute to the full corpus.
