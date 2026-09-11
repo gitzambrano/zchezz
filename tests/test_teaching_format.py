@@ -7,10 +7,12 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from train.teaching.export_eval_bin import teaching_to_sample  # noqa: E402
 from train.teaching.format import (  # noqa: E402
     MISSING_CP, MOVE_DTYPE, POSITION_DTYPE, TeachingDataset, TeachingWriter,
     move_scores_to_policy, pack_move_uci, unpack_move_uci,
 )
+from train.teaching.loader import value_target  # noqa: E402
 
 
 def test_move_pack_roundtrip():
@@ -84,3 +86,31 @@ def test_resume_rejects_recipe_changes_but_allows_operational_changes(tmp_path):
     }
     with pytest.raises(ValueError, match="different teacher/labeling recipe"):
         TeachingWriter(tmp_path, changed_recipe, append=True)
+
+
+def test_eval_export_converts_board_and_white_score_to_sample_contract():
+    row = np.zeros(1, dtype=POSITION_DTYPE)[0]
+    row["board"][0] = 4       # white rook a1 -> Zchezz square 56, code 12
+    row["board"][63] = 10     # black rook h8 -> Zchezz square 7, code 20
+    row["stm"] = 1            # black to move
+    row["ep_square"] = 64
+    row["result_wdl"] = 2
+    sample = teaching_to_sample(row, cp_white=50)[0]
+    assert int(sample["board"][56]) == 12
+    assert int(sample["board"][7]) == 20
+    assert int(sample["eval_cp"]) == -50
+    assert int(sample["stm"]) == 1
+
+
+def test_generic_value_adapter_uses_search_then_static_and_stm_pov():
+    row = np.zeros(1, dtype=POSITION_DTYPE)[0]
+    row["static_cp"] = 0
+    row["search_cp"] = 320
+    row["source_cp"] = -100
+    row["stm"] = 0
+    white = value_target(row, "search-preferred", "stm")
+    row["stm"] = 1
+    black = value_target(row, "search-preferred", "stm")
+    assert white > 0.5
+    assert black < 0.5
+    assert np.isclose(white + black, 1.0)
