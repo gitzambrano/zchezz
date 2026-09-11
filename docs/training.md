@@ -57,7 +57,7 @@ The default teaching cascade is designed for very large corpora:
 
 If a Stockfish binary does not expose the non-standard `eval` command, the backend falls back to a tiny fixed-node search. Fixed-node work here is labeling effort, not strength-promotion evidence; the standard 200 ms protocol remains the strength comparison rule.
 
-The finished teaching dataset is a directory containing `metadata.json`, `positions.bin`, and sparse `moves.bin`. All centipawn labels are White-relative. `moves.bin` stores raw move scores and ranks so policy temperature, top-K, pairwise ranking, or future policy-head losses can be changed without relabeling. Metadata includes a teacher SHA-256 and a recipe signature; resume refuses incompatible teacher or labeling settings while allowing throughput-only changes such as worker count and batch size.
+The finished teaching dataset is a directory containing `metadata.json`, `positions.bin`, and sparse `moves.bin`. All centipawn labels are White-relative. `moves.bin` stores raw move scores and ranks so policy temperature, top-K, pairwise ranking, or future policy-head losses can be changed without relabeling. Metadata includes a teacher SHA-256 and a recipe signature; resume refuses incompatible teacher or labeling settings while allowing throughput-only changes such as worker count and batch size. Resume is crash-consistent: any uncheckpointed binary tail is truncated to the last committed counts. Worker submission is bounded by `MAX_IN_FLIGHT_BATCHES`, so million-position inputs are streamed instead of being pre-enqueued in RAM.
 
 Supported position sources are Zchezz `.bin`, `.epd`, `.fen`, and `.pgn`, recursively from files/directories/globs. Zchezz `.bin` files are memory-mapped and their side-to-move `eval_cp` is converted to White POV. `SOURCE_MODE = "random"` or `"mixed"` can also generate new legal positions. Parquet archives can first be streamed through `train/labeling/process_positions.py` into packed `.bin`.
 
@@ -82,9 +82,10 @@ python train/teacher.py --methods static_value,gap_mining
 python train/teacher.py --policy-sample-rate 1.0 --limit 100000
 python train/teaching/inspect_dataset.py
 python train/teaching/seeds.py
+python train/teaching/targeted_selfplay.py
 python train/teaching/export_eval_bin.py --show-config
 ```
 
-`train/teaching/seeds.py` exports hard/high-interest roots for targeted self-play and can optionally expand each root by a few random legal plies. This supports an active-learning loop in which teacher compute and new self-play concentrate on regions where the current student disagrees most.
+`train/teaching/seeds.py` exports hard/high-interest roots and can optionally expand each root by a few random legal plies. `train/teaching/targeted_selfplay.py` then reuses the existing persistent-engine self-play runner with those roots as the opening book. Together they provide an active-learning loop in which teacher compute and new self-play concentrate on regions where the current student disagrees most.
 
 See `train/teaching/README.md` for format details, quiet-position modes, cost knobs, trainer adapters, and extension points.
