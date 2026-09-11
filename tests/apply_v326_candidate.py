@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """Apply isolated v3.26 search candidates to a CI working copy of v3.25.
 
-The default candidate removes the blanket one-ply extension applied to every
-in-check alpha-beta node. Modern Stockfish does not use a blanket check
-extension; check evasions are handled normally and qsearch handles checks at the
-horizon. Keeping candidates as deterministic source transforms lets us compare
-one architectural change at a time without altering main.
+Each transform is deliberately small and independently benchmarkable. The file
+runs with useful defaults and CLI flags only override them.
 """
 from __future__ import annotations
 import argparse
@@ -45,9 +42,66 @@ def stale_miss(text: str) -> str:
     return exact(text, old, "        if (tt_age(e, gen) != 0) continue;\n", "stale TT move-only")
 
 
+def singular_exclusion_guard(text: str) -> str:
+    """Make singular verification actually search the position without TT move.
+
+    v3.25 marks the TT move in sing_from/sing_to, but its recursive verification
+    can be cut off by the same TT score (or NMP/ProbCut using the excluded move),
+    and can write the constrained result back into the normal TT. Stockfish's
+    excludedMove path explicitly blocks TT cutoff/NMP/TT write and skips the
+    excluded move in ProbCut. This candidate establishes the same invariants.
+    """
+    text = exact(
+        text,
+        "        if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0) {\n",
+        "        if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0 &&\n"
+        "            ss->sing_from[ply] < 0) {\n",
+        "singular TT score cutoff guard",
+    )
+    text = exact(
+        text,
+        "        if (tte_hit == 1 && tte.score != TT_EVAL_NONE) {\n",
+        "        if (tte_hit == 1 && tte.score != TT_EVAL_NONE && ss->sing_from[ply] < 0) {\n",
+        "singular TT eval-correction guard",
+    )
+    text = exact(
+        text,
+        "    if (!in_check && !is_pv && depth>=3 && ply>0 && not_endgame && static_eval>=beta) {\n",
+        "    if (!in_check && !is_pv && depth>=3 && ply>0 && not_endgame && static_eval>=beta &&\n"
+        "        ss->sing_from[ply] < 0) {\n",
+        "singular NMP guard",
+    )
+    text = exact(
+        text,
+        "            Move *pm = &pc_moves[pi];\n            /* Skip bad captures (SEE < 0 relative to pc_beta margin) */\n",
+        "            Move *pm = &pc_moves[pi];\n"
+        "            if (ss->sing_from[ply] >= 0 && pm->from == ss->sing_from[ply] &&\n"
+        "                pm->to == ss->sing_to[ply]) continue;\n"
+        "            /* Skip bad captures (SEE < 0 relative to pc_beta margin) */\n",
+        "singular ProbCut exclusion",
+    )
+    text = exact(
+        text,
+        "    if ((best_move.from||best_move.to) && !ss->time_up)\n        tt_store(b->hash, best, depth, flag, &best_move, ply, raw_eval);\n",
+        "    if ((best_move.from||best_move.to) && !ss->time_up && ss->sing_from[ply] < 0)\n"
+        "        tt_store(b->hash, best, depth, flag, &best_move, ply, raw_eval);\n",
+        "singular TT write guard",
+    )
+    # Tablebase result for the unrestricted position is invalid in an exclusion
+    # search. Native diagnostic builds disable TB, but keep the invariant correct.
+    text = exact(
+        text,
+        "    if (ply > 0 && !is_pv_early && b->hm == 0) {\n",
+        "    if (ply > 0 && !is_pv_early && b->hm == 0 && ss->sing_from[ply] < 0) {\n",
+        "singular tablebase guard",
+    )
+    return text
+
+
 TRANSFORMS = {
     "no-check-extension": no_check_extension,
     "stale-miss": stale_miss,
+    "singular-exclusion-guard": singular_exclusion_guard,
 }
 
 
