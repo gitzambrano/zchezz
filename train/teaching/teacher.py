@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import time
+from collections import deque
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -37,7 +38,8 @@ RESUME = True
 SEED = 20260911
 WORKERS = max(1, min(8, (os.cpu_count() or 2) // 2))
 BATCH_SIZE = 128
-CHECKPOINT_EVERY = 5000
+MAX_IN_FLIGHT_BATCHES = WORKERS * 2  # hard memory/back-pressure bound
+CHECKPOINT_EVERY = 5000              # INPUT positions consumed, not only kept
 
 METHODS = ("static_value", "gap_mining", "static_policy", "gap_mining", "adaptive_search")
 PLUGIN_MODULES = ()               # modules importing methods.register("...")
@@ -85,6 +87,7 @@ class Config:
     SEED: int
     WORKERS: int
     BATCH_SIZE: int
+    MAX_IN_FLIGHT_BATCHES: int
     CHECKPOINT_EVERY: int
     METHODS: tuple[str, ...]
     PLUGIN_MODULES: tuple[str, ...]
@@ -122,12 +125,12 @@ class Config:
 def default_config() -> Config:
     return Config(
         INPUTS.copy(), OUTPUT, SOURCE_MODE, LIMIT, RESUME, SEED, WORKERS,
-        BATCH_SIZE, CHECKPOINT_EVERY, METHODS, PLUGIN_MODULES, QUIET_MODE,
-        POLICY_SAMPLE_RATE, POLICY_TEMPERATURE_CP, SEARCH_MULTIPV,
-        SHALLOW_NODES, DEEP_MULTIPV, DEEP_NODES, SEARCH_INTEREST,
-        DEEP_INTEREST, HARD_INTEREST, GAP_HARD_CP, GAP_FULL_SCALE_CP,
-        LOW_MARGIN_CP, MARGIN_FULL_SCALE_CP, HIGH_ENTROPY, W_GAP,
-        W_MARGIN, W_ENTROPY, MATE_CP, SF_HASH_MB, SF_THREADS,
+        BATCH_SIZE, MAX_IN_FLIGHT_BATCHES, CHECKPOINT_EVERY, METHODS,
+        PLUGIN_MODULES, QUIET_MODE, POLICY_SAMPLE_RATE, POLICY_TEMPERATURE_CP,
+        SEARCH_MULTIPV, SHALLOW_NODES, DEEP_MULTIPV, DEEP_NODES,
+        SEARCH_INTEREST, DEEP_INTEREST, HARD_INTEREST, GAP_HARD_CP,
+        GAP_FULL_SCALE_CP, LOW_MARGIN_CP, MARGIN_FULL_SCALE_CP, HIGH_ENTROPY,
+        W_GAP, W_MARGIN, W_ENTROPY, MATE_CP, SF_HASH_MB, SF_THREADS,
         STATIC_FALLBACK_NODES, STUDENT_PATH, STUDENT_NODES, RANDOM_COUNT,
         RANDOM_MIN_PLIES, RANDOM_MAX_PLIES, PGN_SKIP_PLIES, PGN_MAX_PLIES)
 
@@ -142,6 +145,7 @@ def parse_args(cfg: Config) -> tuple[Config, bool]:
     parser.add_argument("--limit", type=int, default=cfg.LIMIT)
     parser.add_argument("--workers", type=int, default=cfg.WORKERS)
     parser.add_argument("--batch-size", type=int, default=cfg.BATCH_SIZE)
+    parser.add_argument("--max-in-flight", type=int, default=cfg.MAX_IN_FLIGHT_BATCHES)
     parser.add_argument("--methods", default=",".join(cfg.METHODS))
     parser.add_argument("--plugin", action="append", dest="plugins",
                         help="import module registering extra teaching methods")
@@ -166,6 +170,7 @@ def parse_args(cfg: Config) -> tuple[Config, bool]:
     cfg.LIMIT = max(0, args.limit)
     cfg.WORKERS = max(1, args.workers)
     cfg.BATCH_SIZE = max(1, args.batch_size)
+    cfg.MAX_IN_FLIGHT_BATCHES = max(1, args.max_in_flight)
     cfg.METHODS = tuple(x.strip() for x in args.methods.split(",") if x.strip())
     cfg.PLUGIN_MODULES = tuple(args.plugins or cfg.PLUGIN_MODULES)
     cfg.QUIET_MODE = args.quiet_mode
@@ -224,7 +229,7 @@ def _label_one(src: dict):
     import chess
     from train.teaching.format import (
         FLAG_GENERATED, FLAG_SOURCE_CP, METHOD_EXTERNAL_STUDENT,
-        POSITION_DTYPE, fill_position_board, missing_cp)
+        METHOD_RANDOM_GENERATION, POSITION_DTYPE, fill_position_board, missing_cp)
     from train.teaching.methods import TeachingContext, encode_moves, run_methods
 
     cfg = _WORKER["cfg"]
@@ -240,6 +245,8 @@ def _label_one(src: dict):
     ctx = TeachingContext(
         board=board, backend=_WORKER["sf"], cfg=cfg,
         source_cp=src.get("source_cp"), flags=flags)
+    if src.get("generated"):
+        ctx.methods |= METHOD_RANDOM_GENERATION
     if _WORKER["student"] is not None:
         lines = _WORKER["student"].search(
             board.fen(), bool(board.turn), nodes=cfg.STUDENT_NODES, multipv=1)
@@ -283,6 +290,31 @@ def _source_iter(cfg: Config):
             cfg.RANDOM_MAX_PLIES, cfg.SEED)
 
 
+def _bounded_ordered_map(pool: ProcessPoolExecutor, iterable, max_in_flight: int):
+    """Ordered process-pool map with hard back-pressure for huge corpora."""
+    source = iter(iterable)
+    pending = deque()
+    for _ in range(max(1, max_in_flight)):
+        try:
+            pending.append(pool.submit(_label_batch, next(source)))
+        except StopIteration:
+            break
+    while pending:
+        future = pending.popleft()
+        yield future.result()
+        try:
+            pending.append(pool.submit(_label_batch, next(source)))
+        except StopIteration:
+            pass
+
+
+def _atomic_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def main() -> int:
     cfg, show = parse_args(default_config())
     sf = stockfish_executable()
@@ -316,11 +348,16 @@ def main() -> int:
 
     out = Path(cfg.OUTPUT)
     progress_path = out / "progress.json"
+    meta_path = out / "metadata.json"
     consumed = 0
-    if cfg.RESUME and progress_path.exists():
+    if cfg.RESUME and meta_path.exists():
         try:
-            progress = json.loads(progress_path.read_text(encoding="utf-8"))
-            consumed = int(progress.get("consumed", 0))
+            consumed = int(json.loads(meta_path.read_text(encoding="utf-8")).get("consumed", 0))
+        except Exception:
+            consumed = 0
+    elif cfg.RESUME and progress_path.exists():
+        try:
+            consumed = int(json.loads(progress_path.read_text(encoding="utf-8")).get("consumed", 0))
         except Exception:
             consumed = 0
 
@@ -334,12 +371,17 @@ def main() -> int:
             "raw white-relative cp and sparse move scores; soft policy is "
             "derived at training time"),
     }
-    writer = TeachingWriter(
-        out, meta, append=cfg.RESUME and (out / "metadata.json").exists())
+    try:
+        writer = TeachingWriter(
+            out, meta, append=cfg.RESUME and meta_path.exists())
+    except ValueError as exc:
+        print(f"Cannot resume teaching dataset: {exc}", file=sys.stderr)
+        return 2
+
     kept = int(writer.positions)
     resume_consumed = consumed
     started = time.time()
-    next_checkpoint = kept + cfg.CHECKPOINT_EVERY
+    next_checkpoint_consumed = consumed + max(1, cfg.CHECKPOINT_EVERY)
 
     def batches():
         batch = []
@@ -362,7 +404,9 @@ def main() -> int:
         with ProcessPoolExecutor(
                 max_workers=cfg.WORKERS, initializer=_worker_init,
                 initargs=(asdict(cfg), str(sf))) as pool:
-            for batch_n, results in pool.map(_label_batch, batches(), chunksize=1):
+            results_iter = _bounded_ordered_map(
+                pool, batches(), cfg.MAX_IN_FLIGHT_BATCHES)
+            for batch_n, results in results_iter:
                 for item in results:
                     if item is None:
                         continue
@@ -374,37 +418,32 @@ def main() -> int:
                     writer.write(pos, moves)
                     kept += 1
                 consumed += batch_n
-                if kept >= next_checkpoint:
+                if consumed >= next_checkpoint_consumed:
                     elapsed = max(1e-9, time.time() - started)
-                    writer.checkpoint({
-                        "consumed": consumed,
-                        "kept": kept,
-                        "positions_per_s": kept / elapsed,
-                    })
-                    progress_path.write_text(json.dumps({
+                    state = {
                         "consumed": consumed,
                         "kept": kept,
                         "complete": False,
-                    }, indent=2), encoding="utf-8")
+                        "positions_per_s": kept / elapsed,
+                    }
+                    writer.checkpoint(state)
+                    _atomic_json(progress_path, state)
                     print(
                         f"teaching: consumed={consumed:,} kept={kept:,} "
                         f"rate={kept / elapsed:.1f} pos/s", flush=True)
-                    next_checkpoint = kept + cfg.CHECKPOINT_EVERY
+                    next_checkpoint_consumed = consumed + max(1, cfg.CHECKPOINT_EVERY)
         ok = True
     finally:
         elapsed = max(1e-9, time.time() - started)
-        writer.close({
+        state = {
             "consumed": consumed,
             "kept": kept,
             "elapsed_s": elapsed,
             "positions_per_s": kept / elapsed,
             "complete": ok,
-        })
-        progress_path.write_text(json.dumps({
-            "consumed": consumed,
-            "kept": kept,
-            "complete": ok,
-        }, indent=2), encoding="utf-8")
+        }
+        writer.close(state)
+        _atomic_json(progress_path, state)
 
     print(f"wrote {kept:,} positions to {out} in {elapsed:.1f}s")
     return 0
