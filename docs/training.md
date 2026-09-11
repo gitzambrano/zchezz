@@ -80,7 +80,7 @@ python train/teacher.py --show-config
 python train/teacher.py
 python train/teacher.py --methods static_value,gap_mining
 python train/teacher.py --policy-sample-rate 1.0 --limit 100000
-python train/teaching/inspect.py
+python train/teaching/inspect_dataset.py
 python train/teaching/seeds.py
 python train/teaching/export_eval_bin.py --show-config
 ```
