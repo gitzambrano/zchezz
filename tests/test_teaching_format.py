@@ -2,6 +2,7 @@ from pathlib import Path
 import sys
 
 import numpy as np
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -52,3 +53,34 @@ def test_policy_is_derived_and_respects_side_to_move():
     assert white[0] > white[1]
     assert black[0] < black[1]
     assert np.isclose(white.sum(), 1.0)
+
+
+def test_empty_dataset_is_readable(tmp_path):
+    with TeachingWriter(tmp_path, {"teacher": "unit"}):
+        pass
+    dataset = TeachingDataset(tmp_path)
+    assert len(dataset) == 0
+    assert len(dataset.moves) == 0
+
+
+def test_resume_rejects_recipe_changes_but_allows_operational_changes(tmp_path):
+    base = {
+        "teacher": "unit",
+        "inputs": ["a.bin"],
+        "methods": ["static_value"],
+        "config": {"WORKERS": 2, "BATCH_SIZE": 64, "SHALLOW_NODES": 2000},
+    }
+    with TeachingWriter(tmp_path, base):
+        pass
+    operational = {
+        **base,
+        "config": {"WORKERS": 8, "BATCH_SIZE": 512, "SHALLOW_NODES": 2000},
+    }
+    with TeachingWriter(tmp_path, operational, append=True):
+        pass
+    changed_recipe = {
+        **base,
+        "config": {"WORKERS": 8, "BATCH_SIZE": 512, "SHALLOW_NODES": 4000},
+    }
+    with pytest.raises(ValueError, match="different teacher/labeling recipe"):
+        TeachingWriter(tmp_path, changed_recipe, append=True)
