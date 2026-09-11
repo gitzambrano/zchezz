@@ -1,6 +1,34 @@
-# Zchezz
+# Zchezz ♟️
 
 Zchezz is a C11 UCI chess engine with custom NNUE evaluation, native and WebAssembly builds, self-play/training tooling, and a test/benchmark stack designed for reproducible engine work.
+
+▶ **[Play against Zchezz in your browser](https://gitzambrano.github.io/zchezz/)**
+
+The browser build is designed to run fully client-side through WebAssembly. The project can also produce a standalone HTML bundle for offline play, with the engine, NNUE weights and UI packaged together.
+
+## Highlights
+
+| | |
+|---|---|
+| **Default engine** | `v325` — current released working line |
+| **Experimental engine** | `v500` — supported compact NNU4 development line |
+| **Search** | iterative-deepening alpha-beta/PVS, aspiration windows, pruning/reductions, staged ordering and Lazy SMP |
+| **Evaluation** | custom quantized NNUE with native SIMD and WebAssembly support |
+| **Endgames** | Syzygy probing when tablebase support is available |
+| **Opening book** | Polyglot book support in native builds |
+| **Analysis** | MultiPV and engine-analysis support; browser UI supports interactive play/analysis workflows |
+| **Platforms** | Windows, Linux, Android/Termux and WebAssembly in modern browsers |
+| **Offline** | standalone bundled HTML can run locally without a server |
+| **Protocol** | UCI engine for use with compatible chess GUIs and tooling |
+
+## What you can do
+
+- Play against Zchezz directly in the browser from the GitHub Pages link above.
+- Run the native UCI engine from a chess GUI or from the command line.
+- Use analysis features such as MultiPV and standard UCI search controls.
+- Build a self-contained WebAssembly/HTML version for offline use.
+- Generate self-play data, label positions, train NNUE networks and benchmark engine changes with the repository tooling.
+- Work with two supported engine/network families without mixing their NNUE formats: v325/NNU3 and v500/NNU4.
 
 ## Supported engine profiles
 
@@ -79,7 +107,7 @@ The repository's automatic CI is deliberately small and read-only. Local tests r
 
 ```bash
 python tools/check_repo.py
-python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py -q
+python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py -q
 make -C engine/build ENGINE=v325 STATIC_FLAG= ARCH_FLAGS= native
 make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= native
 python tools/check_nnue.py --profile v325
@@ -115,4 +143,4 @@ See `docs/repository-layout.md` and `docs/folder_structure.md`.
 
 ## Author
 
-Gustavo José Zambrano
+**Gustavo José Zambrano**
