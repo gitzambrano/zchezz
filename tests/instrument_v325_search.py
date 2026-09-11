@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import re
 
 SOURCE = Path("engine/c/zchezz_v325/search.c")
 ENABLE_DIAGNOSTICS = True
@@ -148,14 +147,23 @@ def apply_diagnostics(text: str) -> str:
         label="qsearch node counter",
     )
 
-    # The remaining identical node-accounting statement belongs to alpha_beta.
-    node_stmt = "    ss->nodes++; ss->nodes_total++;\n"
-    if text.count(node_stmt) != 1:
-        raise RuntimeError(f"alpha-beta node counter: expected 1 remaining match, found {text.count(node_stmt)}")
-    text = text.replace(node_stmt, node_stmt + "    g_diag.ab_nodes++;\n", 1)
+    ab_anchor = """static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
+                      Move *pv, int *pv_len, int ply, int in_check_hint) {
+    if (ply >= MAX_PLY-1) { *pv_len=0; return eval_stm(b); }
+    if (ss->nodes_total >= ss->node_limit || time_up(ss)) {
+        *pv_len=0;
+        return depth<=0 ? eval_stm(b) : qsearch(ss,b,alpha,beta,ply);
+    }
+    ss->nodes++; ss->nodes_total++;
+"""
+    text = replace_exact(
+        text,
+        ab_anchor,
+        ab_anchor + "    g_diag.ab_nodes++;\n",
+        count=1,
+        label="alpha-beta node counter",
+    )
 
-    # Count TT generation quality at the probe itself so qsearch and main search
-    # are both represented.
     stale_block = """        if (tt_age(e, gen) != 0) {
             out->score = TT_EVAL_NONE;
             out->depth = 0;
@@ -195,7 +203,6 @@ def apply_diagnostics(text: str) -> str:
     )
     text = replace_exact(text, cutoff, cutoff_diag, count=3, label="beta cutoff rank sites")
 
-    # Stage 1 TT/PV move has deeper indentation than the generated-move stages.
     cutoff_tt = "                    if (alpha >= beta) goto cutoff;\n"
     cutoff_tt_diag = (
         "                    if (alpha >= beta) {\n"
@@ -228,7 +235,6 @@ def apply_diagnostics(text: str) -> str:
         count=1,
         label="unbraced LMR re-search site",
     )
-    # Close the block introduced above at the unique losing-capture form.
     text = replace_exact(
         text,
         "ply+1, gives_check);\n                if (sc > alpha && sc < beta)\n",
