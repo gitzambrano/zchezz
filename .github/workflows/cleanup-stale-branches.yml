@@ -1,0 +1,33 @@
+name: cleanup stale branches
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/cleanup-stale-branches.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Delete branches proven fully merged or obsolete
+        shell: bash
+        run: |
+          set -euo pipefail
+          branches=(
+            "docs/v325-documentation-refresh"
+            "fix-nnu3-invariant-contract"
+            "tmp-teaching-stage"
+            "v325-fix-nnu3-invariant-contract"
+          )
+          for b in "${branches[@]}"; do
+            echo "Deleting $b"
+            git push origin --delete "$b"
+          done
