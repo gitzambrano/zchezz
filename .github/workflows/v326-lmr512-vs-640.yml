@@ -1,4 +1,4 @@
-name: v3.27 conditional LMR structural screen
+name: v3.27 LMR confirmation
 
 on:
   push:
@@ -11,21 +11,16 @@ permissions:
   contents: read
 
 jobs:
-  candidate:
-    name: ${{ matrix.candidate }}
+  h2h:
+    name: ${{ matrix.candidate }} shard ${{ matrix.shard }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 75
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 4
       matrix:
-        candidate:
-          - lmr-pos-deep5
-          - lmr-pos-deep6
-          - lmr-pos-early8
-          - lmr-pos-early12
-          - lmr-main2-768
-          - lmr-main2-1024
+        candidate: [lmr-pos-deep5, lmr-main2-1024]
+        shard: [0, 1]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,7 +31,7 @@ jobs:
           set -euo pipefail
           git fetch origin v327-search-efficiency
           git worktree add --detach /tmp/v327 origin/v327-search-efficiency
-      - name: Build baseline and candidate
+      - name: Build promoted v3.26, candidate and arena
         shell: bash
         env:
           CANDIDATE: ${{ matrix.candidate }}
@@ -49,6 +44,7 @@ jobs:
           rm -f engine/c/zchezz_v326/zchezz.exe
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= native
           cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
       - name: Correctness smoke
         shell: bash
         run: |
@@ -56,58 +52,106 @@ jobs:
           cd /tmp/v327
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
           python tests/test_perft.py --version v326
-      - name: Structural fixed-depth screen
+          python tools/check_nnue.py --profile v326
+      - name: Fetch pinned UHO disjoint block
         shell: bash
         env:
-          CANDIDATE: ${{ matrix.candidate }}
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+          SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           cd /tmp/v327
-          OUT="artifacts/v327-${CANDIDATE}-structure"
-          python tests/bench_v327_candidate_structure.py \
-            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
-            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
-            --source engine/c/zchezz_v326/main.c \
-            --output "$OUT"
-          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p artifacts/v327-confirm
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/v327-confirm/uho.zip
+          sha256sum artifacts/v327-confirm/uho.zip > artifacts/v327-confirm/uho.sha256
+          EPD_NAME="$(unzip -Z1 artifacts/v327-confirm/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          test -n "$EPD_NAME"
+          unzip -p artifacts/v327-confirm/uho.zip "$EPD_NAME" > artifacts/v327-confirm/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import os, random
+          shard=int(os.environ['SHARD'])
+          lines=[]
+          for raw in Path('artifacts/v327-confirm/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          if len(lines)<1500: raise RuntimeError(f'need >=1500 positions, got {len(lines)}')
+          rng=random.Random(327271); rng.shuffle(lines)
+          start=1200 + shard*50
+          chosen=lines[start:start+50]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/v327-confirm/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          print(f'shard={shard}, opening block={start}:{start+50}')
+          PY
+          sha256sum artifacts/v327-confirm/openings.epd > artifacts/v327-confirm/openings.sha256
+      - name: 100-game serial antithetic H2H at 200 ms
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          BASE="$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)"
+          OUT="artifacts/v327-confirm/${CANDIDATE}-s${SHARD}"
+          mkdir -p "$OUT"
+          SEED=$((327500 + SHARD))
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/v327-confirm/openings.epd --seed "$SEED" \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v327-structure-${{ matrix.candidate }}-${{ github.run_id }}
-          path: /tmp/v327/artifacts/v327-${{ matrix.candidate }}-structure
+          name: v327-confirm-${{ matrix.candidate }}-s${{ matrix.shard }}-${{ github.run_id }}
+          path: |
+            /tmp/v327/artifacts/v327-confirm/${{ matrix.candidate }}-s${{ matrix.shard }}
+            /tmp/v327/artifacts/v327-confirm/*.sha256
 
   aggregate:
-    name: aggregate conditional LMR structure
+    name: aggregate 200-game confirmations
     runs-on: ubuntu-24.04
     if: always()
-    needs: [candidate]
+    needs: [h2h]
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: v327-structure-*
+          pattern: v327-confirm-*
           path: downloaded
           merge-multiple: false
-      - name: Aggregate structural summaries
+      - name: Aggregate candidate perspective
         shell: python
         run: |
           from pathlib import Path
-          import json
-          rows=[]
-          for p in sorted(Path('downloaded').glob('**/metrics.json')):
-              name=p.parent.name.removeprefix('v327-').removesuffix('-structure')
-              s=json.loads(p.read_text())['summary']
-              rows.append((name,s['8'],s['10'],s['12']))
-          if not rows: raise RuntimeError('no structural metrics found')
-          rows.sort(key=lambda r:r[3]['node_delta_pct'])
-          lines=['# v3.27 conditional LMR structural screen','',
-                 '| Candidate | d8 nodes | d10 nodes | d12 nodes | d12 diffs |',
-                 '|---|---:|---:|---:|---:|']
-          for name,d8,d10,d12 in rows:
-              lines.append(f"| {name} | {d8['node_delta_pct']:+.2f}% | {d10['node_delta_pct']:+.2f}% | {d12['node_delta_pct']:+.2f}% | {d12['result_diffs']}/20 |")
+          import json, math
+          groups={}
+          for p in Path('downloaded').glob('**/result.json'):
+              cand=p.parent.name.rsplit('-s',1)[0]
+              pair=json.loads(p.read_text())['pairings'][0]
+              w,d,l=int(pair['l']),int(pair['d']),int(pair['w'])
+              cur=groups.setdefault(cand,[0,0,0]); cur[0]+=w;cur[1]+=d;cur[2]+=l
+          if set(groups)!={'lmr-pos-deep5','lmr-main2-1024'}:
+              raise RuntimeError(f'incomplete groups: {groups}')
+          lines=['# v3.27 200-game confirmation','',
+                 'Candidate perspective; 200 ms/move, engine Threads=1, serial arena, Hash=64 MB, pinned UHO with colors reversed.','',
+                 '| Candidate | W-D-L | Score | Elo | 95% CI |','|---|---:|---:|---:|---:|']
+          for cand,(w,d,l) in sorted(groups.items()):
+              n=w+d+l; s=(w+0.5*d)/n
+              elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
+              second=(w+0.25*d)/n; var=max(0.0,second-s*s); se=math.sqrt(var/n)
+              deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0; ci=1.96*deriv*se
+              lines.append(f'| {cand} | {w}-{d}-{l} | {100*s:.2f}% | {elo:+.1f} | ±{ci:.1f} |')
           Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
           print(Path('aggregate.md').read_text())
       - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: v327-conditional-lmr-aggregate-${{ github.run_id }}
+          name: v327-confirm-aggregate-${{ github.run_id }}
           path: aggregate.md
