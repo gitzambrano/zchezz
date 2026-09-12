@@ -1,4 +1,4 @@
-name: v3.27 conservative LMR structural screen
+name: v3.27 deep5 long validation
 
 on:
   push:
@@ -11,18 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  candidate:
-    name: ${{ matrix.candidate }}
+  correctness:
+    name: deep5 correctness gate
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      max-parallel: 3
-      matrix:
-        candidate:
-          - lmr-pos-deep4
-          - lmr-pos-shallow768
-          - lmr-pos-shallow1024
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,78 +25,155 @@ jobs:
           set -euo pipefail
           git fetch origin v327-search-efficiency
           git worktree add --detach /tmp/v327 origin/v327-search-efficiency
-      - name: Build baseline and candidate
+      - name: Build deep5 with tablebases disabled
         shell: bash
-        env:
-          CANDIDATE: ${{ matrix.candidate }}
         run: |
           set -euo pipefail
           cd /tmp/v327
-          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= native
-          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
-          python tests/apply_v327_candidate.py --candidate "$CANDIDATE"
-          rm -f engine/c/zchezz_v326/zchezz.exe
-          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= native
-          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
-      - name: Correctness smoke
+          python tests/apply_v327_candidate.py --candidate lmr-pos-deep5
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+      - name: Full correctness checks
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp/v327
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
           python tests/test_perft.py --version v326
-      - name: Structural fixed-depth screen
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+
+  h2h:
+    name: deep5 long shard ${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    needs: [correctness]
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize clean v3.27 worktree
         shell: bash
-        env:
-          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          git fetch origin v327-search-efficiency
+          git worktree add --detach /tmp/v327 origin/v327-search-efficiency
+      - name: Build promoted v3.26 baseline, deep5 candidate and arena
+        shell: bash
         run: |
           set -euo pipefail
           cd /tmp/v327
-          OUT="artifacts/v327-${CANDIDATE}-structure"
-          python tests/bench_v327_candidate_structure.py \
-            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
-            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
-            --source engine/c/zchezz_v326/main.c \
-            --output "$OUT"
-          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
+          python tests/apply_v327_candidate.py --candidate lmr-pos-deep5
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_deep5.exe
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+      - name: Fetch pinned UHO disjoint opening block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          mkdir -p artifacts/v327-deep5-long
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/v327-deep5-long/uho.zip
+          sha256sum artifacts/v327-deep5-long/uho.zip > artifacts/v327-deep5-long/uho.sha256
+          EPD_NAME="$(unzip -Z1 artifacts/v327-deep5-long/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          test -n "$EPD_NAME"
+          unzip -p artifacts/v327-deep5-long/uho.zip "$EPD_NAME" > artifacts/v327-deep5-long/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import os, random
+          shard=int(os.environ['SHARD'])
+          lines=[]
+          for raw in Path('artifacts/v327-deep5-long/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          if len(lines)<2200: raise RuntimeError(f'need >=2200 positions, got {len(lines)}')
+          rng=random.Random(327327); rng.shuffle(lines)
+          start=1600 + shard*50
+          chosen=lines[start:start+50]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/v327-deep5-long/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          print(f'shard={shard}, opening block={start}:{start+50}')
+          PY
+          sha256sum artifacts/v327-deep5-long/openings.epd > artifacts/v327-deep5-long/openings.sha256
+      - name: 100-game serial antithetic H2H at 200 ms
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          BASE="$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v326/zchezz_deep5.exe)"
+          OUT="artifacts/v327-deep5-long/s${SHARD}"
+          mkdir -p "$OUT"
+          SEED=$((327800 + SHARD))
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/v327-deep5-long/openings.epd --seed "$SEED" \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v327-conservative-${{ matrix.candidate }}-${{ github.run_id }}
-          path: /tmp/v327/artifacts/v327-${{ matrix.candidate }}-structure
+          name: v327-deep5-long-s${{ matrix.shard }}-${{ github.run_id }}
+          path: |
+            /tmp/v327/artifacts/v327-deep5-long/s${{ matrix.shard }}
+            /tmp/v327/artifacts/v327-deep5-long/*.sha256
 
   aggregate:
-    name: aggregate conservative LMR structure
+    name: aggregate 800-game deep5 validation
     runs-on: ubuntu-24.04
     if: always()
-    needs: [candidate]
+    needs: [correctness, h2h]
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: v327-conservative-*
+          pattern: v327-deep5-long-s*
           path: downloaded
           merge-multiple: false
-      - name: Aggregate
+      - name: Aggregate deep5 perspective
         shell: python
         run: |
           from pathlib import Path
-          import json
-          rows=[]
-          for p in sorted(Path('downloaded').glob('**/metrics.json')):
-              name=p.parent.name.removeprefix('v327-').removesuffix('-structure')
-              s=json.loads(p.read_text())['summary']
-              rows.append((name,s['8'],s['10'],s['12']))
-          if len(rows)!=3: raise RuntimeError(f'expected 3 candidates, got {len(rows)}')
-          rows.sort(key=lambda r:r[3]['node_delta_pct'])
-          lines=['# v3.27 conservative LMR structural screen','',
-                 '| Candidate | d8 nodes | d10 nodes | d12 nodes | d12 diffs |',
-                 '|---|---:|---:|---:|---:|']
-          for name,d8,d10,d12 in rows:
-              lines.append(f"| {name} | {d8['node_delta_pct']:+.2f}% | {d10['node_delta_pct']:+.2f}% | {d12['node_delta_pct']:+.2f}% | {d12['result_diffs']}/20 |")
+          import json, math
+          files=sorted(Path('downloaded').glob('**/result.json'))
+          if len(files)!=8: raise RuntimeError(f'expected 8 result files, got {len(files)}')
+          w=d=l=0; rows=[]
+          for p in files:
+              pair=json.loads(p.read_text())['pairings'][0]
+              sw,sd,sl=int(pair['l']),int(pair['d']),int(pair['w'])
+              w+=sw; d+=sd; l+=sl
+              rows.append((p.parent.name,sw,sd,sl))
+          n=w+d+l; s=(w+0.5*d)/n
+          elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
+          second=(w+0.25*d)/n
+          var=max(0.0,second-s*s); se=math.sqrt(var/n)
+          deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0
+          ci=1.96*deriv*se
+          lines=['# v3.27 deep5 long validation','',
+                 'Candidate perspective. 800 new games; 200 ms/move; engine Threads=1; serial arena; Hash=64 MB; tablebases disabled; pinned UHO antithetic openings.','',
+                 f'- Games: {n}',f'- W-D-L: {w}-{d}-{l}',f'- Score: {100*s:.3f}%',f'- Elo: {elo:+.2f} ± {ci:.2f} (approx. 95% CI)','',
+                 '| Shard | W-D-L |','|---|---:|']
+          lines += [f'| {name} | {sw}-{sd}-{sl} |' for name,sw,sd,sl in rows]
           Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
           print(Path('aggregate.md').read_text())
       - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: v327-conservative-aggregate-${{ github.run_id }}
+          name: v327-deep5-long-aggregate-${{ github.run_id }}
           path: aggregate.md
