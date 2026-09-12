@@ -1,4 +1,4 @@
-name: v3.26 LMR512 vs LMR640 cross-check
+name: v3.27 search candidate screen
 
 on:
   push:
@@ -11,151 +11,185 @@ permissions:
   contents: read
 
 jobs:
-  correctness:
-    name: correctness LMR640
+  candidate:
+    name: ${{ matrix.candidate }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build LMR640 and run correctness suite
-        shell: bash
-        run: |
-          set -euo pipefail
-          python tests/apply_v326_candidate.py --candidate no-check-extension
-          python tests/apply_v326_candidate.py --candidate history-prune-64d
-          python tests/apply_v326_lmr_symmetric.py --threshold 640
-          make -C engine/build ENGINE=v325 native
-          make -C engine/build ENGINE=v325 test-c
-          python tests/test_perft.py --version v325
-          python tests/test_uci_extended.py --version v325
-
-  h2h:
-    name: LMR640 vs LMR512 (shard ${{ matrix.shard }})
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 70
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 6
       matrix:
-        shard: [0, 1, 2, 3]
+        candidate:
+          - lmr-pos768
+          - lmr-pos1024
+          - lmr-pos1536
+          - lmr-pos2048
+          - lmr-pos4000
+          - nmp-plus2-margin128
     steps:
       - uses: actions/checkout@v4
-      - name: Build LMR512, LMR640 and arena
+        with:
+          fetch-depth: 0
+
+      - name: Materialize clean v3.27 worktree
         shell: bash
         run: |
           set -euo pipefail
-          SRC=engine/c/zchezz_v325/search.c
-          python tests/apply_v326_candidate.py --candidate no-check-extension
-          python tests/apply_v326_candidate.py --candidate history-prune-64d
-          cp "$SRC" /tmp/combined.c
+          git fetch origin v327-search-efficiency
+          git worktree add --detach /tmp/v327 origin/v327-search-efficiency
 
-          python tests/apply_v326_lmr_symmetric.py --threshold 512
-          make -C engine/build ENGINE=v325 native
-          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_lmr512.exe
+      - name: Build promoted v3.26 baseline and candidate
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          SRC=engine/c/zchezz_v326/search.c
+          cp "$SRC" /tmp/search-v326.c
 
-          cp /tmp/combined.c "$SRC"
-          python tests/apply_v326_lmr_symmetric.py --threshold 640
-          rm -f engine/c/zchezz_v325/zchezz.exe
-          make -C engine/build ENGINE=v325 native
-          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_lmr640.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
 
-          git checkout -- "$SRC"
-          make -C engine/build ENGINE=v325 arena
+          python tests/apply_v327_candidate.py --candidate "$CANDIDATE"
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
 
-      - name: Fetch pinned UHO book and select disjoint cross-check block
+      - name: Correctness gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+
+      - name: Structural fixed-depth screen
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          OUT="artifacts/v327-${CANDIDATE}-structure"
+          python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build serial arena
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+
+      - name: Fetch pinned UHO opening block
         shell: bash
         env:
           BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
-          SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/book artifacts/h2h
+          cd /tmp/v327
+          mkdir -p artifacts/v327-openings
           URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
-          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/book/uho.zip
-          sha256sum artifacts/book/uho.zip | tee artifacts/book/uho.sha256
-          EPD_NAME="$(unzip -Z1 artifacts/book/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/v327-openings/uho.zip
+          sha256sum artifacts/v327-openings/uho.zip > artifacts/v327-openings/uho.sha256
+          EPD_NAME="$(unzip -Z1 artifacts/v327-openings/uho.zip | grep -Ei '\.epd$' | head -n1)"
           test -n "$EPD_NAME"
-          unzip -p artifacts/book/uho.zip "$EPD_NAME" > artifacts/book/all.epd
+          unzip -p artifacts/v327-openings/uho.zip "$EPD_NAME" > artifacts/v327-openings/all.epd
           python - <<'PY'
           from pathlib import Path
-          import os, random
-          shard=int(os.environ['SHARD'])
+          import random
           lines=[]
-          for raw in Path('artifacts/book/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+          for raw in Path('artifacts/v327-openings/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
               s=raw.strip()
               if not s or s.startswith('#'): continue
               p=s.split()
               if len(p)>=4: lines.append(' '.join(p[:4]))
-          if len(lines) < 1000: raise RuntimeError(f'need >=1000 positions, got {len(lines)}')
-          rng=random.Random(326512); rng.shuffle(lines)
-          start=800 + shard*50
-          chosen=lines[start:start+50]
-          if len(chosen)!=50: raise RuntimeError(f'expected 50, got {len(chosen)}')
-          Path('artifacts/h2h/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
-          print(f'shard={shard} range={start}:{start+50}')
+          if len(lines)<1000: raise RuntimeError(f'need >=1000 positions, got {len(lines)}')
+          rng=random.Random(327001); rng.shuffle(lines)
+          chosen=lines[1000:1050]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/v327-openings/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
           PY
-          sha256sum artifacts/h2h/openings.epd | tee artifacts/h2h/openings.sha256
+          sha256sum artifacts/v327-openings/openings.epd > artifacts/v327-openings/openings.sha256
 
-      - name: 100-game serial antithetic H2H at 200 ms
+      - name: 100-game serial antithetic fast gate at 200 ms
         shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
         run: |
           set -euo pipefail
-          A="$(realpath engine/c/zchezz_v325/zchezz_lmr512.exe)"
-          B="$(realpath engine/c/zchezz_v325/zchezz_lmr640.exe)"
-          OUT=artifacts/h2h
-          SEED=$((326800 + ${{ matrix.shard }}))
+          cd /tmp/v327
+          BASE="$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)"
+          OUT="artifacts/v327-${CANDIDATE}-h2h"
+          mkdir -p "$OUT"
           ./engine/build/arena.exe \
-            --player "uci:${A}" --player "uci:${B}" \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
             --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
-            --openings "$OUT/openings.epd" --seed "$SEED" --tt-mb 64 --uci-timeout 15000 \
+            --openings artifacts/v327-openings/openings.epd --seed 327100 \
+            --tt-mb 64 --uci-timeout 15000 \
             --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
           cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: lmr640-vs-512-s${{ matrix.shard }}-${{ github.run_id }}
+          name: v327-${{ matrix.candidate }}-${{ github.run_id }}
           path: |
-            artifacts/h2h
-            artifacts/book/uho.sha256
+            /tmp/v327/artifacts/v327-${{ matrix.candidate }}-structure
+            /tmp/v327/artifacts/v327-${{ matrix.candidate }}-h2h
+            /tmp/v327/artifacts/v327-openings/*.sha256
 
   aggregate:
-    name: aggregate 400-game LMR640 vs LMR512
+    name: aggregate v3.27 fast gate
     runs-on: ubuntu-24.04
     if: always()
-    needs: [correctness, h2h]
+    needs: [candidate]
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: lmr640-vs-512-s*
+          pattern: v327-*
           path: downloaded
           merge-multiple: false
-      - name: Aggregate LMR640 perspective
+      - name: Aggregate candidate perspective
         shell: python
         run: |
           from pathlib import Path
           import json, math
-          files=list(Path('downloaded').glob('**/result.json'))
-          if len(files)!=4: raise RuntimeError(f'expected 4 result files, got {len(files)}')
-          w=d=l=0; rows=[]
-          for p in sorted(files):
-              pair=json.loads(p.read_text())['pairings'][0]
-              # A=LMR512, B=LMR640. Convert to B perspective.
-              sw,sd,sl=int(pair['l']),int(pair['d']),int(pair['w'])
-              w+=sw; d+=sd; l+=sl; rows.append((p.parts[1],sw,sd,sl))
-          n=w+d+l; s=(w+0.5*d)/n
-          elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
-          second=(w+0.25*d)/n; var=max(0.0,second-s*s); se=math.sqrt(var/n)
-          deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0; ci=1.96*deriv*se
-          lines=['# LMR640 vs LMR512 cross-check','',
-                 'Perspective: LMR640. Both include no-check-extension + history-prune-64d.','',
-                 f'- Games: {n}',f'- W-D-L: {w}-{d}-{l}',f'- Score: {100*s:.3f}%',f'- Elo: {elo:+.2f} ± {ci:.2f} (approx. 95% CI)','',
-                 '| Shard | W-D-L |','|---|---:|']
-          lines += [f'| {name} | {sw}-{sd}-{sl} |' for name,sw,sd,sl in rows]
+          rows=[]
+          for result in sorted(Path('downloaded').glob('**/*-h2h/result.json')):
+              candidate=result.parent.name.removeprefix('v327-').removesuffix('-h2h')
+              pair=json.loads(result.read_text())['pairings'][0]
+              # A=promoted v3.26 baseline, B=candidate; convert to B perspective.
+              w,d,l=int(pair['l']),int(pair['d']),int(pair['w'])
+              n=w+d+l; score=(w+0.5*d)/n
+              elo=400*math.log10(score/(1-score)) if 0<score<1 else 0.0
+              second=(w+0.25*d)/n
+              var=max(0.0,second-score*score)
+              se=math.sqrt(var/n)
+              deriv=400/math.log(10)/(score*(1-score)) if 0<score<1 else 0.0
+              ci=1.96*deriv*se
+              struct_files=list(result.parent.parent.glob('../*-structure/metrics.json'))
+              rows.append((candidate,n,w,d,l,score,elo,ci))
+          if not rows: raise RuntimeError('no H2H result files found')
+          rows.sort(key=lambda r:r[6],reverse=True)
+          lines=['# v3.27 fast gate','',
+                 'Candidate perspective; 200 ms/move, Threads=1, serial arena, Hash=64 MB, 50 UHO openings with reversed colors.','',
+                 '| Candidate | Games | W-D-L | Score | Elo | 95% CI |',
+                 '|---|---:|---:|---:|---:|---:|']
+          for c,n,w,d,l,s,e,ci in rows:
+              lines.append(f'| {c} | {n} | {w}-{d}-{l} | {100*s:.2f}% | {e:+.1f} | ±{ci:.1f} |')
           Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
           print(Path('aggregate.md').read_text())
       - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: lmr640-vs-512-aggregate-${{ github.run_id }}
+          name: v327-fast-gate-aggregate-${{ github.run_id }}
           path: aggregate.md
