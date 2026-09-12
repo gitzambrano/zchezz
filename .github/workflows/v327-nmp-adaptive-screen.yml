@@ -1,0 +1,110 @@
+name: v3.27 adaptive NMP structural screen
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/v327-nmp-adaptive-screen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: ${{ matrix.candidate }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        candidate:
+          - nmp-extra1-d6-m256
+          - nmp-extra1-d6-m384
+          - nmp-extra1-d8-m256
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize clean v3.27 worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin v327-search-efficiency
+          git worktree add --detach /tmp/v327 origin/v327-search-efficiency
+      - name: Build baseline and candidate with tablebases disabled
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
+          python tests/apply_v327_candidate.py --candidate "$CANDIDATE"
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
+      - name: Correctness smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+      - name: Structural fixed-depth screen
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          OUT="artifacts/v327-${CANDIDATE}-structure"
+          python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-adaptive-nmp-${{ matrix.candidate }}-${{ github.run_id }}
+          path: /tmp/v327/artifacts/v327-${{ matrix.candidate }}-structure
+
+  aggregate:
+    name: aggregate adaptive NMP structure
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [candidate]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v327-adaptive-nmp-*
+          path: downloaded
+          merge-multiple: false
+      - name: Aggregate
+        shell: python
+        run: |
+          from pathlib import Path
+          import json
+          rows=[]
+          for p in sorted(Path('downloaded').glob('**/metrics.json')):
+              name=p.parent.name.removeprefix('v327-').removesuffix('-structure')
+              s=json.loads(p.read_text())['summary']
+              rows.append((name,s['8'],s['10'],s['12']))
+          if len(rows)!=3: raise RuntimeError(f'expected 3 candidates, got {len(rows)}')
+          rows.sort(key=lambda r:r[3]['node_delta_pct'])
+          lines=['# v3.27 adaptive NMP structural screen','',
+                 '| Candidate | d8 nodes | d10 nodes | d12 nodes | d12 diffs |',
+                 '|---|---:|---:|---:|---:|']
+          for name,d8,d10,d12 in rows:
+              lines.append(f"| {name} | {d8['node_delta_pct']:+.2f}% | {d10['node_delta_pct']:+.2f}% | {d12['node_delta_pct']:+.2f}% | {d12['result_diffs']}/20 |")
+          Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          print(Path('aggregate.md').read_text())
+      - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v327-adaptive-nmp-aggregate-${{ github.run_id }}
+          path: aggregate.md
