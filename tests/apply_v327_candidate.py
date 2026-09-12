@@ -58,6 +58,15 @@ def lmr_positive_min_depth(text: str, min_depth: int) -> str:
     return exact(text, LMR_BASE, new, f"LMR positive min depth {min_depth}")
 
 
+def lmr_positive_min_depth_threshold(text: str, min_depth: int, threshold: int) -> str:
+    """Keep the deep-only positive-history bonus but tune its activation threshold."""
+    new = f"""                            if (ch < -512) reduce += 1;
+                            if (ch < -1024) reduce += 1;
+                            if (depth >= {min_depth} && ch > {threshold} && reduce > 0) reduce -= 1;
+"""
+    return exact(text, LMR_BASE, new, f"LMR positive min depth {min_depth}, threshold {threshold}")
+
+
 def lmr_positive_shallow_threshold(text: str, shallow_threshold: int) -> str:
     """Require stronger positive history only in the shallow LMR regime."""
     new = f"""                            if (ch < -512) reduce += 1;
@@ -108,6 +117,9 @@ CANDIDATES = {
     "lmr-pos-deep4": lambda text: lmr_positive_min_depth(text, 4),
     "lmr-pos-deep5": lambda text: lmr_positive_min_depth(text, 5),
     "lmr-pos-deep6": lambda text: lmr_positive_min_depth(text, 6),
+    "lmr-pos-deep5-th384": lambda text: lmr_positive_min_depth_threshold(text, 5, 384),
+    "lmr-pos-deep5-th640": lambda text: lmr_positive_min_depth_threshold(text, 5, 640),
+    "lmr-pos-deep5-th768": lambda text: lmr_positive_min_depth_threshold(text, 5, 768),
     "lmr-pos-shallow768": lambda text: lmr_positive_shallow_threshold(text, 768),
     "lmr-pos-shallow1024": lambda text: lmr_positive_shallow_threshold(text, 1024),
     "lmr-pos-early8": lambda text: lmr_positive_early(text, 8),
