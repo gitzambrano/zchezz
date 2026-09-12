@@ -108,6 +108,19 @@ def nmp_plus2_margin128(text: str) -> str:
     return exact(text, NMP_BASE, new, "NMP +2 with 128 cp eligibility margin")
 
 
+def nmp_extra1(text: str, min_depth: int, margin: int) -> str:
+    """Preserve baseline NMP everywhere, adding one extra ply only on clearly winning deep nodes."""
+    new = f"""    if (!in_check && !is_pv && depth>=3 && ply>0 && not_endgame && static_eval>=beta) {{
+        /* v3.27 adaptive NMP: preserve the baseline gate/reduction and add
+         * one extra ply only when depth and eval margin both justify it. */
+        int R = 3 + depth / 3;
+        if (R > 6) R = 6;
+        if (static_eval - beta > 134) R += 1;
+        if (depth >= {min_depth} && static_eval - beta > {margin}) R += 1;
+"""
+    return exact(text, NMP_BASE, new, f"adaptive NMP extra1 d{min_depth} margin {margin}")
+
+
 CANDIDATES = {
     "lmr-pos768": lambda text: lmr_positive_threshold(text, 768),
     "lmr-pos1024": lambda text: lmr_positive_threshold(text, 1024),
@@ -127,6 +140,9 @@ CANDIDATES = {
     "lmr-main2-768": lambda text: lmr_weighted_main(text, 768),
     "lmr-main2-1024": lambda text: lmr_weighted_main(text, 1024),
     "nmp-plus2-margin128": nmp_plus2_margin128,
+    "nmp-extra1-d6-m256": lambda text: nmp_extra1(text, 6, 256),
+    "nmp-extra1-d6-m384": lambda text: nmp_extra1(text, 6, 384),
+    "nmp-extra1-d8-m256": lambda text: nmp_extra1(text, 8, 256),
 }
 
 
