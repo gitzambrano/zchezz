@@ -35,7 +35,8 @@ jobs:
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
           python tests/test_perft.py --version v326
-          python tests/test_uci.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
       - name: Commit exact candidate snapshot
         shell: bash
         run: |
