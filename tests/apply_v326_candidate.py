@@ -42,6 +42,29 @@ def stale_miss(text: str) -> str:
     return exact(text, old, "        if (tt_age(e, gen) != 0) continue;\n", "stale TT move-only")
 
 
+def history_prune(text: str, scale: int) -> str:
+    """Rescale a dead threshold to the measured history-score magnitude.
+
+    The d12 diagnostic observed minima around -2.5k while v3.25 requires
+    -4000*depth (down to -16k), producing exactly zero history-pruned moves.
+    Scale 64 is the moderate candidate; 128 is the conservative sibling.
+    """
+    return exact(
+        text,
+        "                        int hp_thresh = -4000 * depth;\n",
+        f"                        int hp_thresh = -{scale} * depth;\n",
+        "history pruning threshold",
+    )
+
+
+def history_prune_64d(text: str) -> str:
+    return history_prune(text, 64)
+
+
+def history_prune_128d(text: str) -> str:
+    return history_prune(text, 128)
+
+
 def singular_exclusion_guard(text: str) -> str:
     """Make singular verification actually search the position without TT move.
 
@@ -87,8 +110,6 @@ def singular_exclusion_guard(text: str) -> str:
         "        tt_store(b->hash, best, depth, flag, &best_move, ply, raw_eval);\n",
         "singular TT write guard",
     )
-    # Tablebase result for the unrestricted position is invalid in an exclusion
-    # search. Native diagnostic builds disable TB, but keep the invariant correct.
     text = exact(
         text,
         "    if (ply > 0 && !is_pv_early && b->hm == 0) {\n",
@@ -101,6 +122,8 @@ def singular_exclusion_guard(text: str) -> str:
 TRANSFORMS = {
     "no-check-extension": no_check_extension,
     "stale-miss": stale_miss,
+    "history-prune-64d": history_prune_64d,
+    "history-prune-128d": history_prune_128d,
     "singular-exclusion-guard": singular_exclusion_guard,
 }
 
