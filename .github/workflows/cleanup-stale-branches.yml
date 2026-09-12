@@ -17,17 +17,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Delete branches proven fully merged or obsolete
+      - name: Delete superseded structural branch
         shell: bash
         run: |
           set -euo pipefail
-          branches=(
-            "docs/v325-documentation-refresh"
-            "fix-nnu3-invariant-contract"
-            "tmp-teaching-stage"
-            "v325-fix-nnu3-invariant-contract"
-          )
-          for b in "${branches[@]}"; do
-            echo "Deleting $b"
-            git push origin --delete "$b"
-          done
+          git push origin --delete "v325-stockfish19-structural"
