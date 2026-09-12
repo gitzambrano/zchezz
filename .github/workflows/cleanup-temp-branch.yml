@@ -1,0 +1,24 @@
+name: cleanup temporary branch
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/cleanup-temp-branch.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Delete accidental temporary branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "tmp-do-not-use" >/dev/null 2>&1; then
+            git push origin --delete "tmp-do-not-use"
+          fi
