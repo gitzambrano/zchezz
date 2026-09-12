@@ -1,0 +1,119 @@
+name: v3.27 qsearch SEE reuse
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/v327-qsearch-see-cache.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize clean v3.27 worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin v327-search-efficiency
+          git worktree add --detach /tmp/v327 origin/v327-search-efficiency
+      - name: Build baseline and qsearch SEE-reuse candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
+          python tests/apply_v327_qsearch_see_cache.py
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+      - name: Correctness gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+      - name: Exact-parity structural and wall-time screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          OUT=artifacts/v327-qsearch-see-cache-structure
+          python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          import json
+          m=json.load(open('artifacts/v327-qsearch-see-cache-structure/metrics.json'))['summary']
+          for d in ('8','10','12'):
+              s=m[d]
+              if s['baseline_nodes'] != s['candidate_nodes'] or s['result_diffs'] != 0:
+                  raise SystemExit(f'parity failure at depth {d}: {s}')
+          print('Exact fixed-depth node/bestmove/score parity confirmed.')
+          PY
+      - name: Fetch pinned UHO fast-gate block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          mkdir -p artifacts/v327-qsearch-see-cache
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/v327-qsearch-see-cache/uho.zip
+          EPD_NAME="$(unzip -Z1 artifacts/v327-qsearch-see-cache/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          test -n "$EPD_NAME"
+          unzip -p artifacts/v327-qsearch-see-cache/uho.zip "$EPD_NAME" > artifacts/v327-qsearch-see-cache/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/v327-qsearch-see-cache/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          if len(lines)<2800: raise RuntimeError(f'need >=2800 positions, got {len(lines)}')
+          rng=random.Random(327111);rng.shuffle(lines)
+          chosen=lines[2700:2750]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/v327-qsearch-see-cache/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+      - name: 100-game serial antithetic fast gate at 200 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          BASE="$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)"
+          OUT=artifacts/v327-qsearch-see-cache/h2h
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/v327-qsearch-see-cache/openings.epd --seed 327111 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-qsearch-see-cache-${{ github.run_id }}
+          path: |
+            /tmp/v327/artifacts/v327-qsearch-see-cache-structure
+            /tmp/v327/artifacts/v327-qsearch-see-cache/h2h
