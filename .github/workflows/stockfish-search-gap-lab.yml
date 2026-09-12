@@ -1,0 +1,203 @@
+name: Stockfish search-gap lab
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/stockfish-search-gap-lab.yml"
+      - "tests/apply_v326_candidate.py"
+      - "tests/bench_v326_candidate_structure.py"
+      - "tests/instrument_v325_search.py"
+      - "tests/bench_search_efficiency.py"
+      - "tests/instrument_v325_pruning.py"
+      - "tests/bench_pruning_efficiency.py"
+      - "tests/instrument_v325_history_distribution.py"
+      - "tests/bench_history_distribution.py"
+      - "engine/c/zchezz_v325/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SF19_SHA: edb0d9db6731067ec50ce619ff372b463bc4dd5d
+
+jobs:
+  stockfish-structural:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: official-stockfish/Stockfish
+          ref: edb0d9db6731067ec50ce619ff372b463bc4dd5d
+          path: stockfish
+      - name: Build engines
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          make -C stockfish/src -j2 build ARCH=x86-64-avx2 syzygy=no
+          test "$(git -C stockfish rev-parse HEAD)" = "$SF19_SHA"
+      - name: Fixed-depth Zchezz vs Stockfish 19
+        run: |
+          set -euo pipefail
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+          python tests/bench_v326_candidate_structure.py \
+            --baseline engine/c/zchezz_v325/zchezz_baseline.exe \
+            --candidate stockfish/src/stockfish \
+            --output artifacts/stockfish19-structure
+          cat artifacts/stockfish19-structure/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stockfish19-structure-${{ github.run_id }}
+          path: artifacts/stockfish19-structure
+
+  diagnostics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [search, pruning, history]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build baseline
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+      - name: Run diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.kind }}" in
+            search)
+              python tests/instrument_v325_search.py --diagnostics --no-stale-miss
+              rm -f engine/c/zchezz_v325/zchezz.exe
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_diag.exe
+              git checkout -- engine/c/zchezz_v325/search.c
+              python tests/instrument_v325_search.py --no-diagnostics --stale-miss
+              rm -f engine/c/zchezz_v325/zchezz.exe
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_stale_miss.exe
+              git checkout -- engine/c/zchezz_v325/search.c
+              python tests/bench_search_efficiency.py
+              cat artifacts/search-efficiency/summary.md >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            pruning)
+              python tests/instrument_v325_pruning.py
+              rm -f engine/c/zchezz_v325/zchezz.exe
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_prune_diag.exe
+              git checkout -- engine/c/zchezz_v325/search.c
+              python tests/bench_pruning_efficiency.py
+              cat artifacts/pruning-efficiency/summary.md >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            history)
+              python tests/instrument_v325_history_distribution.py
+              rm -f engine/c/zchezz_v325/zchezz.exe
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_history_diag.exe
+              git checkout -- engine/c/zchezz_v325/search.c
+              python tests/bench_history_distribution.py
+              cat artifacts/history-distribution/summary.md >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gap-diagnostic-${{ matrix.kind }}-${{ github.run_id }}
+          path: artifacts
+
+  candidate-structure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate:
+          - no-check-extension
+          - stale-miss
+          - history-prune-64d
+          - history-prune-128d
+          - singular-exclusion-guard
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build baseline and candidate
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+          python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_candidate.exe
+      - name: Structural screen
+        run: |
+          set -euo pipefail
+          python tests/bench_v326_candidate_structure.py --output "artifacts/${{ matrix.candidate }}"
+          cat "artifacts/${{ matrix.candidate }}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: structure-${{ matrix.candidate }}-${{ github.run_id }}
+          path: artifacts/${{ matrix.candidate }}
+
+  candidate-h2h:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate:
+          - no-check-extension
+          - stale-miss
+          - history-prune-64d
+          - history-prune-128d
+          - singular-exclusion-guard
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build baseline, candidate and serial arena
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+          python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_candidate.exe
+          git checkout -- engine/c/zchezz_v325/search.c
+          make -C engine/build arena
+      - name: Create deterministic antithetic openings
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          s=Path('engine/c/zchezz_v325/main.c').read_text()
+          m=re.search(r'BENCH_FENS\s*\[\s*\]\s*=\s*\{(.*?)\};',s,re.S)
+          fs=re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',m.group(1))
+          assert len(fs)==20
+          p=Path('artifacts/${{ matrix.candidate }}-h2h');p.mkdir(parents=True,exist_ok=True)
+          (p/'openings.epd').write_text('\n'.join(fs)+'\n')
+      - name: 200ms H2H screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="artifacts/${{ matrix.candidate }}-h2h"
+          BASE="$(realpath engine/c/zchezz_v325/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v325/zchezz_candidate.exe)"
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 40 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings "$OUT/openings.epd" --seed 200809 --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: h2h-${{ matrix.candidate }}-${{ github.run_id }}
+          path: artifacts/${{ matrix.candidate }}-h2h
