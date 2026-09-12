@@ -1,0 +1,61 @@
+name: v326 data-scaled history pruning
+
+on:
+  push:
+    branches: [v326-search-efficiency]
+    paths:
+      - ".github/workflows/v326-history-pruning.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  structural:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build baseline
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+      - name: Build history-prune 64d
+        run: |
+          set -euo pipefail
+          python tests/apply_v326_candidate.py --candidate history-prune-64d
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_hp64.exe
+          git checkout -- engine/c/zchezz_v325/search.c
+      - name: Screen history-prune 64d
+        run: |
+          set -euo pipefail
+          python tests/bench_v326_candidate_structure.py \
+            --candidate engine/c/zchezz_v325/zchezz_hp64.exe \
+            --output artifacts/v326-history-prune-64d
+          cat artifacts/v326-history-prune-64d/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Build history-prune 128d
+        run: |
+          set -euo pipefail
+          python tests/apply_v326_candidate.py --candidate history-prune-128d
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_hp128.exe
+          git checkout -- engine/c/zchezz_v325/search.c
+      - name: Screen history-prune 128d
+        run: |
+          set -euo pipefail
+          python tests/bench_v326_candidate_structure.py \
+            --candidate engine/c/zchezz_v325/zchezz_hp128.exe \
+            --output artifacts/v326-history-prune-128d
+          cat artifacts/v326-history-prune-128d/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v326-history-pruning-${{ github.run_id }}
+          path: |
+            artifacts/v326-history-prune-64d
+            artifacts/v326-history-prune-128d
