@@ -4,18 +4,19 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Supported engine profiles
 
-- Treat `v325` as the repository default and released working line.
+- Treat `v326` as the repository default and released working line.
+- Keep `v325` available as a frozen NNU3 regression/comparison baseline; do not retarget it with current-release changes.
 - Treat `v500` as a supported secondary experimental line.
-- Keep `engine/ACTIVE_ENGINE` equal to `v325` unless the user explicitly requests a promotion.
+- Keep `engine/ACTIVE_ENGINE` equal to `v326` unless the user explicitly requests a promotion.
 - Do not create or restore `engine/c/zchezz_v4xx` directories.
 - Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
 - Keep NNU3 and NNU4 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
-- Treat `v314` through `v324` and version-named migration utilities as historical snapshots; do not retarget their source comments to the current release.
+- Treat `v314` through `v325` and version-named migration utilities as historical snapshots; `v325` may remain selectable only for explicit regression and comparison work.
 
 ## Bare-run contract
 
 - Every public operational script must run with no command-line arguments.
-- A bare run must select `v325` unless the script is a family-specific implementation module whose profile is explicit in its file name.
+- A bare run must select `v326` unless the script is a family-specific implementation module whose profile is explicit in its file name.
 - Optional CLI arguments may override defaults; they must not be required for normal execution.
 - `--show-config` or an equivalent non-destructive inspection mode must not build engines, start games, train, delete files, or change repository state.
 - Missing optional external prerequisites must produce a clear diagnostic. Scripts intended for inspection or orchestration must not fail merely because Stockfish, CUDA, tablebases, or an opening corpus is absent.
@@ -39,7 +40,7 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Training checkpoints
 
-- Maintain `checkpoints/<profile>/latest.pt` as the canonical resumable checkpoint for every supported profile.
+- Maintain `checkpoints/<profile>/latest.pt` as the canonical resumable checkpoint for every trainable profile.
 - Before training, create `latest.pt` from installed engine weights when no PyTorch checkpoint exists.
 - After every successful training run, atomically refresh `latest.pt` from the newest completed checkpoint.
 - Reject checkpoint architecture mismatches before loading weights.
@@ -48,10 +49,11 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Builds and tests
 
-- Bare native builds use `ENGINE=v325`.
+- Bare native builds use `ENGINE=v326`.
+- `ENGINE=v325` remains available for frozen regression comparisons.
 - `ENGINE=v500` must build independently without changing the default marker.
 - Run deterministic local tests before considering a change complete.
-- Test both supported profiles for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure.
+- Test `v326` and `v500` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v325` when a change claims backward compatibility with the frozen NNU3 baseline.
 - Run perft, UCI smoke, NNUE artifact validation, C invariants, and Python contract tests when their dependencies are available.
 - Treat skipped tests as missing evidence, not as passes.
 - Keep generated test evidence under `artifacts/`; do not overwrite source files as a test side effect.
@@ -76,7 +78,7 @@ These instructions are repository contracts. Follow them for every change.
 ## Source and documentation
 
 - Keep comments technical, current, and conditional. State what must be true and what a caller may rely on.
-- Historical source comments may retain the version they document; current v325/v500 comments must not present an older family as the active implementation.
+- Historical source comments may retain the version they document; current `v326`/`v500` comments must not present an older family as the active implementation.
 - In `AGENTS.md`, do not include project history, migration narratives, or explanations of why a previous design changed.
 - Keep `CLAUDE.md` and `AGENTS.md` bodies identical; only the first title line may differ.
 - Update comments, tests, and docs when a public contract changes.

@@ -1,7 +1,7 @@
 @echo off
-REM Shared native build launcher. Bare execution builds the repository default v325.
+REM Shared native build launcher. Bare execution builds the repository default v326.
 REM Pass v500 (or another explicit retained source version) as the first argument to override.
-set ENGINE=v325
+set ENGINE=v326
 if not "%~1"=="" set ENGINE=%~1
 set "PATH=C:\mingw64\bin;%PATH%"
 cd /d "%~dp0"

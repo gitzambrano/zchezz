@@ -4,16 +4,16 @@
 #
 # Usage:
 #   chmod +x build_termux.sh
-#   ./build_termux.sh              # v325, full suite
+#   ./build_termux.sh              # v326, full suite
 #   ./build_termux.sh v500         # explicit supported secondary profile
-#   ./build_termux.sh v325 quick   # UCI/search/eval/MultiPV only
+#   ./build_termux.sh v325 quick   # explicit frozen baseline, quick suite
 #
 # This helper tests an already-copied Termux engine directory. The repository
 # build itself is documented in engine/build/termux.md. Bare execution follows
-# the repository default and therefore targets v325.
+# the repository default and therefore targets v326.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-VERSION="${1:-v325}"
+VERSION="${1:-v326}"
 MODE="${2:-full}"
 ENGINE_DIR="$HOME/zchezz_${VERSION}"
 ENGINE="${ENGINE_DIR}/zchezz"
@@ -32,12 +32,10 @@ ko()      { ((fail++)); ((total++)); echo -e "  ${RED}✗${NC} $1"; }
 info()    { echo -e "  ${CYAN}ℹ${NC} $1"; }
 
 uci_cmd() {
-    # Run a UCI command sequence and return stdout.
     echo -e "$1" | "$ENGINE" --nnue "$NNUE" 2>/dev/null
 }
 
 uci_search() {
-    # Run a search and return its complete UCI transcript.
     local cmds="uci\nisready\n$1"
     local out
     out=$(echo -e "$cmds\nquit" | "$ENGINE" --nnue "$NNUE" 2>/dev/null)

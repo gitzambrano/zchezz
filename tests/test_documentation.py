@@ -10,6 +10,7 @@ def test_key_docs_name_supported_profiles():
     for rel in ("AGENTS.md", "CLAUDE.md", "Readme.md", "docs/architecture.md", "docs/nnue.md", "docs/repository-layout.md"):
         text = (ROOT / rel).read_text(encoding="utf-8")
         assert "v325" in text, rel
+        assert "v326" in text, rel
         assert "v500" in text, rel
 
 
@@ -43,8 +44,8 @@ def test_strength_docs_keep_nodes_separate_from_movetime():
     assert "200 ms" in text
 
 
-def test_native_launchers_default_to_v325():
+def test_native_launchers_default_to_v326():
     bat = (ROOT / "engine/build/build_native.bat").read_text(encoding="utf-8")
     termux = (ROOT / "engine/build/build_termux.sh").read_text(encoding="utf-8")
-    assert "set ENGINE=v325" in bat
-    assert 'VERSION="${1:-v325}"' in termux
+    assert "set ENGINE=v326" in bat
+    assert 'VERSION="${1:-v326}"' in termux

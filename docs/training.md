@@ -9,15 +9,16 @@ The reusable teaching format under `train/teaching/` follows the same rule. It s
 ## Profile entry point
 
 ```bash
-python train/run.py                    # v325
-python train/run.py --profile v325
+python train/run.py                    # v326
+python train/run.py --profile v326
+python train/run.py --profile v325    # frozen NNU3 baseline
 python train/run.py --profile v500
 python train/run.py --show-config
 ```
 
-A bare run defaults to v325. Inspection mode must not train or modify artifacts.
+A bare run defaults to v326. Inspection mode must not train or modify artifacts.
 
-## v325 family
+## v326 / v325 NNU3 family
 
 - `train/encoding_nnu3.py`
 - `train/model_nnu3.py`
@@ -26,7 +27,7 @@ A bare run defaults to v325. Inspection mode must not train or modify artifacts.
 - `train/import_nnu3.py`
 - `train/export_nnu3.py`
 
-The installed runtime artifact is NNU3.
+The installed runtime artifact is NNU3. v326 initially uses the same installed weights as the frozen v325 baseline; the v3.26 release change is search-only.
 
 ## v500 family
 
@@ -65,11 +66,11 @@ Teaching methods are extensible. Built-in methods register by name in `train/tea
 
 `train/teaching/loader.py` derives value probabilities, soft policy targets, and pairwise move-order targets from the raw teaching corpus at training time. New policy/value architectures should consume this adapter directly.
 
-For the existing v325/NNU3 and v500/NNU4 value trainers, `train/teaching/export_eval_bin.py` writes a compatibility `SAMPLE_DTYPE` `.bin`. Because the export is evaluator supervision and a real outcome may be unknown, pass it to the current trainers with `k=0`:
+For the existing v326/v325 NNU3 and v500 NNU4 value trainers, `train/teaching/export_eval_bin.py` writes a compatibility `SAMPLE_DTYPE` `.bin`. Because the export is evaluator supervision and a real outcome may be unknown, pass it to the current trainers with `k=0`:
 
 ```bash
 python train/teaching/export_eval_bin.py
-python train/run.py --profile v325 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v326 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
 python train/run.py --profile v500 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
 ```
 

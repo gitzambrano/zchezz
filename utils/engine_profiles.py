@@ -4,7 +4,7 @@ import os, shutil
 from dataclasses import dataclass
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILE = "v325"
+DEFAULT_PROFILE = "v326"
 @dataclass(frozen=True)
 class EngineProfile:
     name:str; network_format:str; engine_dir:Path; checkpoint_dir:Path; trainer:Path; exporter:Path; importer:Path
@@ -14,6 +14,7 @@ class EngineProfile:
     def latest_checkpoint(self)->Path: return self.checkpoint_dir/"latest.pt"
 PROFILES={
  "v325":EngineProfile("v325","NNU3",ROOT/"engine/c/zchezz_v325",ROOT/"checkpoints/v325",ROOT/"train/_train_nnu3_core.py",ROOT/"train/_export_nnu3_core.py",ROOT/"train/import_nnu3.py"),
+ "v326":EngineProfile("v326","NNU3",ROOT/"engine/c/zchezz_v326",ROOT/"checkpoints/v326",ROOT/"train/_train_nnu3_core.py",ROOT/"train/_export_nnu3_core.py",ROOT/"train/import_nnu3.py"),
  "v500":EngineProfile("v500","NNU4",ROOT/"engine/c/zchezz_v500",ROOT/"checkpoints/v500",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
 }
 def normalize_profile(value:str|None=None)->str:
