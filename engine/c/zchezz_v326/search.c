@@ -1454,7 +1454,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                             if (cmh1 >= 0) ch += ss->cont_hist[1][cmh1][ft_idx];
                             if (ch < -512) reduce += 1;
                             if (ch < -1024) reduce += 1;
-                            if (ch > 512 && reduce > 0) reduce -= 1;
+                            if (depth >= 5 && ch > 512 && reduce > 0) reduce -= 1;
                         }
                         if (reduce >= depth - 1) reduce = depth - 2;
                         if (reduce < 0) reduce = 0;
