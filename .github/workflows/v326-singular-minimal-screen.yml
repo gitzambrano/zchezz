@@ -1,0 +1,75 @@
+name: v3.26 minimal singular repair screen
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/v326-singular-minimal-screen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  screen:
+    name: singular minimal (${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [tt-only, tt-nmp]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build combined baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/apply_v326_candidate.py --candidate no-check-extension
+          python tests/apply_v326_candidate.py --candidate history-prune-64d
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_combined.exe
+
+          python tests/apply_v326_singular_minimal.py --mode "${{ matrix.mode }}"
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_singular.exe
+
+      - name: C invariants and UCI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 test-c
+          python tests/test_uci_extended.py --version v325 --only T1 --only T2
+
+      - name: Structural screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="artifacts/singular-${{ matrix.mode }}/structure"
+          python tests/bench_v326_candidate_structure.py \
+            --baseline engine/c/zchezz_v325/zchezz_combined.exe \
+            --candidate engine/c/zchezz_v325/zchezz_singular.exe \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Instrument singular outcomes without changing search decisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/instrument_v325_pruning.py
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_singular_diag.exe
+          OUT="artifacts/singular-${{ matrix.mode }}/diagnostics"
+          python tests/bench_pruning_efficiency.py \
+            --baseline engine/c/zchezz_v325/zchezz_singular.exe \
+            --diagnostic engine/c/zchezz_v325/zchezz_singular_diag.exe \
+            --depth 12 --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: singular-minimal-${{ matrix.mode }}-${{ github.run_id }}
+          path: artifacts/singular-${{ matrix.mode }}
