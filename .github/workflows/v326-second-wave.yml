@@ -1,0 +1,204 @@
+name: v3.26 second-wave search screen
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/v326-second-wave.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ENGINE: v325
+
+jobs:
+  correctness:
+    name: correctness (${{ matrix.candidate }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate:
+          [nmp-plus1, nmp-plus1-deep, nmp-plus2, lmr-history-1024, lmr-history-512, qs-delta-0, qs-delta-minus50]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply combined base and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/apply_v326_candidate.py --candidate no-check-extension
+          python tests/apply_v326_candidate.py --candidate history-prune-64d
+          python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+      - name: Native build and C invariants
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          make -C engine/build ENGINE=v325 test-c
+      - name: Full perft
+        run: python tests/test_perft.py --version v325
+      - name: Full UCI regression
+        run: python tests/test_uci_extended.py --version v325
+      - name: Sanitizer build and UCI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 sanitize
+          python tests/test_uci_extended.py --exe engine/c/zchezz_v325/zchezz_sanitize.exe --only T1 --only T2
+
+  structural:
+    name: structural (${{ matrix.candidate }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate:
+          [nmp-plus1, nmp-plus1-deep, nmp-plus2, lmr-history-1024, lmr-history-512, qs-delta-0, qs-delta-minus50]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build combined baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/apply_v326_candidate.py --candidate no-check-extension
+          python tests/apply_v326_candidate.py --candidate history-prune-64d
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_combined.exe
+          python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_candidate.exe
+      - name: Fresh-position fixed-depth screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="artifacts/structure-${{ matrix.candidate }}"
+          python tests/bench_v326_candidate_structure.py \
+            --baseline engine/c/zchezz_v325/zchezz_combined.exe \
+            --candidate engine/c/zchezz_v325/zchezz_candidate.exe \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: second-wave-structure-${{ matrix.candidate }}-${{ github.run_id }}
+          path: artifacts/structure-${{ matrix.candidate }}
+
+  h2h:
+    name: H2H 200ms (${{ matrix.candidate }}, shard ${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 14
+      matrix:
+        candidate:
+          [nmp-plus1, nmp-plus1-deep, nmp-plus2, lmr-history-1024, lmr-history-512, qs-delta-0, qs-delta-minus50]
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build combined baseline, candidate and serial arena
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/apply_v326_candidate.py --candidate no-check-extension
+          python tests/apply_v326_candidate.py --candidate history-prune-64d
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_combined.exe
+          python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_candidate.exe
+          make -C engine/build arena
+      - name: Create deterministic paired openings
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          s=Path('engine/c/zchezz_v325/main.c').read_text()
+          m=re.search(r'BENCH_FENS\s*\[\s*\]\s*=\s*\{(.*?)\};',s,re.S)
+          fs=re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',m.group(1))
+          assert len(fs)==20
+          shard=${{ matrix.shard }}
+          k=(7*shard) % len(fs)
+          fs=fs[k:]+fs[:k]
+          p=Path('artifacts/h2h-${{ matrix.candidate }}-s${{ matrix.shard }}')
+          p.mkdir(parents=True,exist_ok=True)
+          (p/'openings.epd').write_text('\n'.join(fs)+'\n')
+      - name: 100-game serial H2H at 200 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="artifacts/h2h-${{ matrix.candidate }}-s${{ matrix.shard }}"
+          BASE="$(realpath engine/c/zchezz_v325/zchezz_combined.exe)"
+          CAND="$(realpath engine/c/zchezz_v325/zchezz_candidate.exe)"
+          SEED=$((329000 + ${{ matrix.shard }}))
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings "$OUT/openings.epd" --seed "$SEED" --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: second-wave-h2h-${{ matrix.candidate }}-s${{ matrix.shard }}-${{ github.run_id }}
+          path: artifacts/h2h-${{ matrix.candidate }}-s${{ matrix.shard }}
+
+  aggregate:
+    name: aggregate second-wave H2H
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [h2h]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: second-wave-h2h-*
+          path: downloaded
+          merge-multiple: false
+      - name: Aggregate candidate results
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, math, re
+
+          rows = {}
+          for p in Path('downloaded').glob('**/result.json'):
+              d = json.loads(p.read_text())
+              pair = d['pairings'][0]
+              # Player A is combined baseline; player B is the experimental candidate.
+              artifact = p.parts[1]
+              m = re.match(r'second-wave-h2h-(.+)-s[01]-', artifact)
+              if not m:
+                  raise RuntimeError(f'cannot identify candidate from {artifact}')
+              cand = m.group(1)
+              r = rows.setdefault(cand, {'w':0,'d':0,'l':0})
+              r['w'] += int(pair['l'])
+              r['d'] += int(pair['d'])
+              r['l'] += int(pair['w'])
+
+          out = ['# v3.26 second-wave 200 ms H2H', '',
+                 'Candidate perspective vs combined base; Threads=1; arena serial; Hash=64 MB.', '',
+                 '| Candidate | W-D-L | Score | Elo | 95% CI |',
+                 '|---|---:|---:|---:|---:|']
+          for cand in sorted(rows):
+              r=rows[cand]
+              n=r['w']+r['d']+r['l']
+              s=(r['w']+0.5*r['d'])/n
+              elo=400*math.log10(s/(1-s)) if 0<s<1 else (9999 if s==1 else -9999)
+              mean=s
+              second=(r['w']+0.25*r['d'])/n
+              var=max(0.0, second-mean*mean)
+              se=math.sqrt(var/n)
+              deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0
+              ci=1.96*deriv*se
+              out.append(f"| {cand} | {r['w']}-{r['d']}-{r['l']} | {100*s:.2f}% | {elo:+.1f} | ±{ci:.1f} |")
+          Path('aggregate.md').write_text('\n'.join(out)+'\n')
+          print(Path('aggregate.md').read_text())
+      - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: second-wave-aggregate-${{ github.run_id }}
+          path: aggregate.md
