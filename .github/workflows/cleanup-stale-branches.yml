@@ -17,8 +17,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Delete superseded structural branch
+      - name: Delete verified stale branches
         shell: bash
         run: |
           set -euo pipefail
-          git push origin --delete "v325-stockfish19-structural"
+          for branch in \
+            "infra/dual-family-cleanup" \
+            "noop" \
+            "v326-search-efficiency" \
+            "v502-distill-capacity-ci"
+          do
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+              git push origin --delete "$branch"
+            else
+              echo "already absent: $branch"
+            fi
+          done
