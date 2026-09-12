@@ -1,0 +1,366 @@
+name: v3.26 long search validation
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/v326-long-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SF19_SHA: edb0d9db6731067ec50ce619ff372b463bc4dd5d
+  ENGINE: v325
+
+jobs:
+  correctness:
+    name: correctness (${{ matrix.candidate }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate: [no-check-extension, history-prune-64d, combined]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.candidate }}" in
+            combined)
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              ;;
+            *)
+              python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+              ;;
+          esac
+      - name: Native build and C invariants
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          make -C engine/build ENGINE=v325 test-c
+      - name: Full perft
+        run: python tests/test_perft.py --version v325
+      - name: Full UCI regression
+        run: python tests/test_uci_extended.py --version v325
+      - name: Sanitizer build and UCI smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 sanitize
+          python tests/test_uci_extended.py --exe engine/c/zchezz_v325/zchezz_sanitize.exe --only T1 --only T2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: correctness-${{ matrix.candidate }}-${{ github.run_id }}
+          path: artifacts
+          if-no-files-found: ignore
+
+  structural:
+    name: structural (${{ matrix.candidate }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate: [no-check-extension, history-prune-64d, combined]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build baseline and candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+          case "${{ matrix.candidate }}" in
+            combined)
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              ;;
+            *)
+              python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+              ;;
+          esac
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_candidate.exe
+      - name: Fresh-position fixed-depth screen
+        run: |
+          set -euo pipefail
+          python tests/bench_v326_candidate_structure.py --output "artifacts/structure-${{ matrix.candidate }}"
+          cat "artifacts/structure-${{ matrix.candidate }}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: structure-${{ matrix.candidate }}-${{ github.run_id }}
+          path: artifacts/structure-${{ matrix.candidate }}
+
+  stockfish-gap:
+    name: SF19 gap (${{ matrix.candidate }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        candidate: [no-check-extension, history-prune-64d, combined]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: official-stockfish/Stockfish
+          ref: edb0d9db6731067ec50ce619ff372b463bc4dd5d
+          path: stockfish
+      - name: Build Stockfish 19
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C stockfish/src -j2 build ARCH=x86-64-avx2 syzygy=no
+          test "$(git -C stockfish rev-parse HEAD)" = "$SF19_SHA"
+      - name: Build candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.candidate }}" in
+            combined)
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              ;;
+            *)
+              python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+              ;;
+          esac
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_candidate.exe
+      - name: Candidate vs Stockfish 19 fixed depth
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tests/bench_v326_candidate_structure.py \
+            --baseline engine/c/zchezz_v325/zchezz_candidate.exe \
+            --candidate stockfish/src/stockfish \
+            --output "artifacts/sf19-${{ matrix.candidate }}"
+          cat "artifacts/sf19-${{ matrix.candidate }}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sf19-gap-${{ matrix.candidate }}-${{ github.run_id }}
+          path: artifacts/sf19-${{ matrix.candidate }}
+
+  long-h2h:
+    name: H2H 200ms (${{ matrix.candidate }}, shard ${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        candidate: [no-check-extension, history-prune-64d, combined]
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build baseline, candidate and serial arena
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_baseline.exe
+          case "${{ matrix.candidate }}" in
+            combined)
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              ;;
+            *)
+              python tests/apply_v326_candidate.py --candidate "${{ matrix.candidate }}"
+              ;;
+          esac
+          rm -f engine/c/zchezz_v325/zchezz.exe
+          make -C engine/build ENGINE=v325 native
+          cp engine/c/zchezz_v325/zchezz.exe engine/c/zchezz_v325/zchezz_candidate.exe
+          git checkout -- engine/c/zchezz_v325/search.c
+          make -C engine/build arena
+      - name: Create deterministic antithetic openings
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          s=Path('engine/c/zchezz_v325/main.c').read_text()
+          m=re.search(r'BENCH_FENS\s*\[\s*\]\s*=\s*\{(.*?)\};',s,re.S)
+          fs=re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',m.group(1))
+          assert len(fs)==20
+          shard=${{ matrix.shard }}
+          k=shard % len(fs)
+          fs=fs[k:]+fs[:k]
+          p=Path('artifacts/${{ matrix.candidate }}-h2h-shard${{ matrix.shard }}')
+          p.mkdir(parents=True,exist_ok=True)
+          (p/'openings.epd').write_text('\n'.join(fs)+'\n')
+      - name: 100-game serial H2H at 200 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="artifacts/${{ matrix.candidate }}-h2h-shard${{ matrix.shard }}"
+          BASE="$(realpath engine/c/zchezz_v325/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v325/zchezz_candidate.exe)"
+          SEED=$((326000 + ${{ matrix.shard }}))
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings "$OUT/openings.epd" --seed "$SEED" --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: long-h2h-${{ matrix.candidate }}-s${{ matrix.shard }}-${{ github.run_id }}
+          path: artifacts/${{ matrix.candidate }}-h2h-shard${{ matrix.shard }}
+
+  cross-h2h:
+    name: cross H2H 200ms (${{ matrix.matchup }}, shard ${{ matrix.shard }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        matchup: [combined-vs-no-check, combined-vs-history64, no-check-vs-history64]
+        shard: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build two experimental engines and arena
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC=engine/c/zchezz_v325/search.c
+          case "${{ matrix.matchup }}" in
+            combined-vs-no-check)
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe /tmp/a.exe
+              git checkout -- "$SRC"
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              rm -f engine/c/zchezz_v325/zchezz.exe
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe /tmp/b.exe
+              ;;
+            combined-vs-history64)
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe /tmp/a.exe
+              git checkout -- "$SRC"
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              rm -f engine/c/zchezz_v325/zchezz.exe
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe /tmp/b.exe
+              ;;
+            no-check-vs-history64)
+              python tests/apply_v326_candidate.py --candidate no-check-extension
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe /tmp/a.exe
+              git checkout -- "$SRC"
+              python tests/apply_v326_candidate.py --candidate history-prune-64d
+              rm -f engine/c/zchezz_v325/zchezz.exe
+              make -C engine/build ENGINE=v325 native
+              cp engine/c/zchezz_v325/zchezz.exe /tmp/b.exe
+              ;;
+          esac
+          git checkout -- "$SRC"
+          make -C engine/build arena
+      - name: Create paired openings
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          s=Path('engine/c/zchezz_v325/main.c').read_text()
+          m=re.search(r'BENCH_FENS\s*\[\s*\]\s*=\s*\{(.*?)\};',s,re.S)
+          fs=re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"',m.group(1))
+          assert len(fs)==20
+          shard=${{ matrix.shard }}
+          k=(7*shard) % len(fs)
+          fs=fs[k:]+fs[:k]
+          p=Path('artifacts/cross-${{ matrix.matchup }}-s${{ matrix.shard }}')
+          p.mkdir(parents=True,exist_ok=True)
+          (p/'openings.epd').write_text('\n'.join(fs)+'\n')
+      - name: 100-game serial cross-match
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="artifacts/cross-${{ matrix.matchup }}-s${{ matrix.shard }}"
+          SEED=$((327000 + ${{ matrix.shard }}))
+          ./engine/build/arena.exe \
+            --player "uci:/tmp/a.exe" --player "uci:/tmp/b.exe" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings "$OUT/openings.epd" --seed "$SEED" --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cross-${{ matrix.matchup }}-s${{ matrix.shard }}-${{ github.run_id }}
+          path: artifacts/cross-${{ matrix.matchup }}-s${{ matrix.shard }}
+
+  aggregate:
+    name: aggregate long H2H
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [long-h2h, cross-h2h]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: long-h2h-*
+          path: downloaded/long
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cross-*
+          path: downloaded/cross
+          merge-multiple: true
+      - name: Aggregate result JSONs
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, math, re
+
+          def wl_from_result(obj):
+              # arena result.json stores pairings; tolerate schema changes by
+              # recursively finding the first dict with wins/draws/losses.
+              stack=[obj]
+              while stack:
+                  x=stack.pop()
+                  if isinstance(x,dict):
+                      keys=set(x)
+                      if {'wins','draws','losses'} <= keys:
+                          return int(x['wins']),int(x['draws']),int(x['losses'])
+                      stack.extend(x.values())
+                  elif isinstance(x,list):
+                      stack.extend(x)
+              raise RuntimeError('W/D/L not found in result.json')
+
+          def summarize(root):
+              groups={}
+              for p in Path(root).rglob('result.json'):
+                  tag=p.parent.name
+                  base=re.sub(r'-h2h-shard\d+$','',tag)
+                  base=re.sub(r'-s\d+$','',base)
+                  w,d,l=wl_from_result(json.loads(p.read_text()))
+                  # result is from player 0 perspective; baseline/cross-A is P0.
+                  a=groups.setdefault(base,[0,0,0,0])
+                  a[0]+=w;a[1]+=d;a[2]+=l;a[3]+=1
+              lines=['| group | shards | P0 W | D | P0 L | P0 score |','|---|---:|---:|---:|---:|---:|']
+              for k,(w,d,l,n) in sorted(groups.items()):
+                  games=w+d+l; score=(w+0.5*d)/games if games else 0
+                  lines.append(f'| {k} | {n} | {w} | {d} | {l} | {100*score:.2f}% |')
+              return '\n'.join(lines)
+
+          text='# v3.26 long validation aggregate\n\n## Baseline vs candidates (P0 = v3.25 baseline)\n\n'+summarize('downloaded/long')+'\n\n## Cross matches (P0 = first name in matchup)\n\n'+summarize('downloaded/cross')+'\n'
+          print(text)
+          Path('aggregate.md').write_text(text)
+      - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v326-long-validation-summary-${{ github.run_id }}
+          path: aggregate.md
