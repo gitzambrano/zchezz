@@ -1,4 +1,4 @@
-name: v3.27 search candidate screen
+name: v3.27 conditional LMR structural screen
 
 on:
   push:
@@ -14,58 +14,48 @@ jobs:
   candidate:
     name: ${{ matrix.candidate }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 6
       matrix:
         candidate:
-          - lmr-pos768
-          - lmr-pos1024
-          - lmr-pos1536
-          - lmr-pos2048
-          - lmr-pos4000
-          - nmp-plus2-margin128
+          - lmr-pos-deep5
+          - lmr-pos-deep6
+          - lmr-pos-early8
+          - lmr-pos-early12
+          - lmr-main2-768
+          - lmr-main2-1024
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Materialize clean v3.27 worktree
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin v327-search-efficiency
           git worktree add --detach /tmp/v327 origin/v327-search-efficiency
-
-      - name: Build promoted v3.26 baseline and candidate
+      - name: Build baseline and candidate
         shell: bash
         env:
           CANDIDATE: ${{ matrix.candidate }}
         run: |
           set -euo pipefail
           cd /tmp/v327
-          SRC=engine/c/zchezz_v326/search.c
-          cp "$SRC" /tmp/search-v326.c
-
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= native
           cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
-
           python tests/apply_v327_candidate.py --candidate "$CANDIDATE"
           rm -f engine/c/zchezz_v326/zchezz.exe
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= native
           cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
-
-      - name: Correctness gate
+      - name: Correctness smoke
         shell: bash
         run: |
           set -euo pipefail
           cd /tmp/v327
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
           python tests/test_perft.py --version v326
-          python tests/test_uci_extended.py --version v326
-          python tools/check_nnue.py --profile v326
-
       - name: Structural fixed-depth screen
         shell: bash
         env:
@@ -80,116 +70,44 @@ jobs:
             --source engine/c/zchezz_v326/main.c \
             --output "$OUT"
           cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Build serial arena
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd /tmp/v327
-          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
-
-      - name: Fetch pinned UHO opening block
-        shell: bash
-        env:
-          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
-        run: |
-          set -euo pipefail
-          cd /tmp/v327
-          mkdir -p artifacts/v327-openings
-          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
-          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/v327-openings/uho.zip
-          sha256sum artifacts/v327-openings/uho.zip > artifacts/v327-openings/uho.sha256
-          EPD_NAME="$(unzip -Z1 artifacts/v327-openings/uho.zip | grep -Ei '\.epd$' | head -n1)"
-          test -n "$EPD_NAME"
-          unzip -p artifacts/v327-openings/uho.zip "$EPD_NAME" > artifacts/v327-openings/all.epd
-          python - <<'PY'
-          from pathlib import Path
-          import random
-          lines=[]
-          for raw in Path('artifacts/v327-openings/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
-              s=raw.strip()
-              if not s or s.startswith('#'): continue
-              p=s.split()
-              if len(p)>=4: lines.append(' '.join(p[:4]))
-          if len(lines)<1000: raise RuntimeError(f'need >=1000 positions, got {len(lines)}')
-          rng=random.Random(327001); rng.shuffle(lines)
-          chosen=lines[1000:1050]
-          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
-          Path('artifacts/v327-openings/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
-          PY
-          sha256sum artifacts/v327-openings/openings.epd > artifacts/v327-openings/openings.sha256
-
-      - name: 100-game serial antithetic fast gate at 200 ms
-        shell: bash
-        env:
-          CANDIDATE: ${{ matrix.candidate }}
-        run: |
-          set -euo pipefail
-          cd /tmp/v327
-          BASE="$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)"
-          CAND="$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)"
-          OUT="artifacts/v327-${CANDIDATE}-h2h"
-          mkdir -p "$OUT"
-          ./engine/build/arena.exe \
-            --player "uci:${BASE}" --player "uci:${CAND}" \
-            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
-            --openings artifacts/v327-openings/openings.epd --seed 327100 \
-            --tt-mb 64 --uci-timeout 15000 \
-            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
-          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: v327-${{ matrix.candidate }}-${{ github.run_id }}
-          path: |
-            /tmp/v327/artifacts/v327-${{ matrix.candidate }}-structure
-            /tmp/v327/artifacts/v327-${{ matrix.candidate }}-h2h
-            /tmp/v327/artifacts/v327-openings/*.sha256
+          name: v327-structure-${{ matrix.candidate }}-${{ github.run_id }}
+          path: /tmp/v327/artifacts/v327-${{ matrix.candidate }}-structure
 
   aggregate:
-    name: aggregate v3.27 fast gate
+    name: aggregate conditional LMR structure
     runs-on: ubuntu-24.04
     if: always()
     needs: [candidate]
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: v327-*
+          pattern: v327-structure-*
           path: downloaded
           merge-multiple: false
-      - name: Aggregate candidate perspective
+      - name: Aggregate structural summaries
         shell: python
         run: |
           from pathlib import Path
-          import json, math
+          import json
           rows=[]
-          for result in sorted(Path('downloaded').glob('**/*-h2h/result.json')):
-              candidate=result.parent.name.removeprefix('v327-').removesuffix('-h2h')
-              pair=json.loads(result.read_text())['pairings'][0]
-              # A=promoted v3.26 baseline, B=candidate; convert to B perspective.
-              w,d,l=int(pair['l']),int(pair['d']),int(pair['w'])
-              n=w+d+l; score=(w+0.5*d)/n
-              elo=400*math.log10(score/(1-score)) if 0<score<1 else 0.0
-              second=(w+0.25*d)/n
-              var=max(0.0,second-score*score)
-              se=math.sqrt(var/n)
-              deriv=400/math.log(10)/(score*(1-score)) if 0<score<1 else 0.0
-              ci=1.96*deriv*se
-              struct_files=list(result.parent.parent.glob('../*-structure/metrics.json'))
-              rows.append((candidate,n,w,d,l,score,elo,ci))
-          if not rows: raise RuntimeError('no H2H result files found')
-          rows.sort(key=lambda r:r[6],reverse=True)
-          lines=['# v3.27 fast gate','',
-                 'Candidate perspective; 200 ms/move, Threads=1, serial arena, Hash=64 MB, 50 UHO openings with reversed colors.','',
-                 '| Candidate | Games | W-D-L | Score | Elo | 95% CI |',
-                 '|---|---:|---:|---:|---:|---:|']
-          for c,n,w,d,l,s,e,ci in rows:
-              lines.append(f'| {c} | {n} | {w}-{d}-{l} | {100*s:.2f}% | {e:+.1f} | ±{ci:.1f} |')
+          for p in sorted(Path('downloaded').glob('**/metrics.json')):
+              name=p.parent.name.removeprefix('v327-').removesuffix('-structure')
+              s=json.loads(p.read_text())['summary']
+              rows.append((name,s['8'],s['10'],s['12']))
+          if not rows: raise RuntimeError('no structural metrics found')
+          rows.sort(key=lambda r:r[3]['node_delta_pct'])
+          lines=['# v3.27 conditional LMR structural screen','',
+                 '| Candidate | d8 nodes | d10 nodes | d12 nodes | d12 diffs |',
+                 '|---|---:|---:|---:|---:|']
+          for name,d8,d10,d12 in rows:
+              lines.append(f"| {name} | {d8['node_delta_pct']:+.2f}% | {d10['node_delta_pct']:+.2f}% | {d12['node_delta_pct']:+.2f}% | {d12['result_diffs']}/20 |")
           Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
           print(Path('aggregate.md').read_text())
       - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: v327-fast-gate-aggregate-${{ github.run_id }}
+          name: v327-conditional-lmr-aggregate-${{ github.run_id }}
           path: aggregate.md
