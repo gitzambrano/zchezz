@@ -43,12 +43,7 @@ def stale_miss(text: str) -> str:
 
 
 def history_prune(text: str, scale: int) -> str:
-    """Rescale a dead threshold to the measured history-score magnitude.
-
-    The d12 diagnostic observed minima around -2.5k while v3.25 requires
-    -4000*depth (down to -16k), producing exactly zero history-pruned moves.
-    Scale 64 is the moderate candidate; 128 is the conservative sibling.
-    """
+    """Rescale a dead threshold to the measured history-score magnitude."""
     return exact(
         text,
         "                        int hp_thresh = -4000 * depth;\n",
@@ -65,15 +60,86 @@ def history_prune_128d(text: str) -> str:
     return history_prune(text, 128)
 
 
-def singular_exclusion_guard(text: str) -> str:
-    """Make singular verification actually search the position without TT move.
+def nmp(text: str, base: int, cap: int, deep_only: bool = False) -> str:
+    """Increase null-move reduction while retaining all existing eligibility guards.
 
-    v3.25 marks the TT move in sing_from/sing_to, but its recursive verification
-    can be cut off by the same TT score (or NMP/ProbCut using the excluded move),
-    and can write the constrained result back into the normal TT. Stockfish's
-    excludedMove path explicitly blocks TT cutoff/NMP/TT write and skips the
-    excluded move in ProbCut. This candidate establishes the same invariants.
+    Stockfish is substantially more aggressive here, but these candidates move
+    only one or two plies at a time so strength loss can be measured directly.
     """
+    old = """        int R = 3 + depth / 3;
+        if (R > 6) R = 6;
+        if (static_eval - beta > 134) R += 1;
+"""
+    if deep_only:
+        new = f"""        int R = 3 + depth / 3;
+        if (depth >= 5) R += 1;
+        if (R > {cap}) R = {cap};
+        if (static_eval - beta > 134) R += 1;
+"""
+    else:
+        new = f"""        int R = {base} + depth / 3;
+        if (R > {cap}) R = {cap};
+        if (static_eval - beta > 134) R += 1;
+"""
+    return exact(text, old, new, "NMP reduction")
+
+
+def nmp_plus1(text: str) -> str:
+    return nmp(text, 4, 7)
+
+
+def nmp_plus1_deep(text: str) -> str:
+    return nmp(text, 4, 7, deep_only=True)
+
+
+def nmp_plus2(text: str) -> str:
+    return nmp(text, 5, 8)
+
+
+def lmr_history(text: str, first: int) -> str:
+    """Activate the currently dead history-based LMR adjustment at measured scales."""
+    old = """                            if (ch < -4000) reduce += 1;
+                            if (ch < -8000) reduce += 1;
+                            if (ch > 4000 && reduce > 0) reduce -= 1;
+"""
+    new = f"""                            if (ch < -{first}) reduce += 1;
+                            if (ch < -{2 * first}) reduce += 1;
+                            if (ch > {first} && reduce > 0) reduce -= 1;
+"""
+    return exact(text, old, new, "LMR history thresholds")
+
+
+def lmr_history_1024(text: str) -> str:
+    return lmr_history(text, 1024)
+
+
+def lmr_history_512(text: str) -> str:
+    return lmr_history(text, 512)
+
+
+def qs_delta(text: str, margin: int) -> str:
+    """Tighten per-capture qsearch delta pruning without touching promotions."""
+    old = "        if (stand + gain + 50 < alpha && !moves[i].prom) { moves[i].score = -99999; continue; }\n"
+    if margin == 0:
+        expr = "stand + gain < alpha"
+    elif margin > 0:
+        expr = f"stand + gain + {margin} < alpha"
+    else:
+        expr = f"stand + gain - {-margin} < alpha"
+    new = f"        if ({expr} && !moves[i].prom) {{ moves[i].score = -99999; continue; }}\n"
+    return exact(text, old, new, "qsearch per-move delta margin")
+
+
+def qs_delta_0(text: str) -> str:
+    return qs_delta(text, 0)
+
+
+def qs_delta_minus50(text: str) -> str:
+    return qs_delta(text, -50)
+
+
+def singular_exclusion_guard(text: str) -> str:
+    """Make singular verification actually search the position without TT move."""
     text = exact(
         text,
         "        if (tte_hit == 1 && tte.depth >= depth && ply > 0 && ss->excluded_root_n == 0) {\n",
@@ -124,6 +190,13 @@ TRANSFORMS = {
     "stale-miss": stale_miss,
     "history-prune-64d": history_prune_64d,
     "history-prune-128d": history_prune_128d,
+    "nmp-plus1": nmp_plus1,
+    "nmp-plus1-deep": nmp_plus1_deep,
+    "nmp-plus2": nmp_plus2,
+    "lmr-history-1024": lmr_history_1024,
+    "lmr-history-512": lmr_history_512,
+    "qs-delta-0": qs_delta_0,
+    "qs-delta-minus50": qs_delta_minus50,
     "singular-exclusion-guard": singular_exclusion_guard,
 }
 
