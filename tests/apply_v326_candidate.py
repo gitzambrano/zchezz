@@ -96,8 +96,27 @@ def nmp_plus2(text: str) -> str:
     return nmp(text, 5, 8)
 
 
+def nmp_plus2_margin(text: str, margin: int) -> str:
+    """Use the +2 reduction only when static eval clears beta by a safety margin."""
+    text = nmp_plus2(text)
+    return exact(
+        text,
+        "    if (!in_check && !is_pv && depth>=3 && ply>0 && not_endgame && static_eval>=beta) {\n",
+        f"    if (!in_check && !is_pv && depth>=3 && ply>0 && not_endgame && static_eval>=beta+{margin}) {{\n",
+        f"NMP +2 eligibility margin {margin}",
+    )
+
+
+def nmp_plus2_margin64(text: str) -> str:
+    return nmp_plus2_margin(text, 64)
+
+
+def nmp_plus2_margin128(text: str) -> str:
+    return nmp_plus2_margin(text, 128)
+
+
 def lmr_history(text: str, first: int) -> str:
-    """Activate the currently dead history-based LMR adjustment at measured scales."""
+    """Activate both negative and positive history-based LMR adjustments."""
     old = """                            if (ch < -4000) reduce += 1;
                             if (ch < -8000) reduce += 1;
                             if (ch > 4000 && reduce > 0) reduce -= 1;
@@ -117,6 +136,32 @@ def lmr_history_512(text: str) -> str:
     return lmr_history(text, 512)
 
 
+def lmr_history_negative(text: str, first: int) -> str:
+    """Increase reductions only for historically bad quiets.
+
+    The symmetric second-wave candidates expanded the tree because strong
+    positive history frequently removed one ply of reduction. This variant
+    keeps only the negative signal, which should improve selectivity without
+    rewarding already well-ordered quiet moves with extra search depth.
+    """
+    old = """                            if (ch < -4000) reduce += 1;
+                            if (ch < -8000) reduce += 1;
+                            if (ch > 4000 && reduce > 0) reduce -= 1;
+"""
+    new = f"""                            if (ch < -{first}) reduce += 1;
+                            if (ch < -{2 * first}) reduce += 1;
+"""
+    return exact(text, old, new, "negative-only LMR history thresholds")
+
+
+def lmr_negative_1024(text: str) -> str:
+    return lmr_history_negative(text, 1024)
+
+
+def lmr_negative_512(text: str) -> str:
+    return lmr_history_negative(text, 512)
+
+
 def qs_delta(text: str, margin: int) -> str:
     """Tighten per-capture qsearch delta pruning without touching promotions."""
     old = "        if (stand + gain + 50 < alpha && !moves[i].prom) { moves[i].score = -99999; continue; }\n"
@@ -130,8 +175,16 @@ def qs_delta(text: str, margin: int) -> str:
     return exact(text, old, new, "qsearch per-move delta margin")
 
 
+def qs_delta_plus25(text: str) -> str:
+    return qs_delta(text, 25)
+
+
 def qs_delta_0(text: str) -> str:
     return qs_delta(text, 0)
+
+
+def qs_delta_minus25(text: str) -> str:
+    return qs_delta(text, -25)
 
 
 def qs_delta_minus50(text: str) -> str:
@@ -193,9 +246,15 @@ TRANSFORMS = {
     "nmp-plus1": nmp_plus1,
     "nmp-plus1-deep": nmp_plus1_deep,
     "nmp-plus2": nmp_plus2,
+    "nmp-plus2-margin64": nmp_plus2_margin64,
+    "nmp-plus2-margin128": nmp_plus2_margin128,
     "lmr-history-1024": lmr_history_1024,
     "lmr-history-512": lmr_history_512,
+    "lmr-negative-1024": lmr_negative_1024,
+    "lmr-negative-512": lmr_negative_512,
+    "qs-delta-plus25": qs_delta_plus25,
     "qs-delta-0": qs_delta_0,
+    "qs-delta-minus25": qs_delta_minus25,
     "qs-delta-minus50": qs_delta_minus50,
     "singular-exclusion-guard": singular_exclusion_guard,
 }
