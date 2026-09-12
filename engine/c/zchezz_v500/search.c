@@ -1003,7 +1003,6 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
     if (depth <= 0) return qsearch(ss, b, alpha, beta, ply);
 
     int in_check = in_check_hint >= 0 ? in_check_hint : board_in_check(b);
-    if (in_check) depth++;
 
     int is_pv = (beta - alpha > 1);
     int static_eval = TT_EVAL_NONE;
@@ -1475,7 +1474,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                         int ch_hp = ss->mv_history[ft_hp];
                         if (cmh0 >= 0) ch_hp += ss->cont_hist[0][cmh0][ft_hp];
                         if (cmh1 >= 0) ch_hp += ss->cont_hist[1][cmh1][ft_hp];
-                        int hp_thresh = -4000 * depth;
+                        int hp_thresh = -64 * depth;
                         if (ch_hp < hp_thresh) continue;
                     }
                 }
@@ -1588,9 +1587,9 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                             int ch = ss->mv_history[ft_idx];
                             if (cmh0 >= 0) ch += ss->cont_hist[0][cmh0][ft_idx];
                             if (cmh1 >= 0) ch += ss->cont_hist[1][cmh1][ft_idx];
-                            if (ch < -4000) reduce += 1;
-                            if (ch < -8000) reduce += 1;
-                            if (ch > 4000 && reduce > 0) reduce -= 1;
+                            if (ch < -512) reduce += 1;
+                            if (ch < -1024) reduce += 1;
+                            if (ch > 512 && reduce > 0) reduce -= 1;
                         }
                         if (reduce >= depth - 1) reduce = depth - 2;
                         if (reduce < 0) reduce = 0;

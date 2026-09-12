@@ -1,4 +1,4 @@
-/* main.c — Zchezz v5.02 UCI engine
+/* main.c — Zchezz v5.03 UCI engine
  *
  * v4.00 CHANGES (NNUE architecture):
  *   The evaluation moved from 768 half-mirror features + 31 hand-made
@@ -98,7 +98,7 @@ static int z_strncasecmp(const char *a, const char *b, size_t n) {
 #endif
 
 #define ENGINE_NAME    "Zchezz"
-#define ENGINE_VERSION "5.02"
+#define ENGINE_VERSION "5.03"
 #define ENGINE_AUTHOR  "Gustavo Zambrano"
 
 /* ── Global game state ─────────────────────────────────────────── */
