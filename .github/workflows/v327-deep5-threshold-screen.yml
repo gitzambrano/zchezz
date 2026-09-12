@@ -1,0 +1,172 @@
+name: v3.27 deep5 threshold screen
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/v327-deep5-threshold-screen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: ${{ matrix.candidate }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        candidate:
+          - lmr-pos-deep5-th384
+          - lmr-pos-deep5-th640
+          - lmr-pos-deep5-th768
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize clean v3.27 worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin v327-search-efficiency
+          git worktree add --detach /tmp/v327 origin/v327-search-efficiency
+      - name: Build baseline and candidate with tablebases disabled
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
+          python tests/apply_v327_candidate.py --candidate "$CANDIDATE"
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+      - name: Correctness smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tools/check_nnue.py --profile v326
+      - name: Structural fixed-depth screen
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          OUT="artifacts/v327-${CANDIDATE}-structure"
+          python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch pinned UHO comparison block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          mkdir -p artifacts/v327-deep5-threshold
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/v327-deep5-threshold/uho.zip
+          sha256sum artifacts/v327-deep5-threshold/uho.zip > artifacts/v327-deep5-threshold/uho.sha256
+          EPD_NAME="$(unzip -Z1 artifacts/v327-deep5-threshold/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          test -n "$EPD_NAME"
+          unzip -p artifacts/v327-deep5-threshold/uho.zip "$EPD_NAME" > artifacts/v327-deep5-threshold/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/v327-deep5-threshold/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          if len(lines)<2500: raise RuntimeError(f'need >=2500 positions, got {len(lines)}')
+          rng=random.Random(327640); rng.shuffle(lines)
+          chosen=lines[2400:2450]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/v327-deep5-threshold/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+          sha256sum artifacts/v327-deep5-threshold/openings.epd > artifacts/v327-deep5-threshold/openings.sha256
+      - name: 100-game serial antithetic fast gate at 200 ms
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          BASE="$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)"
+          OUT="artifacts/v327-deep5-threshold/${CANDIDATE}"
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/v327-deep5-threshold/openings.epd --seed 327640 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-deep5-threshold-${{ matrix.candidate }}-${{ github.run_id }}
+          path: |
+            /tmp/v327/artifacts/v327-${{ matrix.candidate }}-structure
+            /tmp/v327/artifacts/v327-deep5-threshold/${{ matrix.candidate }}
+            /tmp/v327/artifacts/v327-deep5-threshold/*.sha256
+
+  aggregate:
+    name: aggregate deep5 threshold screen
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [candidate]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v327-deep5-threshold-*
+          path: downloaded
+          merge-multiple: false
+      - name: Aggregate candidate perspective
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, math
+          rows=[]
+          for root in sorted(Path('downloaded').iterdir()):
+              result=list(root.glob('**/result.json'))
+              metrics=list(root.glob('**/metrics.json'))
+              if len(result)!=1 or len(metrics)!=1: continue
+              cand=result[0].parent.name
+              pair=json.loads(result[0].read_text())['pairings'][0]
+              w,d,l=int(pair['l']),int(pair['d']),int(pair['w'])
+              n=w+d+l; s=(w+0.5*d)/n
+              elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
+              second=(w+0.25*d)/n; var=max(0.0,second-s*s); se=math.sqrt(var/n)
+              deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0
+              ci=1.96*deriv*se
+              st=json.loads(metrics[0].read_text())['summary']['12']
+              rows.append((cand,w,d,l,s,elo,ci,st['node_delta_pct'],st['result_diffs']))
+          if len(rows)!=3: raise RuntimeError(f'expected 3 candidates, got {len(rows)}')
+          lines=['# v3.27 deep5 threshold screen','',
+                 'Candidate perspective; 100 games each; 200 ms/move; Threads=1; serial arena; Hash=64 MB; tablebases disabled; same pinned UHO block.','',
+                 '| Candidate | W-D-L | Score | Elo | 95% CI | d12 nodes | d12 diffs |','|---|---:|---:|---:|---:|---:|---:|']
+          for cand,w,d,l,s,elo,ci,nd,diffs in sorted(rows,key=lambda r:r[5],reverse=True):
+              lines.append(f'| {cand} | {w}-{d}-{l} | {100*s:.2f}% | {elo:+.1f} | ±{ci:.1f} | {nd:+.2f}% | {diffs}/20 |')
+          Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          print(Path('aggregate.md').read_text())
+      - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v327-deep5-threshold-aggregate-${{ github.run_id }}
+          path: aggregate.md
