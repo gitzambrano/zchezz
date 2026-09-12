@@ -1,0 +1,163 @@
+name: v3.27 qsearch check-TT screen
+
+on:
+  push:
+    branches: [investigate/stockfish-search-gap]
+    paths:
+      - ".github/workflows/v327-qcheck-tt-screen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: qcheck-${{ matrix.candidate }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        candidate: [order, order-cutoff]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize clean v3.27 worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin v327-search-efficiency
+          git worktree add --detach /tmp/v327 origin/v327-search-efficiency
+      - name: Build baseline and candidate
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_baseline.exe
+          python tests/apply_v327_qcheck_tt.py --candidate "$CANDIDATE"
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp engine/c/zchezz_v326/zchezz.exe engine/c/zchezz_v326/zchezz_candidate.exe
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+      - name: Correctness gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+      - name: Structural fixed-depth screen
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          OUT="artifacts/v327-qcheck-${CANDIDATE}-structure"
+          python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Fetch pinned UHO fast-gate block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          mkdir -p artifacts/v327-qcheck
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/v327-qcheck/uho.zip
+          EPD_NAME="$(unzip -Z1 artifacts/v327-qcheck/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          test -n "$EPD_NAME"
+          unzip -p artifacts/v327-qcheck/uho.zip "$EPD_NAME" > artifacts/v327-qcheck/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/v327-qcheck/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          if len(lines)<3000: raise RuntimeError(f'need >=3000 positions, got {len(lines)}')
+          rng=random.Random(327707);rng.shuffle(lines)
+          chosen=lines[2900:2950]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/v327-qcheck/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+      - name: 100-game serial antithetic fast gate at 200 ms
+        shell: bash
+        env:
+          CANDIDATE: ${{ matrix.candidate }}
+        run: |
+          set -euo pipefail
+          cd /tmp/v327
+          BASE="$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)"
+          CAND="$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)"
+          OUT="artifacts/v327-qcheck/${CANDIDATE}"
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:${BASE}" --player "uci:${CAND}" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/v327-qcheck/openings.epd --seed 327707 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-qcheck-${{ matrix.candidate }}-${{ github.run_id }}
+          path: |
+            /tmp/v327/artifacts/v327-qcheck-${{ matrix.candidate }}-structure
+            /tmp/v327/artifacts/v327-qcheck/${{ matrix.candidate }}
+
+  aggregate:
+    name: aggregate qsearch check-TT screen
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [candidate]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: v327-qcheck-*
+          path: downloaded
+          merge-multiple: false
+      - name: Aggregate candidate perspective
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, math
+          rows=[]
+          for root in sorted(Path('downloaded').iterdir()):
+              results=list(root.glob('**/result.json')); metrics=list(root.glob('**/metrics.json'))
+              if len(results)!=1 or len(metrics)!=1: continue
+              cand=results[0].parent.name
+              pair=json.loads(results[0].read_text())['pairings'][0]
+              w,d,l=int(pair['l']),int(pair['d']),int(pair['w']);n=w+d+l;s=(w+0.5*d)/n
+              elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
+              second=(w+0.25*d)/n;var=max(0.0,second-s*s);se=math.sqrt(var/n)
+              deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0;ci=1.96*deriv*se
+              st=json.loads(metrics[0].read_text())['summary']['12']
+              rows.append((cand,w,d,l,s,elo,ci,st['node_delta_pct'],st['elapsed_delta_pct'],st['result_diffs']))
+          if len(rows)!=2: raise RuntimeError(f'expected 2 candidates, got {len(rows)}')
+          lines=['# v3.27 qsearch check-TT screen','',
+                 '| Candidate | W-D-L | Score | Elo | 95% CI | d12 nodes | d12 wall | d12 diffs |','|---|---:|---:|---:|---:|---:|---:|---:|']
+          for cand,w,d,l,s,elo,ci,nd,wd,diffs in sorted(rows,key=lambda r:r[5],reverse=True):
+              lines.append(f'| {cand} | {w}-{d}-{l} | {100*s:.2f}% | {elo:+.1f} | ±{ci:.1f} | {nd:+.2f}% | {wd:+.2f}% | {diffs}/20 |')
+          Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          print(Path('aggregate.md').read_text())
+      - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v327-qcheck-aggregate-${{ github.run_id }}
+          path: aggregate.md
