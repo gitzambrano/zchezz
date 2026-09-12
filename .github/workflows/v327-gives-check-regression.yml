@@ -62,7 +62,8 @@ jobs:
           cp /tmp/zchezz_baseline.exe engine/c/zchezz_v326/zchezz_baseline.exe
           make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
           python tests/test_perft.py --version v326
-          python tests/test_uci.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
       - name: Structural depth screen
         shell: bash
         run: |
