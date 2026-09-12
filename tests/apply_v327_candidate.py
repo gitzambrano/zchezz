@@ -58,6 +58,16 @@ def lmr_positive_min_depth(text: str, min_depth: int) -> str:
     return exact(text, LMR_BASE, new, f"LMR positive min depth {min_depth}")
 
 
+def lmr_positive_shallow_threshold(text: str, shallow_threshold: int) -> str:
+    """Require stronger positive history only in the shallow LMR regime."""
+    new = f"""                            if (ch < -512) reduce += 1;
+                            if (ch < -1024) reduce += 1;
+                            int pos_hist_threshold = depth < 5 ? {shallow_threshold} : 512;
+                            if (ch > pos_hist_threshold && reduce > 0) reduce -= 1;
+"""
+    return exact(text, LMR_BASE, new, f"LMR shallow positive threshold {shallow_threshold}")
+
+
 def lmr_positive_early(text: str, max_move: int) -> str:
     new = f"""                            if (ch < -512) reduce += 1;
                             if (ch < -1024) reduce += 1;
@@ -67,12 +77,7 @@ def lmr_positive_early(text: str, max_move: int) -> str:
 
 
 def lmr_weighted_main(text: str, threshold: int) -> str:
-    """Give main history about twice the continuation-history weight.
-
-    Stockfish uses a substantially larger main-history coefficient than either
-    continuation-history coefficient. This keeps Zchezz's integer-ply LMR model
-    but tests the same qualitative idea with thresholds scaled to our histories.
-    """
+    """Give main history about twice the continuation-history weight."""
     new = f"""                            int ft_idx = mfr * 64 + mto;
                             int ch = 2 * ss->mv_history[ft_idx];
                             if (cmh0 >= 0) ch += ss->cont_hist[0][cmh0][ft_idx];
@@ -100,8 +105,11 @@ CANDIDATES = {
     "lmr-pos1536": lambda text: lmr_positive_threshold(text, 1536),
     "lmr-pos2048": lambda text: lmr_positive_threshold(text, 2048),
     "lmr-pos4000": lambda text: lmr_positive_threshold(text, 4000),
+    "lmr-pos-deep4": lambda text: lmr_positive_min_depth(text, 4),
     "lmr-pos-deep5": lambda text: lmr_positive_min_depth(text, 5),
     "lmr-pos-deep6": lambda text: lmr_positive_min_depth(text, 6),
+    "lmr-pos-shallow768": lambda text: lmr_positive_shallow_threshold(text, 768),
+    "lmr-pos-shallow1024": lambda text: lmr_positive_shallow_threshold(text, 1024),
     "lmr-pos-early8": lambda text: lmr_positive_early(text, 8),
     "lmr-pos-early12": lambda text: lmr_positive_early(text, 12),
     "lmr-main2-768": lambda text: lmr_weighted_main(text, 768),
