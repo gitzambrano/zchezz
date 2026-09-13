@@ -1164,7 +1164,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                     { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
                       int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
                       int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-                      if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+                      int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                           gives_check = board_in_check(b);
                     }
 
@@ -1280,7 +1287,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
             { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
               int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
               int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-              if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+              int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                   gives_check = board_in_check(b);
             }
 
@@ -1411,7 +1425,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                 { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
                   int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
                   int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-                  if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+                  int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                       gives_check = board_in_check(b);
                 }
 
@@ -1530,7 +1551,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
             { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
               int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
               int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-              if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+              int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                   gives_check = board_in_check(b);
             }
 
