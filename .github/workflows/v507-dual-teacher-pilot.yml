@@ -1,0 +1,131 @@
+name: v507 dual teacher pilot
+on:
+  push:
+    branches: [exp/v507-dual-teacher]
+    paths: [.github/workflows/v507-dual-teacher-pilot.yml]
+permissions: {contents: write}
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+  OPENING_SEED: '3280926'
+jobs:
+  train-and-uho-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install Python training stack
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install Stockfish teacher
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y stockfish
+          SF="$(command -v stockfish || true)"
+          if [ -z "$SF" ] && [ -x /usr/games/stockfish ]; then SF=/usr/games/stockfish; fi
+          test -x "$SF"
+          echo "ZCHEZZ_STOCKFISH=$SF" >> "$GITHUB_ENV"
+      - name: Verify dual-teacher trainer
+        run: |
+          python -m pytest tests/test_policy_children_export.py tests/test_policy_distill_nnu4.py -q
+          python train/teaching/train_policy_distill_nnu4.py --show-config
+      - name: Build student and in-family teacher
+        run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+      - name: Generate v5.06-distribution positions
+        run: |
+          python tests/run_selfplay.py --profile v506 \
+            --games 48 --concurrency 2 --movetime 50 --max-plies 240 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_dual_selfplay
+          EPD="$(find data/v507_dual_selfplay -name '*.epd' -type f | head -1)"
+          test -s "$EPD"
+          echo "V507_EPD=$EPD" >> "$GITHUB_ENV"
+          echo "teacher input: $EPD ($(wc -l < "$EPD") positions)"
+      - name: Stockfish active teaching on student distribution
+        run: |
+          python train/teacher.py \
+            --input "$V507_EPD" --output data/teaching/v507_dual_teacher \
+            --limit 6000 --workers 2 --batch-size 64 --max-in-flight 4 \
+            --policy-sample-rate 0.45 --shallow-nodes 4000 --deep-nodes 16000 \
+            --gap-hard-cp 90 --search-interest 0.50 --deep-interest 1.00 \
+            --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_dual_teacher
+      - name: Distill Stockfish plus v3.28 policy into NNU4
+        run: |
+          python train/teaching/train_policy_distill_nnu4.py \
+            --input data/teaching/v507_dual_teacher \
+            --init-weights engine/c/zchezz_v506/nnue_weights.bin \
+            --output checkpoints/v507/dual_policy_distill.pt \
+            --reference-engine engine/c/zchezz_v328/zchezz.exe \
+            --reference-nodes 2000 --reference-weight 0.65 --reference-hash-mb 32 \
+            --epochs 10 --batch-groups 64 --lr 0.000010 --weight-decay 0.0001 \
+            --temperature-cp 120 --value-weight 0.40 --rank-weight 0.20 \
+            --min-rank-margin-cp 20 --freeze-l1-epochs 3 --device cpu
+      - name: Materialize dual-teacher v5.07 candidate
+        run: |
+          rm -rf engine/c/zchezz_v507d
+          cp -a engine/c/zchezz_v506 engine/c/zchezz_v507d
+          rm -f engine/c/zchezz_v507d/zchezz.exe engine/c/zchezz_v507d/zchezz
+          python train/export_nnu4.py \
+            --checkpoint checkpoints/v507/dual_policy_distill.pt \
+            --output engine/c/zchezz_v507d/nnue_weights.bin
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v507d/main.c')
+          s=p.read_text().replace('Zchezz v5.06 UCI engine','Zchezz v5.07 UCI engine',1)
+          s=s.replace('#define ENGINE_VERSION "5.06"','#define ENGINE_VERSION "5.07"',1)
+          p.write_text(s)
+          PY
+          python tools/check_nnue.py engine/c/zchezz_v507d/nnue_weights.bin --profile v506
+          make -C engine/build ENGINE=v507d STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          OUT="$(printf 'uci\nisready\nquit\n' | engine/c/zchezz_v507d/zchezz.exe 2>&1)"
+          printf '%s\n' "$OUT"
+          grep -q 'id name Zchezz 5.07' <<< "$OUT"
+          grep -q '^uciok$' <<< "$OUT"
+          grep -q '^readyok$' <<< "$OUT"
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" \
+            -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+          echo "book_sha=${BOOKS_SHA} lines=$(wc -l < "${UHO_EPD}")"
+      - name: Paired UHO v5.07-dual vs v5.06
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507d/zchezz.exe \
+            --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-dual --label-b v506 \
+            --pairs 12 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed "${OPENING_SEED}" --max-plies 260 \
+            --json /tmp/v507dual-v506.json
+          cat /tmp/v507dual-v506.json
+      - name: Paired UHO v5.07-dual vs v3.28
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507d/zchezz.exe \
+            --engine-b engine/c/zchezz_v328/zchezz.exe \
+            --label-a v507-dual --label-b v328 \
+            --pairs 12 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed "${OPENING_SEED}" --max-plies 260 \
+            --json /tmp/v507dual-v328.json
+          cat /tmp/v507dual-v328.json
+      - name: Freeze source-only dual-teacher candidate
+        if: success()
+        run: |
+          rm -f engine/c/zchezz_v507d/zchezz.exe engine/c/zchezz_v507d/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507d
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): dual-teacher policy-distilled NNU4'
+          git push origin HEAD:exp/v507-dual-teacher
