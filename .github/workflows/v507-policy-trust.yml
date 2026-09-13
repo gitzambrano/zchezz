@@ -1,0 +1,120 @@
+name: v507 policy trust
+on:
+  push:
+    branches: [exp/v507-policy-trust]
+    paths: [.github/workflows/v507-policy-trust.yml]
+permissions: {contents: write}
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+  OPENING_SEED: '3280926'
+jobs:
+  train-and-uho-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install training stack
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Install Stockfish teacher
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y stockfish
+          SF="$(command -v stockfish || true)"
+          if [ -z "$SF" ] && [ -x /usr/games/stockfish ]; then SF=/usr/games/stockfish; fi
+          test -x "$SF"
+          echo "ZCHEZZ_STOCKFISH=$SF" >> "$GITHUB_ENV"
+      - name: Verify trainer and orientation
+        run: |
+          python -m pytest tests/test_policy_children_export.py tests/test_policy_distill_nnu4.py tests/test_policy_trust_nnu4.py -q
+          python train/teaching/train_policy_trust_nnu4.py --show-config \
+            --input data/x --init-weights x --output x
+      - name: Build v5.06 and v3.28
+        run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+      - name: Generate v5.06 replay distribution
+        run: |
+          python tests/run_selfplay.py --profile v506 \
+            --games 48 --concurrency 2 --movetime 50 --max-plies 240 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_trust_selfplay
+          EPD="$(find data/v507_trust_selfplay -name '*.epd' -type f | head -1)"
+          test -s "$EPD"
+          echo "V507_EPD=$EPD" >> "$GITHUB_ENV"
+      - name: Active Stockfish teaching
+        run: |
+          python train/teacher.py \
+            --input "$V507_EPD" --output data/teaching/v507_trust_teacher \
+            --limit 6000 --workers 2 --batch-size 64 --max-in-flight 4 \
+            --policy-sample-rate 0.45 --shallow-nodes 4000 --deep-nodes 16000 \
+            --gap-hard-cp 90 --search-interest 0.50 --deep-interest 1.00 --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_trust_teacher
+      - name: Trust-region dual-teacher distillation
+        run: |
+          python train/teaching/train_policy_trust_nnu4.py \
+            --input data/teaching/v507_trust_teacher \
+            --init-weights engine/c/zchezz_v506/nnue_weights.bin \
+            --output checkpoints/v507/policy_trust.pt \
+            --reference-engine engine/c/zchezz_v328/zchezz.exe \
+            --reference-nodes 2000 --reference-weight 0.45 --reference-hash-mb 32 \
+            --epochs 8 --batch-groups 64 --replay-per-group 2 \
+            --lr 0.000005 --weight-decay 0.0001 \
+            --temperature-cp 120 --value-weight 0.40 --rank-weight 0.15 \
+            --min-rank-margin-cp 20 --preserve-weight 0.35 --preserve-scale-cp 35 \
+            --freeze-l1-epochs 4 --device cpu
+      - name: Materialize trust-region v5.07 candidate
+        run: |
+          rm -rf engine/c/zchezz_v507r
+          cp -a engine/c/zchezz_v506 engine/c/zchezz_v507r
+          rm -f engine/c/zchezz_v507r/zchezz.exe engine/c/zchezz_v507r/zchezz
+          python train/export_nnu4.py --checkpoint checkpoints/v507/policy_trust.pt \
+            --output engine/c/zchezz_v507r/nnue_weights.bin
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v507r/main.c')
+          s=p.read_text().replace('Zchezz v5.06 UCI engine','Zchezz v5.07 UCI engine',1)
+          s=s.replace('#define ENGINE_VERSION "5.06"','#define ENGINE_VERSION "5.07"',1)
+          p.write_text(s)
+          PY
+          python tools/check_nnue.py engine/c/zchezz_v507r/nnue_weights.bin --profile v506
+          make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" \
+            -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+      - name: Paired UHO trust v5.07 vs v5.06
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507r/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-trust --label-b v506 --pairs 12 --movetime-ms 200 \
+            --hash-mb 64 --threads 1 --opening-file "${UHO_EPD}" \
+            --opening-seed "${OPENING_SEED}" --max-plies 260 --json /tmp/trust-v506.json
+          cat /tmp/trust-v506.json
+      - name: Paired UHO trust v5.07 vs v3.28
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507r/zchezz.exe --engine-b engine/c/zchezz_v328/zchezz.exe \
+            --label-a v507-trust --label-b v328 --pairs 12 --movetime-ms 200 \
+            --hash-mb 64 --threads 1 --opening-file "${UHO_EPD}" \
+            --opening-seed "${OPENING_SEED}" --max-plies 260 --json /tmp/trust-v328.json
+          cat /tmp/trust-v328.json
+      - name: Freeze source-only trust candidate
+        if: success()
+        run: |
+          rm -f engine/c/zchezz_v507r/zchezz.exe engine/c/zchezz_v507r/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507r
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): trust-region dual-teacher NNU4'
+          git push origin HEAD:exp/v507-policy-trust
