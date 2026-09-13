@@ -526,6 +526,34 @@ static int see_board(const Board *bd, int from, int to, int is_epc) {
     return gained[0] - sc;
 }
 
+/* Exact pre-move check classifier for capture SEE pruning.
+ * Models post-move occupancy without mutating Board. */
+static inline int capture_gives_check_pre(const Board *bd, const Move *m) {
+    int from=m->from, to=m->to;
+    int ksq=bd->turn==COL_W ? bd->bk : bd->wk;
+    uint64_t from_bb=(uint64_t)1<<from, to_bb=(uint64_t)1<<to;
+    uint64_t occ_after=(bd->occ & ~from_bb) | to_bb;
+    if (m->epc) { int ep_sq=bd->turn==COL_W ? to+8 : to-8; occ_after &= ~((uint64_t)1<<ep_sq); }
+    int pt=m->prom ? m->prom : PC_TYPE(bd->b[from]);
+    int direct=0;
+    switch (pt) {
+        case 1: direct=(int)(((bd->turn==COL_W ? wpawn_attacks_bb(to_bb) : bpawn_attacks_bb(to_bb))>>ksq)&1); break;
+        case 2: direct=(int)((NATK[to]>>ksq)&1); break;
+        case 3: direct=(int)((bish_attacks(to,occ_after)>>ksq)&1); break;
+        case 4: direct=(int)((rook_attacks(to,occ_after)>>ksq)&1); break;
+        case 5: direct=(int)(((rook_attacks(to,occ_after)|bish_attacks(to,occ_after))>>ksq)&1); break;
+        case 6: direct=(int)((KATK[to]>>ksq)&1); break;
+        default: break;
+    }
+    if (direct) return 1;
+    int base=bd->turn==COL_W ? 0 : 6;
+    uint64_t rq=(bd->bb[base+3]|bd->bb[base+4]) & ~from_bb;
+    uint64_t bq=(bd->bb[base+2]|bd->bb[base+4]) & ~from_bb;
+    if (rook_attacks(ksq,occ_after) & rq) return 1;
+    if (bish_attacks(ksq,occ_after) & bq) return 1;
+    return 0;
+}
+
 /* ── Cheap direct-check test (v4.02) ──────────────────────────
  * True if the quiet move from→to gives a DIRECT check after it is
  * played: the moving piece attacks the enemy king from `to` with its
@@ -1292,7 +1320,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                     { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
                       int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
                       int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-                      if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+                      int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                           gives_check = board_in_check(b);
                     }
 
@@ -1381,7 +1416,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                         int tr=mto>>3,tc=mto&7,kr=ok_sq>>3,kc=ok_sq&7;
                         int dr=tr-kr;if(dr<0)dr=-dr;
                         int dc=tc-kc;if(dc<0)dc=-dc;
-                        if ((dr>dc?dr:dc) > 1) continue;
+                        if ((dr>dc?dr:dc) > 1 && !capture_gives_check_pre(b, m)) continue;
                     }
                 }
             }
@@ -1411,7 +1446,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
             { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
               int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
               int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-              if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+              int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                   gives_check = board_in_check(b);
             }
 
@@ -1567,7 +1609,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                 { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
                   int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
                   int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-                  if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+                  int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                       gives_check = board_in_check(b);
                 }
 
@@ -1670,7 +1719,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                     int tr=mto>>3,tc=mto&7,kr=ok_sq>>3,kc=ok_sq&7;
                     int dr=tr-kr;if(dr<0)dr=-dr;
                     int dc=tc-kc;if(dc<0)dc=-dc;
-                    if ((dr>dc?dr:dc) > 1) continue;
+                    if ((dr>dc?dr:dc) > 1 && !capture_gives_check_pre(b, m)) continue;
                 }
             }
 
@@ -1699,7 +1748,14 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
             { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
               int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
               int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
-              if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+              int pawn_discovery = 0;
+    if (gpt == 1) {
+        int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+        int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+        int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+        pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+    }
+    if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
                   gives_check = board_in_check(b);
             }
 
