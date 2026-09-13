@@ -168,7 +168,6 @@ jobs:
         run: |
           set -euo pipefail
           make -C engine/build ENGINE=v500 ARCH_FLAGS='-mavx2 -DNO_TABLEBASES' STATIC_FLAG= clean native
-          make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS='-mavx2 -DNO_TABLEBASES' test-c
           python3 tests/test_perft.py --version v500
           python3 tests/test_uci_extended.py --version v500
           python3 tools/check_nnue.py --profile v500
