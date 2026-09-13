@@ -1,0 +1,24 @@
+name: v507 policy loss check
+on:
+  push:
+    branches: [exp/v507-policy-loss]
+    paths: [.github/workflows/v507-policy-loss-check.yml]
+permissions: {contents: read}
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/test_policy_children_export.py tests/test_policy_distill_nnu4.py -q
+      - run: python train/teaching/train_policy_distill_nnu4.py --show-config
+      - run: |
+          python - <<'PY'
+          from pathlib import Path
+          from train.import_nnu4 import read_nnu4
+          w,arch,epoch=read_nnu4(Path('engine/c/zchezz_v506/nnue_weights.bin'))
+          print(arch, epoch, sorted(w))
+          PY
