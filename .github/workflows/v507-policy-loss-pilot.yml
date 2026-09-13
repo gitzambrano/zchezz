@@ -1,0 +1,106 @@
+name: v507 explicit policy pilot
+on:
+  push:
+    branches: [exp/v507-policy-loss]
+    paths: [.github/workflows/v507-policy-loss-pilot.yml]
+permissions: {contents: write}
+jobs:
+  train-and-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - name: Install Stockfish
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y stockfish
+          SF="$(command -v stockfish || true)"
+          if [ -z "$SF" ] && [ -x /usr/games/stockfish ]; then SF=/usr/games/stockfish; fi
+          echo "ZCHEZZ_STOCKFISH=$SF" >> "$GITHUB_ENV"
+      - name: Verify explicit policy trainer
+        run: |
+          python -m pytest tests/test_policy_children_export.py tests/test_policy_distill_nnu4.py -q
+          python train/teaching/train_policy_distill_nnu4.py --show-config
+      - name: Build student and reference
+        run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS= native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS= native
+      - name: Generate v5.06-distribution positions
+        run: |
+          python tests/run_selfplay.py --profile v506 \
+            --games 40 --concurrency 2 --movetime 50 --max-plies 240 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_selfplay
+          EPD="$(find data/v507_selfplay -name '*.epd' -type f | head -1)"
+          test -s "$EPD"
+          echo "V507_EPD=$EPD" >> "$GITHUB_ENV"
+          echo "teacher input: $EPD ($(wc -l < "$EPD") positions)"
+      - name: Stockfish disagreement and move teaching
+        run: |
+          python train/teacher.py \
+            --input "$V507_EPD" --output data/teaching/v507_teacher \
+            --limit 4000 --workers 2 --batch-size 64 --max-in-flight 4 \
+            --policy-sample-rate 0.35 --shallow-nodes 3000 --deep-nodes 12000 \
+            --gap-hard-cp 100 --search-interest 0.55 --deep-interest 1.05 \
+            --no-resume
+      - name: Explicit soft-policy plus ranking distillation
+        run: |
+          python train/teaching/train_policy_distill_nnu4.py \
+            --input data/teaching/v507_teacher \
+            --init-weights engine/c/zchezz_v506/nnue_weights.bin \
+            --output checkpoints/v507/policy_distill.pt \
+            --epochs 8 --batch-groups 64 --lr 0.000015 --weight-decay 0.0001 \
+            --temperature-cp 120 --value-weight 0.35 --rank-weight 0.15 \
+            --min-rank-margin-cp 20 --freeze-l1-epochs 2 --device cpu
+      - name: Materialize explicit-policy v5.07 candidate
+        run: |
+          rm -rf engine/c/zchezz_v507
+          cp -a engine/c/zchezz_v506 engine/c/zchezz_v507
+          rm -f engine/c/zchezz_v507/zchezz.exe engine/c/zchezz_v507/zchezz
+          python train/export_nnu4.py \
+            --checkpoint checkpoints/v507/policy_distill.pt \
+            --output engine/c/zchezz_v507/nnue_weights.bin
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v507/main.c')
+          s=p.read_text().replace('Zchezz v5.06 UCI engine','Zchezz v5.07 UCI engine',1)
+          s=s.replace('#define ENGINE_VERSION "5.06"','#define ENGINE_VERSION "5.07"',1)
+          p.write_text(s)
+          PY
+          python tools/check_nnue.py engine/c/zchezz_v507/nnue_weights.bin --profile v506
+          make -C engine/build ENGINE=v507 STATIC_FLAG= ARCH_FLAGS= native
+          OUT="$(printf 'uci\nisready\nquit\n' | engine/c/zchezz_v507/zchezz.exe 2>&1)"
+          printf '%s\n' "$OUT"
+          grep -q 'id name Zchezz 5.07' <<< "$OUT"
+          grep -q '^uciok$' <<< "$OUT"
+          grep -q '^readyok$' <<< "$OUT"
+      - name: Screen explicit-policy v5.07 vs v5.06 at 200 ms
+        run: |
+          python tests/_run_tournament_quick_core.py \
+            --engine-a engine/c/zchezz_v507/zchezz.exe --label-a v507-policy \
+            --engine-b engine/c/zchezz_v506/zchezz.exe --label-b v506 \
+            --threads 1 --movetime 200 --concurrency 2 --games 50 \
+            --max-plies 400 --no-pgn --no-epd --no-bin \
+            --results-dir tests/quick_results/v507policy-v506
+      - name: Screen explicit-policy v5.07 vs v3.28 at 200 ms
+        run: |
+          python tests/_run_tournament_quick_core.py \
+            --engine-a engine/c/zchezz_v507/zchezz.exe --label-a v507-policy \
+            --engine-b engine/c/zchezz_v328/zchezz.exe --label-b v328 \
+            --threads 1 --movetime 200 --concurrency 2 --games 50 \
+            --max-plies 400 --no-pgn --no-epd --no-bin \
+            --results-dir tests/quick_results/v507policy-v328
+      - name: Freeze explicit-policy candidate
+        if: success()
+        run: |
+          rm -f engine/c/zchezz_v507/zchezz.exe engine/c/zchezz_v507/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): explicit policy-distilled NNU4 network'
+          git push origin HEAD:exp/v507-policy-loss
