@@ -1,0 +1,150 @@
+name: v3.27 pre-pruning check diagnostic
+
+on:
+  push:
+    branches: [investigate/v327-preprune-checks]
+    paths:
+      - ".github/workflows/v327-preprune-check-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quiet-see-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build baseline and observe-only diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main v327-search-efficiency
+          git worktree add --detach /tmp/base origin/main
+          git worktree add --detach /tmp/diag origin/main
+          git show origin/v327-search-efficiency:tests/instrument_v327_quiet_see_checks.py > /tmp/diag/tests/instrument_v327_quiet_see_checks.py
+
+          make -C /tmp/base/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cd /tmp/diag
+          python tests/instrument_v327_quiet_see_checks.py
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+
+      - name: Verify fixed-depth benchmark parity and collect counters
+        shell: python
+        run: |
+          import re, subprocess
+          from pathlib import Path
+
+          base=Path('/tmp/base/engine/c/zchezz_v326/zchezz.exe')
+          diag=Path('/tmp/diag/engine/c/zchezz_v326/zchezz.exe')
+          def run(exe):
+              p=subprocess.run([str(exe),'bench','10'],cwd=exe.parent,text=True,
+                               stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=240)
+              if p.returncode:
+                  raise RuntimeError(p.stderr[-4000:])
+              return p.stdout,p.stderr
+          bo,be=run(base); do,de=run(diag)
+          # Diagnostic make/unmake must not alter benchmark search results.
+          def stable(text):
+              return [x for x in text.splitlines() if not re.search(r'(time|nps|Nodes/sec)',x,re.I)]
+          if stable(bo) != stable(do):
+              Path('/tmp/base.out').write_text(bo)
+              Path('/tmp/diag.out').write_text(do)
+              raise RuntimeError('observe-only instrumentation changed stable benchmark output')
+          m=re.search(r'\[QSEE_CHECK_DIAG\] pruned=(\d+) actual_check=(\d+) discovered_check=(\d+)',de)
+          if not m:
+              raise RuntimeError('diagnostic counter line missing')
+          pruned,actual,disc=map(int,m.groups())
+          print(f'bench10: qsee_pruned={pruned} actual_check={actual} discovered_check={disc}')
+          Path('/tmp/bench_counts.txt').write_text(f'{pruned} {actual} {disc}\n')
+
+      - name: Sweep pinned UHO positions at fixed depth
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/uho
+          curl -L --fail --retry 3 --retry-delay 2 \
+            "https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip" \
+            -o /tmp/uho/uho.zip
+          EPD_NAME="$(unzip -Z1 /tmp/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          unzip -p /tmp/uho/uho.zip "$EPD_NAME" > /tmp/uho/all.epd
+          cd /tmp/diag
+          python - <<'PY'
+          from pathlib import Path
+          import random, re, subprocess, threading, queue, time
+
+          lines=[]
+          for raw in Path('/tmp/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          rng=random.Random(327777)
+          rng.shuffle(lines)
+          fens=lines[7000:7060]
+          if len(fens)!=60: raise RuntimeError('missing UHO positions')
+
+          exe=Path('engine/c/zchezz_v326/zchezz.exe').resolve()
+          p=subprocess.Popen([str(exe)],cwd=exe.parent,text=True,bufsize=1,
+                             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+          err=[]
+          def drain_err():
+              for line in p.stderr: err.append(line.rstrip())
+          t=threading.Thread(target=drain_err,daemon=True); t.start()
+          def send(x): p.stdin.write(x+'\n'); p.stdin.flush()
+          def until(prefix,timeout=60):
+              end=time.time()+timeout
+              while time.time()<end:
+                  line=p.stdout.readline()
+                  if not line: raise RuntimeError('engine stdout closed')
+                  if line.startswith(prefix): return line.strip()
+              raise TimeoutError(prefix)
+          send('uci'); until('uciok')
+          send('setoption name Threads value 1')
+          send('setoption name Hash value 64')
+          send('isready'); until('readyok')
+          for fen in fens:
+              send('ucinewgame')
+              send('position fen '+fen)
+              send('go depth 8')
+              until('bestmove ',120)
+          send('quit'); p.wait(timeout=30); t.join(timeout=5)
+          if p.returncode: raise RuntimeError(f'engine rc={p.returncode}')
+          text='\n'.join(err)
+          ms=re.findall(r'\[QSEE_CHECK_DIAG\] pruned=(\d+) actual_check=(\d+) discovered_check=(\d+)',text)
+          if not ms: raise RuntimeError('diagnostic counter line missing after UHO sweep')
+          pruned,actual,disc=map(int,ms[-1])
+          print(f'uho60_d8: qsee_pruned={pruned} actual_check={actual} discovered_check={disc}')
+          Path('/tmp/uho_counts.txt').write_text(f'{pruned} {actual} {disc}\n')
+          PY
+
+      - name: Summarize correctness evidence
+        shell: python
+        run: |
+          from pathlib import Path
+          b=list(map(int,Path('/tmp/bench_counts.txt').read_text().split()))
+          u=list(map(int,Path('/tmp/uho_counts.txt').read_text().split()))
+          total=[b[i]+u[i] for i in range(3)]
+          text=(f'Quiet SEE candidates pruned: {total[0]}\n'
+                f'Pruned moves that actually give check: {total[1]}\n'
+                f'Of those, discovered checks: {total[2]}\n')
+          print(text)
+          Path('/tmp/preprune-summary.txt').write_text(text)
+          # A positive value proves a real search-correctness/selectivity defect.
+          if total[1] == 0:
+              print('No dynamic false-prune observed in this sample; do not call the hypothesis proven.')
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-preprune-check-diagnostic-${{ github.run_id }}
+          path: |
+            /tmp/preprune-summary.txt
+            /tmp/bench_counts.txt
+            /tmp/uho_counts.txt
