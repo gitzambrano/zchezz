@@ -2,9 +2,10 @@ name: v5.04 search promotion gate
 
 on:
   push:
-    branches: [v504-search-promote]
+    branches:
+      - v504-search-promote
     paths:
-      - ".github/workflows/v504-search-promotion.yml"
+      - .github/workflows/v504-search-promotion.yml
   workflow_dispatch:
 
 permissions:
@@ -12,7 +13,6 @@ permissions:
 
 jobs:
   screen:
-    name: shard ${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 100
     strategy:
@@ -25,166 +25,21 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Materialize v5.02, v5.03 and final v5.04
+      - name: Materialize candidates
         shell: bash
-        env:
-          SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           git fetch origin main v503-search-port
           git worktree add --detach /tmp/base origin/main
           git worktree add --detach /tmp/cand-legacy origin/v503-search-port
           git worktree add --detach /tmp/cand-final origin/v503-search-port
-
+          python3 "$GITHUB_WORKSPACE/tools/ci/v504_ci.py" patch --root /tmp/cand-final
           cd /tmp/cand-final
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def once(text, old, new, label):
-              n = text.count(old)
-              if n != 1:
-                  raise SystemExit(f"{label}: expected exactly 1 match, got {n}")
-              return text.replace(old, new, 1)
-
-          p = Path('engine/c/zchezz_v500/search.h')
-          s = p.read_text()
-          s = once(s,
-              '    size_t   size;\n    size_t   mask;\n',
-              '    size_t   size;\n    size_t   slots;\n',
-              'TTable size/mask fields')
-          s = once(s,
-              'void    tt_new_generation(TTable *tt);\n',
-              'void    tt_new_generation(TTable *tt);\nint     tt_resize_mb(TTable **tt, int mb);\n',
-              'tt_resize declaration')
-          p.write_text(s)
-
-          p = Path('engine/c/zchezz_v500/search.c')
-          s = p.read_text()
-          old = '''TTable *tt_create(size_t n_entries) {
-              TTable *tt = (TTable *)calloc(1, sizeof(TTable));
-              if (!tt) return NULL;
-              tt->e = (TTEntry *)calloc(n_entries, sizeof(TTEntry));
-              if (!tt->e) {
-                  tt_destroy(tt);
-                  return NULL;
-              }
-              tt->size = n_entries;
-              tt->mask = (n_entries / TT_BUCKETS) - 1;
-              tt->gen  = 0;
-              for (size_t i = 0; i < n_entries; i++) tt->e[i].eval = TT_EVAL_NONE;
-              return tt;
-          }
-          '''
-          new = '''static inline size_t tt_index(const TTable *tt, uint64_t hash) {
-          #if defined(__SIZEOF_INT128__)
-              return (size_t)(((__uint128_t)hash * (__uint128_t)tt->slots) >> 64);
-          #else
-              return (size_t)(hash % tt->slots);
-          #endif
-          }
-
-          TTable *tt_create(size_t n_entries) {
-              if (n_entries < TT_BUCKETS) n_entries = TT_BUCKETS;
-              n_entries -= n_entries % TT_BUCKETS;
-              TTable *tt = (TTable *)calloc(1, sizeof(TTable));
-              if (!tt) return NULL;
-              tt->e = (TTEntry *)calloc(n_entries, sizeof(TTEntry));
-              if (!tt->e) {
-                  tt_destroy(tt);
-                  return NULL;
-              }
-              tt->size  = n_entries;
-              tt->slots = n_entries / TT_BUCKETS;
-              tt->gen   = 0;
-              for (size_t i = 0; i < n_entries; i++) tt->e[i].eval = TT_EVAL_NONE;
-              return tt;
-          }
-
-          int tt_resize_mb(TTable **ptt, int mb) {
-              if (!ptt) return 0;
-              if (mb < 1) mb = 1;
-              if (mb > 1024) mb = 1024;
-              const size_t requested = (size_t)mb * 1024u * 1024u;
-              size_t n_entries = requested / sizeof(TTEntry);
-              n_entries -= n_entries % TT_BUCKETS;
-              if (n_entries < TT_BUCKETS) n_entries = TT_BUCKETS;
-              TTable *fresh = tt_create(n_entries);
-              if (!fresh) return 0;
-              TTable *old = *ptt;
-              *ptt = fresh;
-              tt_destroy(old);
-              const size_t actual = fresh->size * sizeof(TTEntry);
-              fprintf(stderr,
-                      "[TT] aos48: requested=%d MB actual=%.3f MB slots=%zu entries=%zu entry=%zuB bucket=%zuB\\n",
-                      mb, (double)actual / (1024.0 * 1024.0), fresh->slots,
-                      fresh->size, sizeof(TTEntry), sizeof(TTEntry) * (size_t)TT_BUCKETS);
-              return 1;
-          }
-          '''
-          s = once(s, old, new, 'tt_create block')
-          s = once(s,
-              '    int slot = (int)(hash & tt->mask);\n',
-              '    size_t slot = tt_index(tt, hash);\n',
-              'tt_store index')
-          s = once(s,
-              '    TTEntry *e = &tt->e[(size_t)(hash & tt->mask) * TT_BUCKETS];\n',
-              '    TTEntry *e = &tt->e[tt_index(tt, hash) * TT_BUCKETS];\n',
-              'tt_probe index')
-          old_prefetch = '&tt->e[((b->hash ^ ZR_side) & tt->mask) * TT_BUCKETS]'
-          n = s.count(old_prefetch)
-          if n < 1:
-              raise SystemExit(f'prefetch replacement: expected >=1 match, got {n}')
-          s = s.replace(old_prefetch, '&tt->e[tt_index(tt, b->hash ^ ZR_side) * TT_BUCKETS]')
-          if 'tt->mask' in s:
-              raise SystemExit('unconverted tt->mask use remains in search.c')
-          s = once(s,
-              '        g_tt = tt_create(TT_SIZE);\n',
-              '''#ifdef __EMSCRIPTEN__
-              g_tt = tt_create(TT_SIZE);
-          #else
-              if (!tt_resize_mb(&g_tt, 64)) {
-                  fprintf(stderr, "[TT] fatal: 64 MB default allocation failed (out of memory)\\n");
-                  exit(1);
-              }
-          #endif
-          ''',
-              'search_init allocation line')
-          p.write_text(s)
-
-          p = Path('engine/c/zchezz_v500/main.c')
-          s = p.read_text()
-          s = once(s, '#define ENGINE_VERSION "5.03"', '#define ENGINE_VERSION "5.04"', 'engine version')
-          s = once(s,
-              'static int    g_opt_threads    = 1;       /* number of search threads */\n',
-              'static int    g_opt_threads    = 1;       /* number of search threads */\nstatic int    g_opt_hash_mb    = 64;      /* TT size requested through UCI */\n',
-              'hash option state')
-          s = once(s,
-              '    if (sample > TT_SIZE) sample = TT_SIZE;\n',
-              '    if (g_tt && sample > (int)g_tt->size) sample = (int)g_tt->size;\n',
-              'hashfull size')
-          s = once(s,
-              '    /* Hash is accepted but currently ignored (fixed TT size) */\n',
-              '''    else if (strcasecmp(name, "Hash") == 0) {
-              int mb = atoi(value);
-              if (mb < 1) mb = 1;
-              if (mb > 1024) mb = 1024;
-              if (g_searching) {
-                  g_stop_flag = 1;
-                  pthread_join(g_search_thread, NULL);
-                  g_searching = 0;
-              }
-              if (tt_resize_mb(&g_tt, mb)) g_opt_hash_mb = mb;
-          }
-          ''',
-              'Hash handler')
-          p.write_text(s)
-          PY
-
           git diff --check
           grep -q '#define ENGINE_VERSION "5.04"' engine/c/zchezz_v500/main.c
           ! grep -q 'tt->mask' engine/c/zchezz_v500/search.c
 
-      - name: Build all engines and arena
+      - name: Build engines and arena
         shell: bash
         run: |
           set -euo pipefail
@@ -194,8 +49,8 @@ jobs:
           make -C /tmp/cand-final/engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS=-mavx2 TB_DEFS=-DNO_TABLEBASES native
           make -C /tmp/cand-final/engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS=-mavx2 arena
 
-      - name: Correctness and Hash compliance
-        if: matrix.shard == 0
+      - name: Correctness smoke
+        if: ${{ matrix.shard == 0 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -205,13 +60,12 @@ jobs:
           python3 tests/test_uci_extended.py --version v500
           python3 tools/check_nnue.py --profile v500
           EXE=engine/c/zchezz_v500/zchezz.exe
-          printf 'uci\nsetoption name Hash value 32\nisready\nsetoption name Hash value 64\nisready\nquit\n' \
-            | "$EXE" > /tmp/hash.out 2> /tmp/hash.err
+          printf 'uci\nsetoption name Hash value 32\nisready\nsetoption name Hash value 64\nisready\nquit\n' | "$EXE" > /tmp/hash.out 2> /tmp/hash.err
           grep -q 'id name Zchezz 5.04' /tmp/hash.out
           grep -Eq '\[TT\] aos48: requested=32 MB actual=32\.000 MB' /tmp/hash.err
           grep -Eq '\[TT\] aos48: requested=64 MB actual=64\.000 MB' /tmp/hash.err
 
-      - name: Prepare pinned paired UHO shard
+      - name: Prepare UHO openings
         shell: bash
         env:
           SHARD: ${{ matrix.shard }}
@@ -220,30 +74,12 @@ jobs:
           set -euo pipefail
           cd /tmp/cand-final
           mkdir -p artifacts/uho
-          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
-          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/uho/uho.zip
+          curl -L --fail --retry 3 --retry-delay 2 "https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip" -o artifacts/uho/uho.zip
           EPD_NAME="$(unzip -Z1 artifacts/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
           unzip -p artifacts/uho/uho.zip "$EPD_NAME" > artifacts/uho/all.epd
-          python3 - <<'PY'
-          from pathlib import Path
-          import os, random
-          shard=int(os.environ['SHARD'])
-          lines=[]
-          for raw in Path('artifacts/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
-              s=raw.strip()
-              if not s or s.startswith('#'): continue
-              p=s.split()
-              if len(p)>=4: lines.append(' '.join(p[:4]))
-          rng=random.Random(504326)
-          rng.shuffle(lines)
-          start=8000 + shard*32
-          chosen=lines[start:start+32]
-          if len(chosen)!=32:
-              raise RuntimeError(f'expected 32 openings, got {len(chosen)}')
-          Path('artifacts/uho/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
-          PY
+          python3 "$GITHUB_WORKSPACE/tools/ci/v504_ci.py" openings --all artifacts/uho/all.epd --out artifacts/uho/openings.epd --shard "$SHARD"
 
-      - name: Search-only v5.03 vs v5.02 legacy-TT match
+      - name: Search-only match versus v5.02
         shell: bash
         env:
           SHARD: ${{ matrix.shard }}
@@ -260,7 +96,7 @@ jobs:
             --tt-mb 64 --uci-timeout 15000 \
             --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
 
-      - name: Final v5.04 vs v3.26 fair-64MB match
+      - name: Final v5.04 match versus v3.26
         shell: bash
         env:
           SHARD: ${{ matrix.shard }}
@@ -284,81 +120,21 @@ jobs:
           path: /tmp/cand-final/artifacts/shard-${{ matrix.shard }}
 
   aggregate:
-    name: aggregate and gate
     runs-on: ubuntu-24.04
-    needs: [screen]
-    if: always() && needs.screen.result == 'success'
-    outputs:
-      promote: ${{ steps.gate.outputs.promote }}
+    needs: screen
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: v504-shard-*-*
           path: downloaded
           merge-multiple: false
-
-      - name: Aggregate candidate perspective
-        id: gate
+      - name: Aggregate results
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import json, math, os
-
-          totals={
-              'search_v502': [0,0,0],
-              'final_v326': [0,0,0],
-          }
-          files=list(Path('downloaded').glob('**/result.json'))
-          if len(files)!=8:
-              raise RuntimeError(f'expected 8 result files, got {len(files)}')
-          for f in files:
-              pair=json.loads(f.read_text())['pairings'][0]
-              # Arena JSON is first-player perspective. Candidate is second.
-              w,d,l=int(pair['l']),int(pair['d']),int(pair['w'])
-              key='search_v502' if 'search-v502' in str(f) else 'final_v326'
-              totals[key][0]+=w; totals[key][1]+=d; totals[key][2]+=l
-
-          def stats(v):
-              w,d,l=v; n=w+d+l
-              if n!=256: raise RuntimeError(f'expected 256 games, got {n}')
-              s=(w+0.5*d)/n
-              elo=400*math.log10(s/(1-s)) if 0<s<1 else (9999 if s==1 else -9999)
-              second=(w+0.25*d)/n
-              var=max(0.0,second-s*s)
-              se=math.sqrt(var/n)
-              deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0
-              ci=1.96*deriv*se
-              return {'w':w,'d':d,'l':l,'n':n,'score':s,'elo':elo,'ci95_half':ci}
-
-          search=stats(totals['search_v502'])
-          final=stats(totals['final_v326'])
-          # Pragmatic promotion rule requested by the maintainer:
-          # final candidate must at least tie v3.26 by point estimate; additionally
-          # either the isolated search delta or the direct v3.26 match must show
-          # >=51.5% to avoid promoting on a completely flat double tie.
-          promote = final['score'] >= 0.500 and (search['score'] >= 0.515 or final['score'] >= 0.515)
-          summary={'search_v502':search,'final_v326':final,'promote':promote,
-                   'gate':'v326 score >= 50.0% and (v502 search score >= 51.5% or v326 score >= 51.5%)'}
-          Path('summary.json').write_text(json.dumps(summary,indent=2)+'\n')
-          lines=[
-              '# v5.04 promotion screen','',
-              '256 games per pairing, 200 ms/move, Threads=1, serial games, paired UHO openings, no tablebases.','',
-              '| Match | Candidate W-D-L | Score | Elo | approx 95% half-width |',
-              '|---|---:|---:|---:|---:|',
-              f"| v5.03 search vs v5.02 (both legacy fixed TT) | {search['w']}-{search['d']}-{search['l']} | {100*search['score']:.2f}% | {search['elo']:+.1f} | ±{search['ci95_half']:.1f} |",
-              f"| final v5.04 vs v3.26 (both real 64 MB) | {final['w']}-{final['d']}-{final['l']} | {100*final['score']:.2f}% | {final['elo']:+.1f} | ±{final['ci95_half']:.1f} |",
-              '', f"Promotion gate: **{'PASS' if promote else 'FAIL'}**.",
-              '', 'The CI is reported for context only; it is not the promotion criterion.'
-          ]
-          Path('summary.md').write_text('\n'.join(lines)+'\n')
-          print(Path('summary.md').read_text())
-          with open(os.environ['GITHUB_OUTPUT'],'a') as o:
-              o.write(f"promote={'true' if promote else 'false'}\n")
-          PY
+          python3 tools/ci/v504_ci.py aggregate --downloaded downloaded --summary-json summary.json --summary-md summary.md
           cat summary.md >> "$GITHUB_STEP_SUMMARY"
-
       - uses: actions/upload-artifact@v4
         with:
           name: v504-promotion-summary-${{ github.run_id }}
@@ -367,195 +143,54 @@ jobs:
             summary.md
 
   promote:
-    name: promote v5.04 to main
     runs-on: ubuntu-24.04
-    needs: [aggregate]
-    if: needs.aggregate.outputs.promote == 'true'
+    needs: aggregate
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
-
       - uses: actions/download-artifact@v4
         with:
           name: v504-promotion-summary-${{ github.run_id }}
           path: gate
-
-      - name: Recheck live main and materialize final source
+      - name: Promote when gate passes
         shell: bash
         env:
           EXPECTED_BASE: 0a150d0ca91aad3a5d300e6789a74d1ebff292ef
         run: |
           set -euo pipefail
-          git fetch origin main v503-search-port
-          # Permit unrelated main work, but never overwrite concurrent v500 edits.
+          PROMOTE="$(python3 -c 'import json; print(str(json.load(open("gate/summary.json"))["promote"]).lower())')"
+          if [ "$PROMOTE" != "true" ]; then
+            echo 'v5.04 gate did not pass; main is unchanged.'
+            exit 0
+          fi
+
+          git fetch origin main v503-search-port v504-search-promote
           if ! git diff --quiet "$EXPECTED_BASE"..origin/main -- engine/c/zchezz_v500; then
-              echo 'main v500 changed since this experiment started; refusing autonomous promotion.' >&2
-              git diff --stat "$EXPECTED_BASE"..origin/main -- engine/c/zchezz_v500 >&2
-              exit 1
+            echo 'main v500 changed since the experiment started; refusing autonomous promotion.' >&2
+            git diff --stat "$EXPECTED_BASE"..origin/main -- engine/c/zchezz_v500 >&2
+            exit 1
           fi
           git reset --hard origin/main
-          git checkout origin/v503-search-port -- \
-            engine/c/zchezz_v500/main.c \
-            engine/c/zchezz_v500/search.c \
-            engine/c/zchezz_v500/search.h
+          git checkout origin/v503-search-port -- engine/c/zchezz_v500/main.c engine/c/zchezz_v500/search.c engine/c/zchezz_v500/search.h
+          git checkout origin/v504-search-promote -- tools/ci/v504_ci.py
+          python3 tools/ci/v504_ci.py patch --root .
+          python3 tools/ci/v504_ci.py release --summary gate/summary.json --out docs/v504-release.md
 
-          python3 - <<'PY'
-          from pathlib import Path
-
-          def once(text, old, new, label):
-              n=text.count(old)
-              if n!=1: raise SystemExit(f'{label}: expected 1 match, got {n}')
-              return text.replace(old,new,1)
-
-          p=Path('engine/c/zchezz_v500/search.h'); s=p.read_text()
-          s=once(s,'    size_t   size;\n    size_t   mask;\n','    size_t   size;\n    size_t   slots;\n','TTable fields')
-          s=once(s,'void    tt_new_generation(TTable *tt);\n','void    tt_new_generation(TTable *tt);\nint     tt_resize_mb(TTable **tt, int mb);\n','resize decl')
-          p.write_text(s)
-
-          p=Path('engine/c/zchezz_v500/search.c'); s=p.read_text()
-          old='''TTable *tt_create(size_t n_entries) {
-              TTable *tt = (TTable *)calloc(1, sizeof(TTable));
-              if (!tt) return NULL;
-              tt->e = (TTEntry *)calloc(n_entries, sizeof(TTEntry));
-              if (!tt->e) {
-                  tt_destroy(tt);
-                  return NULL;
-              }
-              tt->size = n_entries;
-              tt->mask = (n_entries / TT_BUCKETS) - 1;
-              tt->gen  = 0;
-              for (size_t i = 0; i < n_entries; i++) tt->e[i].eval = TT_EVAL_NONE;
-              return tt;
-          }
-          '''
-          new='''static inline size_t tt_index(const TTable *tt, uint64_t hash) {
-          #if defined(__SIZEOF_INT128__)
-              return (size_t)(((__uint128_t)hash * (__uint128_t)tt->slots) >> 64);
-          #else
-              return (size_t)(hash % tt->slots);
-          #endif
-          }
-
-          TTable *tt_create(size_t n_entries) {
-              if (n_entries < TT_BUCKETS) n_entries = TT_BUCKETS;
-              n_entries -= n_entries % TT_BUCKETS;
-              TTable *tt = (TTable *)calloc(1, sizeof(TTable));
-              if (!tt) return NULL;
-              tt->e = (TTEntry *)calloc(n_entries, sizeof(TTEntry));
-              if (!tt->e) { tt_destroy(tt); return NULL; }
-              tt->size=n_entries; tt->slots=n_entries/TT_BUCKETS; tt->gen=0;
-              for (size_t i=0;i<n_entries;i++) tt->e[i].eval=TT_EVAL_NONE;
-              return tt;
-          }
-
-          int tt_resize_mb(TTable **ptt, int mb) {
-              if (!ptt) return 0;
-              if (mb<1) mb=1; if (mb>1024) mb=1024;
-              const size_t requested=(size_t)mb*1024u*1024u;
-              size_t n_entries=requested/sizeof(TTEntry);
-              n_entries-=n_entries%TT_BUCKETS;
-              if (n_entries<TT_BUCKETS) n_entries=TT_BUCKETS;
-              TTable *fresh=tt_create(n_entries);
-              if (!fresh) return 0;
-              TTable *old=*ptt; *ptt=fresh; tt_destroy(old);
-              const size_t actual=fresh->size*sizeof(TTEntry);
-              fprintf(stderr,"[TT] aos48: requested=%d MB actual=%.3f MB slots=%zu entries=%zu entry=%zuB bucket=%zuB\\n",
-                      mb,(double)actual/(1024.0*1024.0),fresh->slots,fresh->size,sizeof(TTEntry),sizeof(TTEntry)*(size_t)TT_BUCKETS);
-              return 1;
-          }
-          '''
-          s=once(s,old,new,'tt_create block')
-          s=once(s,'    int slot = (int)(hash & tt->mask);\n','    size_t slot = tt_index(tt, hash);\n','store index')
-          s=once(s,'    TTEntry *e = &tt->e[(size_t)(hash & tt->mask) * TT_BUCKETS];\n','    TTEntry *e = &tt->e[tt_index(tt, hash) * TT_BUCKETS];\n','probe index')
-          oldp='&tt->e[((b->hash ^ ZR_side) & tt->mask) * TT_BUCKETS]'
-          if s.count(oldp)<1: raise SystemExit('prefetch pattern missing')
-          s=s.replace(oldp,'&tt->e[tt_index(tt, b->hash ^ ZR_side) * TT_BUCKETS]')
-          if 'tt->mask' in s: raise SystemExit('unconverted mask use')
-          s=once(s,'        g_tt = tt_create(TT_SIZE);\n','''#ifdef __EMSCRIPTEN__
-              g_tt = tt_create(TT_SIZE);
-          #else
-              if (!tt_resize_mb(&g_tt, 64)) {
-                  fprintf(stderr, "[TT] fatal: 64 MB default allocation failed (out of memory)\\n");
-                  exit(1);
-              }
-          #endif
-          ''','default TT allocation')
-          p.write_text(s)
-
-          p=Path('engine/c/zchezz_v500/main.c'); s=p.read_text()
-          s=once(s,'#define ENGINE_VERSION "5.03"','#define ENGINE_VERSION "5.04"','version')
-          s=once(s,'static int    g_opt_threads    = 1;       /* number of search threads */\n','static int    g_opt_threads    = 1;       /* number of search threads */\nstatic int    g_opt_hash_mb    = 64;      /* TT size requested through UCI */\n','hash state')
-          s=once(s,'    if (sample > TT_SIZE) sample = TT_SIZE;\n','    if (g_tt && sample > (int)g_tt->size) sample = (int)g_tt->size;\n','hashfull')
-          s=once(s,'    /* Hash is accepted but currently ignored (fixed TT size) */\n','''    else if (strcasecmp(name, "Hash") == 0) {
-              int mb = atoi(value);
-              if (mb < 1) mb = 1;
-              if (mb > 1024) mb = 1024;
-              if (g_searching) {
-                  g_stop_flag = 1;
-                  pthread_join(g_search_thread, NULL);
-                  g_searching = 0;
-              }
-              if (tt_resize_mb(&g_tt, mb)) g_opt_hash_mb = mb;
-          }
-          ''','Hash handler')
-          p.write_text(s)
-          PY
-
-          python3 - <<'PY'
-          from pathlib import Path
-          import json
-          x=json.loads(Path('gate/summary.json').read_text())
-          a=x['search_v502']; b=x['final_v326']
-          text=f'''# Zchezz v5.04
-
-v5.04 promotes the v3.26-proven search-selectivity port onto the v5 NNU4 line and fixes UCI `Hash` so the v500 profile now honors the requested transposition-table size.
-
-## Search changes
-
-Relative to v5.02, the promoted search removes the blanket in-check depth increment, uses quiet history pruning at `-64 * depth`, and retunes LMR history feedback to `-512 / -1024 / +512`. The NNUE weights remain exactly the v5.02 weights.
-
-## Hash compliance
-
-The previous v5 UCI advertised `Hash` but ignored it and always allocated its fixed table. v5.04 resizes the existing two-entry AoS table to the requested memory budget and uses unbiased indexing for non-power-of-two slot counts. Default UCI Hash is 64 MB.
-
-## Promotion evidence
-
-All games used 200 ms/move, Threads=1, serial execution, paired UHO openings with reversed colors, maximum 400 plies, and tablebases disabled. Confidence intervals are reported for context only; the maintainer explicitly chose a pragmatic point-estimate promotion rule rather than requiring the 95% interval to exclude zero.
-
-- Search-only v5.03 vs v5.02 under the same legacy fixed-TT behavior: **{a['w']}-{a['d']}-{a['l']}**, score **{100*a['score']:.2f}%**, estimated **{a['elo']:+.1f} Elo** (approx. 95% half-width {a['ci95_half']:.1f}).
-- Final v5.04 vs v3.26 with both engines actually using 64 MB Hash: **{b['w']}-{b['d']}-{b['l']}**, score **{100*b['score']:.2f}%**, estimated **{b['elo']:+.1f} Elo** (approx. 95% half-width {b['ci95_half']:.1f}).
-
-The promotion gate required the final v5.04 point estimate to be at least 50.0% against v3.26, plus at least one of the two comparisons to reach 51.5%. The gate passed.
-
-v5.04 becomes the promoted **v5-family baseline** in `main`. The repository's bare-build default remains `v326`; changing the default profile is a separate decision.
-'''
-          Path('docs/v504-release.md').write_text(text)
-          PY
-
-      - name: Final regression gates
-        shell: bash
-        run: |
-          set -euo pipefail
           make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS=-mavx2 TB_DEFS=-DNO_TABLEBASES clean native
           make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS=-mavx2 TB_DEFS=-DNO_TABLEBASES test-c
           python3 tests/test_perft.py --version v500
           python3 tests/test_uci_extended.py --version v500
           python3 tools/check_nnue.py --profile v500
-          printf 'uci\nsetoption name Hash value 32\nisready\nsetoption name Hash value 64\nisready\nquit\n' \
-            | engine/c/zchezz_v500/zchezz.exe > /tmp/final.out 2> /tmp/final.err
+          printf 'uci\nsetoption name Hash value 32\nisready\nsetoption name Hash value 64\nisready\nquit\n' | engine/c/zchezz_v500/zchezz.exe > /tmp/final.out 2> /tmp/final.err
           grep -q 'id name Zchezz 5.04' /tmp/final.out
           grep -Eq '\[TT\] aos48: requested=32 MB actual=32\.000 MB' /tmp/final.err
           grep -Eq '\[TT\] aos48: requested=64 MB actual=64\.000 MB' /tmp/final.err
           git diff --check
 
-      - name: Commit promotion to live main
-        shell: bash
-        run: |
-          set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add engine/c/zchezz_v500/main.c engine/c/zchezz_v500/search.c engine/c/zchezz_v500/search.h docs/v504-release.md
+          git add engine/c/zchezz_v500/main.c engine/c/zchezz_v500/search.c engine/c/zchezz_v500/search.h docs/v504-release.md tools/ci/v504_ci.py
           git commit -m 'release(v504): promote search port and Hash compliance'
           git push origin HEAD:main
