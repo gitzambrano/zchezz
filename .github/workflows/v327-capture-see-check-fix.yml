@@ -1,0 +1,144 @@
+name: v3.27 capture SEE checking-move fix
+
+on:
+  push:
+    branches: [fix/v327-capture-see-checks]
+    paths: [".github/workflows/v327-capture-see-check-fix.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-freeze-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize minimal fix from promoted v3.26
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main v327-search-efficiency
+          git worktree add --detach /tmp/base origin/main
+          git worktree add --detach /tmp/cand origin/main
+          cd /tmp/cand
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v326/search.c')
+          s=p.read_text(encoding='utf-8')
+          marker='''/* Cheap direct-check test ported from v4.02.  It intentionally detects\n * direct checks only; discovered checks remain outside this cheap prune gate. */\n'''
+          helper=r'''/* Exact pre-move check classifier used only by capture SEE pruning.\n * It preserves the existing near-king exemption and additionally prevents\n * distant checking captures (including discovered and en-passant checks)\n * from being discarded before board_make(). */\nstatic inline int capture_gives_check_pre(const Board *bd, const Move *m) {\n    int from = m->from, to = m->to;\n    int ksq = bd->turn == COL_W ? bd->bk : bd->wk;\n    uint64_t from_bb = (uint64_t)1 << from;\n    uint64_t to_bb   = (uint64_t)1 << to;\n    uint64_t occ_after = (bd->occ & ~from_bb) | to_bb;\n    if (m->epc) {\n        int ep_sq = bd->turn == COL_W ? to + 8 : to - 8;\n        occ_after &= ~((uint64_t)1 << ep_sq);\n    }\n\n    int moved_type = m->prom ? m->prom : PC_TYPE(bd->b[from]);\n    int direct = 0;\n    switch (moved_type) {\n        case 1:\n            direct = (int)(((bd->turn == COL_W ? wpawn_attacks_bb(to_bb)\n                                                  : bpawn_attacks_bb(to_bb)) >> ksq) & 1);\n            break;\n        case 2: direct = (int)((NATK[to] >> ksq) & 1); break;\n        case 3: direct = (int)((bish_attacks(to, occ_after) >> ksq) & 1); break;\n        case 4: direct = (int)((rook_attacks(to, occ_after) >> ksq) & 1); break;\n        case 5:\n            direct = (int)(((rook_attacks(to, occ_after) |\n                              bish_attacks(to, occ_after)) >> ksq) & 1);\n            break;\n        case 6: direct = (int)((KATK[to] >> ksq) & 1); break;\n        default: break;\n    }\n    if (direct) return 1;\n\n    /* A capture on `to` remains occupied after the move, so normal captures\n     * can only reveal a friendly slider by vacating `from`.  En-passant also\n     * removes a third occupancy square, already reflected in occ_after. */\n    int base = bd->turn == COL_W ? 0 : 6;\n    uint64_t rq = (bd->bb[base + 3] | bd->bb[base + 4]) & ~from_bb;\n    uint64_t bq = (bd->bb[base + 2] | bd->bb[base + 4]) & ~from_bb;\n    if (rook_attacks(ksq, occ_after) & rq) return 1;\n    if (bish_attacks(ksq, occ_after) & bq) return 1;\n    return 0;\n}\n\n'''
+          if s.count(marker) != 1:
+              raise RuntimeError(f'helper insertion marker count={s.count(marker)}')
+          s=s.replace(marker,helper+marker,1)
+          old='''                    if (sv < see_thresh) {\n                        int tr=mto>>3,tc=mto&7,kr=ok_sq>>3,kc=ok_sq&7;\n                        int dr=tr-kr;if(dr<0)dr=-dr;\n                        int dc=tc-kc;if(dc<0)dc=-dc;\n                        if ((dr>dc?dr:dc) > 1) continue;\n                    }'''
+          new='''                    if (sv < see_thresh) {\n                        int tr=mto>>3,tc=mto&7,kr=ok_sq>>3,kc=ok_sq&7;\n                        int dr=tr-kr;if(dr<0)dr=-dr;\n                        int dc=tc-kc;if(dc<0)dc=-dc;\n                        if ((dr>dc?dr:dc) > 1 && !capture_gives_check_pre(b, m)) continue;\n                    }'''
+          n=s.count(old)
+          if n != 2:
+              raise RuntimeError(f'capture SEE guards expected 2, found {n}')
+          s=s.replace(old,new)
+          p.write_text(s,encoding='utf-8')
+          PY
+          git diff --check
+          test "$(grep -c 'capture_gives_check_pre(b, m)' engine/c/zchezz_v326/search.c)" -eq 2
+          echo '### Source diff' >> "$GITHUB_STEP_SUMMARY"
+          echo '```diff' >> "$GITHUB_STEP_SUMMARY"
+          git diff -- engine/c/zchezz_v326/search.c >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          git show origin/v327-search-efficiency:tests/bench_v327_candidate_structure.py > tests/bench_v327_candidate_structure.py
+
+          make -C /tmp/base/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          make -C /tmp/cand/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp /tmp/base/engine/c/zchezz_v326/zchezz.exe /tmp/cand/engine/c/zchezz_v326/zchezz_baseline.exe
+          cp /tmp/cand/engine/c/zchezz_v326/zchezz.exe /tmp/cand/engine/c/zchezz_v326/zchezz_candidate.exe
+          make -C /tmp/cand/engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+
+      - name: Standard correctness suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+
+      - name: Structural fixed-depth screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          OUT=artifacts/capture-see-check-structure
+          PYTHONPATH=tests python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare pinned paired UHO block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          mkdir -p artifacts/uho
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/uho/uho.zip
+          EPD_NAME="$(unzip -Z1 artifacts/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          unzip -p artifacts/uho/uho.zip "$EPD_NAME" > artifacts/uho/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          rng=random.Random(327779)
+          rng.shuffle(lines)
+          chosen=lines[7200:7250]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/uho/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+
+      - name: 100-game serial antithetic H2H at 200 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          OUT=artifacts/capture-see-check-h2h
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)" \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/uho/openings.epd --seed 327779 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Freeze tested source-only fix branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          git config user.name 'Gustavo Zambrano'
+          git config user.email 'gustavozambrano@gmail.com'
+          git add engine/c/zchezz_v326/search.c
+          git commit -m 'fix(v327): preserve checking captures from SEE pruning'
+          git push --force-with-lease origin HEAD:fix/v327-capture-see-checks
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-capture-see-check-fix-${{ github.run_id }}
+          path: |
+            /tmp/cand/artifacts/capture-see-check-structure
+            /tmp/cand/artifacts/capture-see-check-h2h
