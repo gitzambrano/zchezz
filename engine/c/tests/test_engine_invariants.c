@@ -148,7 +148,7 @@ static void test_nnue_feature_contracts(void) {
 #ifdef NN_FEAT_IN
     /* NNU4 / HalfKP-4Bucket contracts. */
     CHECK(NN_FEAT_IN == 2560, "NNU4 feature dimension changed");
-    CHECK(NN_L1_OUT == 512 && NN_L2_IN == 1024 && NN_L2_OUT == 32,
+    CHECK(NN_L1_OUT == 48 && NN_L2_IN == 96 && NN_L2_OUT == 20,
           "NNU4 layer dimensions changed");
     CHECK(nnue_feature_index(WP, 48, 1, 0) == 8,
           "white-POV WP a2 feature index changed");
