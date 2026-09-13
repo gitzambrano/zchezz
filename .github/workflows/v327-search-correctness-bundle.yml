@@ -1,0 +1,334 @@
+name: v3.27 search correctness bundle
+
+on:
+  push:
+    branches: ["fix/v327-search-correctness-bundle"]
+    paths:
+      - ".github/workflows/v327-search-correctness-bundle.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-freeze-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize combined correctness fix from promoted v3.26
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main v327-search-efficiency
+          git worktree add --detach /tmp/base origin/main
+          git worktree add --detach /tmp/fix "$GITHUB_SHA"
+          cd /tmp/fix
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('engine/c/zchezz_v326/search.c')
+          s = p.read_text(encoding='utf-8')
+
+          old_helper = r'''/* Cheap direct-check test ported from v4.02.  It intentionally detects
+           * direct checks only; discovered checks remain outside this cheap prune gate. */
+          static inline int quiet_direct_check(const Board *bd, int from, int to) {
+              int ksq = bd->turn == COL_W ? bd->bk : bd->wk;
+              uint64_t occ = bd->occ & ~((uint64_t)1 << from);
+              switch (PC_TYPE(bd->b[from])) {
+                  case 1: return (bd->turn == COL_W ? wpawn_attacks_bb((uint64_t)1 << to)
+                                                    : bpawn_attacks_bb((uint64_t)1 << to)) >> ksq & 1;
+                  case 2: return (NATK[to] >> ksq) & 1;
+                  case 3: return (bish_attacks(to, occ) >> ksq) & 1;
+                  case 4: case 5:
+                      return ((rook_attacks(to, occ) | bish_attacks(to, occ)) >> ksq) & 1;
+                  default: return 0;
+              }
+          }
+          '''
+
+          new_helper = r'''/* Exact pre-move check guard for ordinary non-capturing moves.
+           * Detect both direct checks and discovered slider checks created by
+           * vacating the origin square.  Used only to keep checking moves out
+           * of quiet SEE pruning, before board_make() is available. */
+          static inline int quiet_gives_check(const Board *bd, int from, int to) {
+              int ksq = bd->turn == COL_W ? bd->bk : bd->wk;
+              uint64_t from_bb = (uint64_t)1 << from;
+              uint64_t to_bb   = (uint64_t)1 << to;
+              uint64_t occ_after = (bd->occ & ~from_bb) | to_bb;
+              int direct = 0;
+              switch (PC_TYPE(bd->b[from])) {
+                  case 1:
+                      direct = (int)(((bd->turn == COL_W ? wpawn_attacks_bb(to_bb)
+                                                            : bpawn_attacks_bb(to_bb)) >> ksq) & 1);
+                      break;
+                  case 2:
+                      direct = (int)((NATK[to] >> ksq) & 1);
+                      break;
+                  case 3:
+                      direct = (int)((bish_attacks(to, occ_after) >> ksq) & 1);
+                      break;
+                  case 4:
+                      direct = (int)((rook_attacks(to, occ_after) >> ksq) & 1);
+                      break;
+                  case 5:
+                      direct = (int)(((rook_attacks(to, occ_after) |
+                                        bish_attacks(to, occ_after)) >> ksq) & 1);
+                      break;
+                  default:
+                      break;
+              }
+              if (direct) return 1;
+
+              /* The moved piece still exists in bd->bb[] at `from`; remove it
+               * when testing whether another friendly slider attacks the king
+               * in the post-move occupancy.  The moved slider's direct check
+               * was handled above from its destination square. */
+              int base = bd->turn == COL_W ? 0 : 6;
+              uint64_t rq = (bd->bb[base + 3] | bd->bb[base + 4]) & ~from_bb;
+              uint64_t bq = (bd->bb[base + 2] | bd->bb[base + 4]) & ~from_bb;
+              if (rook_attacks(ksq, occ_after) & rq) return 1;
+              if (bish_attacks(ksq, occ_after) & bq) return 1;
+              return 0;
+          }
+          '''
+
+          if s.count(old_helper) != 1:
+              raise RuntimeError(f'expected one quiet_direct_check helper, found {s.count(old_helper)}')
+          s = s.replace(old_helper, new_helper, 1)
+
+          old_gate = r'''                if (!in_check && !is_pv && legal_count > 0 && depth <= 4 &&
+                              !is_killer &&
+                              !(cur_prev_ft >= 0 && ss->counter_move[cur_prev_ft] == (mfr*64+mto)) &&
+                              !quiet_direct_check(b, mfr, mto)) {
+          '''
+          new_gate = r'''                if (!in_check && !is_pv && is_quiet && legal_count > 0 && depth <= 4 &&
+                              !is_killer &&
+                              !(cur_prev_ft >= 0 && ss->counter_move[cur_prev_ft] == (mfr*64+mto)) &&
+                              !quiet_gives_check(b, mfr, mto)) {
+          '''
+          if s.count(old_gate) != 1:
+              raise RuntimeError(f'expected one quiet SEE gate, found {s.count(old_gate)}')
+          s = s.replace(old_gate, new_gate, 1)
+
+          old_gc = r'''                int gives_check = 0;
+                          { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
+                            int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
+                            int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
+                            if (gpt>=3||gpt==2||m->prom||(gdr>gdc?gdr:gdc)<=2)
+                                gives_check = board_in_check(b);
+                          }
+          '''
+          new_gc = r'''                int gives_check = 0;
+                          { uint8_t gpt=b->b[m->to]&7,gksq=b->turn==COL_W?b->wk:b->bk;
+                            int gdr=((m->to>>3)-(gksq>>3)); if(gdr<0)gdr=-gdr;
+                            int gdc=((m->to&7)-(gksq&7));   if(gdc<0)gdc=-gdc;
+                            int pawn_discovery = 0;
+                            if (gpt == 1) {
+                                int gfr=m->from>>3, gfc=m->from&7, gkr=gksq>>3, gkc=gksq&7;
+                                int gfdr=gfr-gkr; if(gfdr<0)gfdr=-gfdr;
+                                int gfdc=gfc-gkc; if(gfdc<0)gfdc=-gfdc;
+                                pawn_discovery = (gfr==gkr) || (gfc==gkc) || (gfdr==gfdc);
+                            }
+                            if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)
+                                gives_check = board_in_check(b);
+                          }
+          '''
+          n = s.count(old_gc)
+          if n != 4:
+              raise RuntimeError(f'expected four gives_check fast paths, found {n}')
+          s = s.replace(old_gc, new_gc)
+
+          # Documentation-only correction: effective v3.26 IIR threshold is 3.
+          old_iir_comment = '     *   depth >= 4, not in check, reduced depth still >= 2 */'
+          new_iir_comment = '     *   depth >= 3, not in check, reduced depth still >= 2 */'
+          if s.count(old_iir_comment) != 1:
+              raise RuntimeError('expected one stale IIR comment')
+          s = s.replace(old_iir_comment, new_iir_comment, 1)
+
+          p.write_text(s, encoding='utf-8')
+          PY
+
+          git diff --check
+          echo '### Combined correctness source diff' >> "$GITHUB_STEP_SUMMARY"
+          echo '```diff' >> "$GITHUB_STEP_SUMMARY"
+          git diff -- engine/c/zchezz_v326/search.c >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('engine/c/zchezz_v326/search.c').read_text(encoding='utf-8')
+          assert 'quiet_direct_check(' not in s
+          assert s.count('quiet_gives_check(') == 2
+          assert '&& is_quiet && legal_count > 0 && depth <= 4' in s
+          assert 'case 4:\n            direct = (int)((rook_attacks(to, occ_after) >> ksq) & 1);' in s
+          assert s.count('||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)') == 4
+          assert 'depth >= 3, not in check, reduced depth still >= 2' in s
+          print('source invariants: OK')
+          PY
+
+          git show origin/v327-search-efficiency:tests/bench_v327_candidate_structure.py > tests/bench_v327_candidate_structure.py
+
+      - name: Unit-test exact quiet-check helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('engine/c/zchezz_v326/search.c').read_text(encoding='utf-8')
+          m=re.search(r'static inline int quiet_gives_check\(const Board \*bd, int from, int to\) \{.*?\n\}', s, re.S)
+          if not m: raise RuntimeError('quiet_gives_check helper not found')
+          helper=m.group(0)
+          test=f'''#include <stdio.h>\n#include <stdlib.h>\n#include "board.h"\n\n{helper}\n\nstatic void check_case(const char *fen, const char *uci, int expected) {{\n    Board b = {{0}};\n    board_bind_undo_global(&b);\n    board_bind_nnue_global(&b);\n    if (!board_load_fen(&b, fen)) {{ fprintf(stderr, "bad fen: %s\\n", fen); exit(2); }}\n    Move m = {{0}};\n    if (!move_from_uci(&b, uci, &m)) {{ fprintf(stderr, "bad move: %s\\n", uci); exit(3); }}\n    int got = quiet_gives_check(&b, m.from, m.to);\n    if (got != expected) {{ fprintf(stderr, "%s expected %d got %d\\n", uci, expected, got); exit(4); }}\n}}\n\nint main(void) {{\n    board_init();\n    /* Pure discovered rook check: bishop vacates the e-file. */\n    check_case("4k3/8/8/8/8/8/4B3/K3R3 w - - 0 1", "e2f3", 1);\n    /* Pure discovered rook check: knight vacates the e-file. */\n    check_case("4k3/8/8/8/8/8/4N3/K3R3 w - - 0 1", "e2c3", 1);\n    /* Direct pawn check after a quiet push. */\n    check_case("4k3/8/3P4/8/8/8/8/K7 w - - 0 1", "d6d7", 1);\n    /* Regression: rook on a diagonal to the king is NOT a direct check. */\n    check_case("4k3/8/8/8/1R6/8/8/K7 w - - 0 1", "b4b5", 0);\n    /* Genuine rook line check remains detected. */\n    check_case("4k3/8/8/8/1R6/8/8/K7 w - - 0 1", "b4e4", 1);\n    puts("quiet_gives_check regression cases: OK");\n    return 0;\n}}\n'''
+          Path('/tmp/test_quiet_check.c').write_text(test,encoding='utf-8')
+          PY
+          gcc -O2 -D_GNU_SOURCE -std=c11 -Iengine/c/zchezz_v326 \
+            -o /tmp/test_quiet_check /tmp/test_quiet_check.c \
+            engine/c/zchezz_v326/board.c engine/c/zchezz_v326/nnue.c -lm
+          /tmp/test_quiet_check
+
+      - name: Build and standard correctness suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C /tmp/base/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          make -C /tmp/fix/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cd /tmp/fix
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+
+      - name: Prove pawn and en-passant discovered-check paths dynamically
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          cp engine/c/zchezz_v326/search.c /tmp/search.fixed.c
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('engine/c/zchezz_v326/search.c')
+          s=p.read_text(encoding='utf-8')
+          pat=re.compile(r'if \(gpt>=3\|\|gpt==2\|\|m->prom\|\|m->epc\|\|\(gdr>gdc\?gdr:gdc\)<=2\|\|pawn_discovery\)\s*\n\s*gives_check = board_in_check\(b\);')
+          body='''if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery) {\n                                int exact_gc = board_in_check(b);\n                                if ((pawn_discovery || m->epc) && exact_gc)\n                                    fprintf(stderr, "[GCHECK_BUNDLE] pawn=%d ep=%d exact=1\\n", pawn_discovery, m->epc ? 1 : 0);\n                                gives_check = exact_gc;\n                            }'''
+          s,n=pat.subn(body,s)
+          if n != 4: raise RuntimeError(f'expected four post-move check blocks, found {n}')
+          p.write_text(s,encoding='utf-8')
+          PY
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          printf 'uci\nisready\nposition fen 4k3/8/8/3n4/4P3/8/8/K3R3 w - - 0 1\ngo depth 6\nquit\n' | engine/c/zchezz_v326/zchezz.exe >/tmp/pawn.out 2>/tmp/pawn.err
+          printf 'uci\nisready\nposition fen 7k/8/8/3Pp3/8/8/8/B6K w - e6 0 1\ngo depth 6\nquit\n' | engine/c/zchezz_v326/zchezz.exe >/tmp/ep.out 2>/tmp/ep.err
+          grep -q '\[GCHECK_BUNDLE\].*pawn=1.*exact=1' /tmp/pawn.err
+          grep -q '\[GCHECK_BUNDLE\].*ep=1.*exact=1' /tmp/ep.err
+          cp /tmp/search.fixed.c engine/c/zchezz_v326/search.c
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+
+      - name: Structural fixed-depth regression screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/base/engine/c/zchezz_v326/zchezz.exe /tmp/fix/engine/c/zchezz_v326/zchezz_baseline.exe
+          cp /tmp/fix/engine/c/zchezz_v326/zchezz.exe /tmp/fix/engine/c/zchezz_v326/zchezz_candidate.exe
+          cd /tmp/fix
+          OUT=artifacts/v327-correctness-bundle-structure
+          PYTHONPATH=tests python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare pinned paired UHO block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          mkdir -p artifacts/uho
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/uho/uho.zip
+          EPD_NAME="$(unzip -Z1 artifacts/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          unzip -p artifacts/uho/uho.zip "$EPD_NAME" > artifacts/uho/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              q=s.split()
+              if len(q)>=4: lines.append(' '.join(q[:4]))
+          rng=random.Random(327707)
+          rng.shuffle(lines)
+          chosen=lines[7000:7050]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/uho/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+
+      - name: 100-game serial H2H at 200 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          OUT=artifacts/v327-correctness-bundle-h2h
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)" \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/uho/openings.epd --seed 327707 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          python - <<'PY'
+          from pathlib import Path
+          import json, math
+          p=json.loads(Path('artifacts/v327-correctness-bundle-h2h/result.json').read_text())['pairings'][0]
+          # Arena pairing is baseline first, candidate second.
+          w,d,l=int(p['l']),int(p['d']),int(p['w'])
+          n=w+d+l
+          s=(w+0.5*d)/n
+          elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
+          second=(w+0.25*d)/n
+          var=max(0.0,second-s*s)
+          se=math.sqrt(var/n)
+          deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0
+          ci=1.96*deriv*se
+          text=(f'Candidate W-D-L: {w}-{d}-{l}\n'
+                f'Score: {100*s:.2f}%\n'
+                f'Elo: {elo:+.1f}\n'
+                f'95% CI: ±{ci:.1f}\n')
+          Path('artifacts/v327-correctness-bundle-h2h/summary.txt').write_text(text)
+          print(text)
+          PY
+          cat "$OUT/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Freeze tested source on branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add engine/c/zchezz_v326/search.c
+          git diff --cached --quiet && { echo "No source diff to freeze"; exit 1; }
+          git commit -m "fix(v327): correct quiet and discovered check classification"
+          git push --force-with-lease=refs/heads/fix/v327-search-correctness-bundle:${GITHUB_SHA} \
+            origin HEAD:refs/heads/fix/v327-search-correctness-bundle
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-search-correctness-bundle-${{ github.run_id }}
+          path: |
+            /tmp/fix/artifacts/v327-correctness-bundle-structure
+            /tmp/fix/artifacts/v327-correctness-bundle-h2h
