@@ -1,7 +1,5 @@
 name: v507 baseline
 on:
-  push:
-    branches: [exp/v507-policy-teacher]
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
