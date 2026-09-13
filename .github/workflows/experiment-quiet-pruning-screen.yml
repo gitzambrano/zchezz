@@ -1,0 +1,221 @@
+name: Experimental quiet-pruning screen
+
+on:
+  push:
+    branches:
+      - experiment/quiet-pruning-screen
+    paths:
+      - ".github/workflows/experiment-quiet-pruning-screen.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    name: quiet pruning ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        variant: [qsee_d3, qsee_m80, hp_m96, lmp_75pct]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize isolated candidate from promoted v3.26
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          git fetch origin main v327-search-efficiency
+          git worktree add --detach /tmp/base origin/main
+          git worktree add --detach /tmp/cand origin/main
+          cd /tmp/cand
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          variant = os.environ['VARIANT']
+          p = Path('engine/c/zchezz_v326/search.c')
+          s = p.read_text(encoding='utf-8')
+
+          def replace_once(old: str, new: str) -> None:
+              global s
+              n = s.count(old)
+              if n != 1:
+                  raise RuntimeError(f'{variant}: expected one match, found {n}: {old!r}')
+              s = s.replace(old, new, 1)
+
+          if variant == 'qsee_d3':
+              old = '''if (!in_check && !is_pv && legal_count > 0 && depth <= 4 &&
+                    !is_killer &&
+                    !(cur_prev_ft >= 0 && ss->counter_move[cur_prev_ft] == (mfr*64+mto)) &&
+                    !quiet_direct_check(b, mfr, mto)) {'''
+              new = old.replace('depth <= 4', 'depth <= 3')
+              replace_once(old, new)
+          elif variant == 'qsee_m80':
+              replace_once(
+                  'if (see_board(b, mfr, mto, 0) < -(depth * 60)) continue;',
+                  'if (see_board(b, mfr, mto, 0) < -(depth * 80)) continue;')
+          elif variant == 'hp_m96':
+              replace_once('int hp_thresh = -64 * depth;',
+                           'int hp_thresh = -96 * depth;')
+          elif variant == 'lmp_75pct':
+              replace_once('if (!improving) lmp_lim = (lmp_lim + 1) / 2;',
+                           'if (!improving) lmp_lim = (3 * lmp_lim + 3) / 4;')
+          else:
+              raise RuntimeError(f'unknown variant: {variant}')
+
+          p.write_text(s, encoding='utf-8')
+          PY
+          echo "### Source diff: $VARIANT" >> "$GITHUB_STEP_SUMMARY"
+          echo '```diff' >> "$GITHUB_STEP_SUMMARY"
+          git diff -- engine/c/zchezz_v326/search.c >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          git show origin/v327-search-efficiency:tests/bench_v327_candidate_structure.py > tests/bench_v327_candidate_structure.py
+
+          make -C /tmp/base/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          make -C /tmp/cand/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp /tmp/base/engine/c/zchezz_v326/zchezz.exe /tmp/cand/engine/c/zchezz_v326/zchezz_baseline.exe
+          cp /tmp/cand/engine/c/zchezz_v326/zchezz.exe /tmp/cand/engine/c/zchezz_v326/zchezz_candidate.exe
+          make -C /tmp/cand/engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+
+      - name: Correctness smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+
+      - name: Structural fixed-depth screen
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          OUT="artifacts/quiet-${VARIANT}-structure"
+          PYTHONPATH=tests python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare identical pinned UHO block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          mkdir -p artifacts/uho
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/uho/uho.zip
+          EPD_NAME="$(unzip -Z1 artifacts/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          unzip -p artifacts/uho/uho.zip "$EPD_NAME" > artifacts/uho/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          rng=random.Random(327601)
+          rng.shuffle(lines)
+          chosen=lines[6000:6050]
+          if len(chosen)!=50:
+              raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/uho/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+
+      - name: 100-game serial antithetic H2H at 200 ms
+        shell: bash
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          OUT="artifacts/quiet-${VARIANT}"
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)" \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/uho/openings.epd --seed 327601 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          cat "$OUT/result.json" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quiet-${{ matrix.variant }}-${{ github.run_id }}
+          path: |
+            /tmp/cand/artifacts/quiet-${{ matrix.variant }}-structure
+            /tmp/cand/artifacts/quiet-${{ matrix.variant }}
+
+  aggregate:
+    name: aggregate quiet-pruning screen
+    runs-on: ubuntu-24.04
+    if: always()
+    needs: [candidate]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: quiet-*-*
+          path: downloaded
+          merge-multiple: false
+      - name: Aggregate candidate perspective
+        shell: python
+        run: |
+          from pathlib import Path
+          import json, math, re
+          rows=[]
+          for root in sorted(Path('downloaded').iterdir()):
+              results=list(root.glob('**/result.json'))
+              metrics=list(root.glob('**/metrics.json'))
+              if len(results)!=1 or len(metrics)!=1:
+                  continue
+              m=re.match(r'quiet-(qsee_d3|qsee_m80|hp_m96|lmp_75pct)-', root.name)
+              if not m:
+                  continue
+              variant=m.group(1)
+              pair=json.loads(results[0].read_text())['pairings'][0]
+              w,d,l=int(pair['l']),int(pair['d']),int(pair['w'])
+              n=w+d+l
+              score=(w+0.5*d)/n
+              elo=400*math.log10(score/(1-score)) if 0<score<1 else 0.0
+              second=(w+0.25*d)/n
+              var=max(0.0,second-score*score)
+              se=math.sqrt(var/n)
+              deriv=400/math.log(10)/(score*(1-score)) if 0<score<1 else 0.0
+              ci=1.96*deriv*se
+              st=json.loads(metrics[0].read_text())['summary']['12']
+              rows.append((variant,w,d,l,score,elo,ci,st['node_delta_pct'],st['result_diffs']))
+          if len(rows)!=4:
+              raise RuntimeError(f'expected 4 candidates, got {len(rows)}')
+          lines=[
+              '# Quiet-pruning screen', '',
+              'Candidate perspective versus main v3.26; 100 games each; 200 ms/move; Threads=1; serial arena; Hash=64 MB; tablebases disabled; identical paired UHO block.', '',
+              '| Variant | W-D-L | Score | Elo | 95% CI | d12 nodes | d12 diffs |',
+              '|---|---:|---:|---:|---:|---:|---:|']
+          for v,w,d,l,s,e,ci,nd,diffs in sorted(rows):
+              lines.append(f'| {v} | {w}-{d}-{l} | {100*s:.2f}% | {e:+.1f} | ±{ci:.1f} | {nd:+.2f}% | {diffs}/20 |')
+          Path('aggregate.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+          print(Path('aggregate.md').read_text())
+      - run: cat aggregate.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: quiet-pruning-aggregate-${{ github.run_id }}
+          path: aggregate.md
