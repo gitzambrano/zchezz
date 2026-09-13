@@ -148,8 +148,16 @@ static void test_nnue_feature_contracts(void) {
 #ifdef NN_FEAT_IN
     /* NNU4 / HalfKP-4Bucket contracts. */
     CHECK(NN_FEAT_IN == 2560, "NNU4 feature dimension changed");
-    CHECK(NN_L1_OUT == 512 && NN_L2_IN == 1024 && NN_L2_OUT == 32,
-          "NNU4 layer dimensions changed");
+#if NN_L1_OUT == 512
+    CHECK(NN_L2_IN == 1024 && NN_L2_OUT == 32,
+          "NNU4 v3.x layer dimensions changed");
+#elif NN_L1_OUT == 48
+    CHECK(NN_L2_IN == 96 && NN_L2_OUT == 20,
+          "NNU4 v5.x layer dimensions changed");
+#else
+    CHECK(0, "unsupported NNU4 layer family: L1=%d L2in=%d L2out=%d",
+          NN_L1_OUT, NN_L2_IN, NN_L2_OUT);
+#endif
     CHECK(nnue_feature_index(WP, 48, 1, 0) == 8,
           "white-POV WP a2 feature index changed");
     CHECK(nnue_feature_index(BP, 8, 0, 0) == 8,
