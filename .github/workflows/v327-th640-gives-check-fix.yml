@@ -62,8 +62,8 @@ jobs:
           body='''if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery) {
                   int exact_gc = board_in_check(b);
                   if ((pawn_discovery || m->epc) && exact_gc)
-                      fprintf(stderr, "[GCHECK_FIX] from=%d to=%d pawn=%d ep=%d exact=1\\n",
-                              m->from, m->to, pawn_discovery, m->epc ? 1 : 0);
+                      fprintf(stderr, "[GCHECK_FIX] from=%d to=%d pawn=%d ep=%d exact=1%c",
+                              m->from, m->to, pawn_discovery, m->epc ? 1 : 0, 10);
                   gives_check = exact_gc;
               }'''
           s,n=pat.subn(body,s)
