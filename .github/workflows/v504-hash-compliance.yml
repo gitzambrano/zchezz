@@ -29,8 +29,6 @@ jobs:
                   raise SystemExit(f"{label}: expected exactly 1 match, got {n}")
               return text.replace(old, new, 1)
 
-          # search.h: preserve the per-instance TTable API, but make arbitrary
-          # bucket counts legal so requested MiB need not round to a power of two.
           p = Path('engine/c/zchezz_v500/search.h')
           s = p.read_text()
           s = once(s,
@@ -43,8 +41,6 @@ jobs:
               'tt_resize declaration')
           p.write_text(s)
 
-          # search.c: exact-MiB resizing plus multiplicative indexing, while
-          # retaining the existing 24-byte/two-bucket TT for isolation.
           p = Path('engine/c/zchezz_v500/search.c')
           s = p.read_text()
           old = '''TTable *tt_create(size_t n_entries) {
@@ -124,40 +120,20 @@ jobs:
           s = s.replace(old_prefetch, '&tt->e[tt_index(tt, b->hash ^ ZR_side) * TT_BUCKETS]')
           if 'tt->mask' in s:
               raise SystemExit('unconverted tt->mask use remains in search.c')
-
-          old_init = '''    if (!g_tt) {
+          s = once(s,
+              '        g_tt = tt_create(TT_SIZE);\n',
+              '''#ifdef __EMSCRIPTEN__
               g_tt = tt_create(TT_SIZE);
-              if (!g_tt) {
-                  /* OOM at startup: fail loudly instead of leaving g_tt NULL,
-                   * which would crash inside tt_probe/tt_store on first search
-                   * with a confusing null-deref instead of a clear message. */
-                  fprintf(stderr, "[TT] fatal: tt_create(%d entries) failed (out of memory)\\n", TT_SIZE);
-                  exit(1);
-              }
-          }
-          '''
-          new_init = '''    if (!g_tt) {
-          #ifdef __EMSCRIPTEN__
-              g_tt = tt_create(TT_SIZE);
-              if (!g_tt) {
-                  fprintf(stderr, "[TT] fatal: tt_create(%d entries) failed (out of memory)\\n", TT_SIZE);
-                  exit(1);
-              }
           #else
-              /* The advertised UCI default is 64 MiB, so startup must match it
-               * even when a GUI never sends an explicit Hash option. */
               if (!tt_resize_mb(&g_tt, 64)) {
                   fprintf(stderr, "[TT] fatal: 64 MB default allocation failed (out of memory)\\n");
                   exit(1);
               }
           #endif
-          }
-          '''
-          s = once(s, old_init, new_init, 'search_init TT allocation')
+          ''',
+              'search_init allocation line')
           p.write_text(s)
 
-          # main.c: honor Hash, expose the actual current size to hashfull, and
-          # bump only the candidate identity (directory/profile stays v500).
           p = Path('engine/c/zchezz_v500/main.c')
           s = p.read_text()
           s = once(s, '#define ENGINE_VERSION "5.03"', '#define ENGINE_VERSION "5.04"', 'engine version')
