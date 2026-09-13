@@ -81,7 +81,17 @@
  * unchanged; this is pointer indirection only. */
 TTable *g_tt = NULL;
 
+static inline size_t tt_index(const TTable *tt, uint64_t hash) {
+#if defined(__SIZEOF_INT128__)
+    return (size_t)(((__uint128_t)hash * (__uint128_t)tt->slots) >> 64);
+#else
+    return (size_t)(hash % tt->slots);
+#endif
+}
+
 TTable *tt_create(size_t n_entries) {
+    if (n_entries < TT_BUCKETS) n_entries = TT_BUCKETS;
+    n_entries -= n_entries % TT_BUCKETS;
     TTable *tt = (TTable *)calloc(1, sizeof(TTable));
     if (!tt) return NULL;
     tt->e = (TTEntry *)calloc(n_entries, sizeof(TTEntry));
@@ -89,11 +99,32 @@ TTable *tt_create(size_t n_entries) {
         tt_destroy(tt);
         return NULL;
     }
-    tt->size = n_entries;
-    tt->mask = (n_entries / TT_BUCKETS) - 1;
-    tt->gen  = 0;
+    tt->size  = n_entries;
+    tt->slots = n_entries / TT_BUCKETS;
+    tt->gen   = 0;
     for (size_t i = 0; i < n_entries; i++) tt->e[i].eval = TT_EVAL_NONE;
     return tt;
+}
+
+int tt_resize_mb(TTable **ptt, int mb) {
+    if (!ptt) return 0;
+    if (mb < 1) mb = 1;
+    if (mb > 1024) mb = 1024;
+    const size_t requested = (size_t)mb * 1024u * 1024u;
+    size_t n_entries = requested / sizeof(TTEntry);
+    n_entries -= n_entries % TT_BUCKETS;
+    if (n_entries < TT_BUCKETS) n_entries = TT_BUCKETS;
+    TTable *fresh = tt_create(n_entries);
+    if (!fresh) return 0;
+    TTable *old = *ptt;
+    *ptt = fresh;
+    tt_destroy(old);
+    const size_t actual = fresh->size * sizeof(TTEntry);
+    fprintf(stderr,
+            "[TT] aos48: requested=%d MB actual=%.3f MB slots=%zu entries=%zu entry=%zuB bucket=%zuB\n",
+            mb, (double)actual / (1024.0 * 1024.0), fresh->slots,
+            fresh->size, sizeof(TTEntry), sizeof(TTEntry) * (size_t)TT_BUCKETS);
+    return 1;
 }
 
 void tt_destroy(TTable *tt) {
@@ -327,7 +358,7 @@ typedef struct { int score; int depth; int flag; Move move; int static_eval; } T
 static void tt_store(TTable *tt, uint64_t hash, int score,
                      int depth, int flag, const Move *move,
                      int ply, int static_eval) {
-    int slot = (int)(hash & tt->mask);
+    size_t slot = tt_index(tt, hash);
     int base = slot * TT_BUCKETS;
     TTEntry *b0 = &tt->e[base];
     int stored_score = tt_score_store(score, ply);
@@ -355,7 +386,7 @@ static void tt_store(TTable *tt, uint64_t hash, int score,
 }
 
 static int tt_probe(TTable *tt, uint64_t hash, int ply, TTE *out) {
-    TTEntry *e = &tt->e[(size_t)(hash & tt->mask) * TT_BUCKETS];
+    TTEntry *e = &tt->e[tt_index(tt, hash) * TT_BUCKETS];
 
     /* Check both buckets */
     for (int b = 0; b < TT_BUCKETS; b++, e++) {
@@ -1240,7 +1271,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
         /* Skip singular move */
         if (!(ss->sing_from[ply]>=0 && mfr==ss->sing_from[ply] && mto==ss->sing_to[ply])) {
             board_make(b, m);
-            __builtin_prefetch(&tt->e[((b->hash ^ ZR_side) & tt->mask) * TT_BUCKETS], 0, 1);
+            __builtin_prefetch(&tt->e[tt_index(tt, b->hash ^ ZR_side) * TT_BUCKETS], 0, 1);
 
             int mover_col = b->turn ^ 24;
             int king_sq   = mover_col == COL_W ? b->wk : b->bk;
@@ -1359,7 +1390,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
             if (ss->sing_from[ply]>=0 && mfr==ss->sing_from[ply] && mto==ss->sing_to[ply]) continue;
 
             board_make(b, m);
-            __builtin_prefetch(&tt->e[((b->hash ^ ZR_side) & tt->mask) * TT_BUCKETS], 0, 1);
+            __builtin_prefetch(&tt->e[tt_index(tt, b->hash ^ ZR_side) * TT_BUCKETS], 0, 1);
 
             int mover_col = b->turn ^ 24;
             int king_sq   = mover_col == COL_W ? b->wk : b->bk;
@@ -1515,7 +1546,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                 }
 
                 board_make(b, m);
-                __builtin_prefetch(&tt->e[((b->hash ^ ZR_side) & tt->mask) * TT_BUCKETS], 0, 1);
+                __builtin_prefetch(&tt->e[tt_index(tt, b->hash ^ ZR_side) * TT_BUCKETS], 0, 1);
 
                 int mover_col = b->turn ^ 24;
                 int king_sq   = mover_col == COL_W ? b->wk : b->bk;
@@ -1647,7 +1678,7 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
             if (ss->sing_from[ply]>=0 && mfr==ss->sing_from[ply] && mto==ss->sing_to[ply]) continue;
 
             board_make(b, m);
-            __builtin_prefetch(&tt->e[((b->hash ^ ZR_side) & tt->mask) * TT_BUCKETS], 0, 1);
+            __builtin_prefetch(&tt->e[tt_index(tt, b->hash ^ ZR_side) * TT_BUCKETS], 0, 1);
 
             int mover_col = b->turn ^ 24;
             int king_sq   = mover_col == COL_W ? b->wk : b->bk;
@@ -1821,7 +1852,14 @@ void search_init(void) {
      * tt_create() zero-initialises H/S/D/G/M (calloc) and sets every E[i]
      * to TT_EVAL_NONE — identical to the old memset(TT_H,...) + E-loop. */
     if (!g_tt) {
-        g_tt = tt_create(TT_SIZE);
+#ifdef __EMSCRIPTEN__
+    g_tt = tt_create(TT_SIZE);
+#else
+    if (!tt_resize_mb(&g_tt, 64)) {
+        fprintf(stderr, "[TT] fatal: 64 MB default allocation failed (out of memory)\n");
+        exit(1);
+    }
+#endif
         if (!g_tt) {
             /* OOM at startup: fail loudly instead of leaving g_tt NULL,
              * which would crash inside tt_probe/tt_store on first search

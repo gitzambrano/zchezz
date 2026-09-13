@@ -98,7 +98,7 @@ static int z_strncasecmp(const char *a, const char *b, size_t n) {
 #endif
 
 #define ENGINE_NAME    "Zchezz"
-#define ENGINE_VERSION "5.03"
+#define ENGINE_VERSION "5.04"
 #define ENGINE_AUTHOR  "Gustavo Zambrano"
 
 /* ── Global game state ─────────────────────────────────────────── */
@@ -113,6 +113,7 @@ static int    g_opt_multi_pv   = 1;       /* number of PVs to report */
 static int    g_opt_ponder     = 0;       /* pondering enabled */
 static int    g_opt_analyse    = 0;       /* analysis mode (no contempt) */
 static int    g_opt_threads    = 1;       /* number of search threads */
+static int    g_opt_hash_mb    = 64;      /* TT size requested through UCI */
 
 /* Syzygy options */
 static char   g_opt_syzygy_path[512] = "";
@@ -176,7 +177,7 @@ static int tt_hashfull(void) {
     /* Sample first 1000 entries for fill estimation (like Stockfish) */
     int used = 0;
     int sample = 1000;
-    if (sample > TT_SIZE) sample = TT_SIZE;
+    if (g_tt && sample > (int)g_tt->size) sample = (int)g_tt->size;
     for (int i = 0; i < sample; i++) {
         if (g_tt->e[i].hash != 0 && g_tt->e[i].gen == g_tt->gen) used++;
     }
@@ -344,7 +345,17 @@ static void cmd_setoption(const char *line) {
         if (g_opt_threads < 1) g_opt_threads = 1;
         if (g_opt_threads > 128) g_opt_threads = 128;
     }
-    /* Hash is accepted but currently ignored (fixed TT size) */
+    else if (strcasecmp(name, "Hash") == 0) {
+    int mb = atoi(value);
+    if (mb < 1) mb = 1;
+    if (mb > 1024) mb = 1024;
+    if (g_searching) {
+        g_stop_flag = 1;
+        pthread_join(g_search_thread, NULL);
+        g_searching = 0;
+    }
+    if (tt_resize_mb(&g_tt, mb)) g_opt_hash_mb = mb;
+}
 }
 
 /* Apply a list of UCI moves to g_board, building history */
