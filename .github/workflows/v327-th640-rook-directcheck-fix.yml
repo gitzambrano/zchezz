@@ -1,0 +1,124 @@
+name: v3.27 th640 rook direct-check fix
+
+on:
+  push:
+    branches: [v327-th640-rook-directcheck-fix]
+    paths:
+      - ".github/workflows/v327-th640-rook-directcheck-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Materialize frozen th640 baseline and rook-fix candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin v327-deep5-th640-candidate v327-search-efficiency
+          git worktree add --detach /tmp/base origin/v327-deep5-th640-candidate
+          git worktree add --detach /tmp/cand origin/v327-deep5-th640-candidate
+          cd /tmp/cand
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v326/search.c')
+          s=p.read_text(encoding='utf-8')
+          old='''        case 3: return (bish_attacks(to, occ) >> ksq) & 1;\n        case 4: case 5:\n            return ((rook_attacks(to, occ) | bish_attacks(to, occ)) >> ksq) & 1;\n'''
+          new='''        case 3: return (bish_attacks(to, occ) >> ksq) & 1;\n        case 4: return (rook_attacks(to, occ) >> ksq) & 1;\n        case 5:\n            return ((rook_attacks(to, occ) | bish_attacks(to, occ)) >> ksq) & 1;\n'''
+          if s.count(old)!=1:
+              raise RuntimeError(f'expected one rook/queen direct-check block, found {s.count(old)}')
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
+          git show origin/v327-search-efficiency:tests/bench_v327_candidate_structure.py > tests/bench_v327_candidate_structure.py
+          make -C /tmp/base/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          make -C /tmp/cand/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cp /tmp/base/engine/c/zchezz_v326/zchezz.exe /tmp/cand/engine/c/zchezz_v326/zchezz_baseline.exe
+          cp /tmp/cand/engine/c/zchezz_v326/zchezz.exe /tmp/cand/engine/c/zchezz_v326/zchezz_candidate.exe
+          make -C /tmp/cand/engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+      - name: Correctness smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+      - name: Structural fixed-depth screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          OUT=artifacts/v327-th640-rook-directcheck-structure
+          PYTHONPATH=tests python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Prepare pinned paired UHO block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          mkdir -p artifacts/uho
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/uho/uho.zip
+          EPD_NAME="$(unzip -Z1 artifacts/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          unzip -p artifacts/uho/uho.zip "$EPD_NAME" > artifacts/uho/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          rng=random.Random(327404); rng.shuffle(lines)
+          chosen=lines[5600:5650]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/uho/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+      - name: 100-game serial antithetic fast gate at 200 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/cand
+          OUT=artifacts/v327-th640-rook-directcheck
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)" \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/uho/openings.epd --seed 327404 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          python - <<'PY'
+          from pathlib import Path
+          import json, math
+          p=json.loads(Path('artifacts/v327-th640-rook-directcheck/result.json').read_text())['pairings'][0]
+          w,d,l=int(p['l']),int(p['d']),int(p['w'])
+          n=w+d+l; s=(w+0.5*d)/n
+          elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
+          text=f'Candidate W-D-L: {w}-{d}-{l}\nScore: {100*s:.2f}%\nElo: {elo:+.1f}\n'
+          Path('artifacts/v327-th640-rook-directcheck/summary.txt').write_text(text)
+          print(text)
+          PY
+          cat "$OUT/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-th640-rook-directcheck-${{ github.run_id }}
+          path: |
+            /tmp/cand/artifacts/v327-th640-rook-directcheck-structure
+            /tmp/cand/artifacts/v327-th640-rook-directcheck
