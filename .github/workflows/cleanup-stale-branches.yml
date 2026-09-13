@@ -1,0 +1,57 @@
+name: cleanup-stale-branches
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Delete stale branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          stale=(
+            'candidate/v328-search-correctness'
+            'candidate/v506-search-correctness'
+            'experiment/quiet-check-guard'
+            'experiment/quiet-pruning-screen'
+            'experiment/v327-lmr-deep5'
+            'experiment/v506-exact-quiet-checks'
+            'fix/v327-capture-see-checks'
+            'fix/v327-search-correctness-bundle'
+            'fix/v327-search-correctness-bundle-temp'
+            'fix/v327-search-correctness-final'
+            'fix/v504-invariant-dimensions'
+            'fix/v504-search-check-correctness'
+            'investigate/stockfish-search-gap'
+            'investigate/v327-preprune-checks'
+            'release/v327-v505-candidates'
+            'release/v328-v506-main'
+            'test/v327-correctness-macos'
+            'v327-correctness-candidate'
+            'v327-deep5-th640-candidate'
+            'v327-gives-check-complete-fix'
+            'v327-search-efficiency'
+            'v327-th640-gives-check-fix'
+            'v327-th640-iir-screen'
+            'v327-th640-rook-directcheck-fix'
+            'v503-search-port'
+            'v504-hash-compliance'
+            'v504-search-promote'
+          )
+          for b in "${stale[@]}"; do
+            if git ls-remote --exit-code --heads origin "refs/heads/$b" >/dev/null 2>&1; then
+              echo "Deleting $b"
+              git push origin --delete "$b"
+            else
+              echo "Already absent: $b"
+            fi
+          done
+          echo 'Remaining branches:'
+          git ls-remote --heads origin
