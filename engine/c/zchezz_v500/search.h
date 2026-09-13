@@ -39,13 +39,14 @@ typedef struct {
     TTEntry *e;
     uint16_t gen;
     size_t   size;
-    size_t   mask;
+    size_t   slots;
 } TTable;
 
 TTable *tt_create(size_t n_entries);
 void    tt_destroy(TTable *tt);
 void    tt_clear(TTable *tt);
 void    tt_new_generation(TTable *tt);
+int     tt_resize_mb(TTable **tt, int mb);
 extern TTable *g_tt;
 
 #define MAX_MULTI_PV 6
