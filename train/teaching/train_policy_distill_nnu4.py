@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """Explicit move-policy distillation into the existing NNU4 value network.
 
-No policy head is added at inference.  For each teacher-labelled parent, the
-network evaluates selected child positions.  Child STM probabilities are
+No policy head is added at inference. For each teacher-labelled parent, the
+network evaluates selected child positions. Child STM probabilities are
 converted back to parent-POV logits and optimized against the teacher's soft
 move distribution, with auxiliary child-value and pairwise ranking losses.
-The shipped engine therefore pays exactly the same NNU4 runtime cost.
+
+An optional reference UCI engine can re-score the same Stockfish-proposed
+children. Its policy is mixed with the primary teacher policy after per-parent
+normalization, while absolute value supervision remains anchored to the primary
+teacher. This allows a strong in-family engine (for example v3.28) to teach
+move preference without importing its centipawn calibration into NNU4 value
+training. The shipped engine therefore pays exactly the same NNU4 runtime cost.
 """
 from __future__ import annotations
 
@@ -47,12 +53,17 @@ FREEZE_L1_EPOCHS = 2
 VAL_FRAC = 0.10
 SEED = 5072026
 LIMIT = 0
+REFERENCE_ENGINE = ""
+REFERENCE_NODES = 2000
+REFERENCE_WEIGHT = 0.60
+REFERENCE_HASH_MB = 32
 
 
 @dataclass
 class Group:
     child_fens: list[str]
-    parent_scores_cp: np.ndarray
+    value_scores_cp: np.ndarray
+    rank_scores_cp: np.ndarray
     target_policy: np.ndarray
 
 
@@ -74,33 +85,108 @@ def child_value_probability(parent_pov_cp) -> np.ndarray:
     return (1.0 / (1.0 + np.exp(-x))).astype(np.float32)
 
 
+def parent_pov_score(cp_white: float, parent_white: bool) -> float:
+    """Convert a White-relative score into the mover/parent point of view."""
+    return float(cp_white if parent_white else -cp_white)
+
+
+def _relative_calibrated(scores_cp: np.ndarray, target_span: float) -> np.ndarray:
+    """Normalize a teacher's local move gaps without using its absolute scale.
+
+    The best candidate maps to zero. The worst candidate is scaled to roughly
+    ``-target_span``. Only the local ordering/gap shape survives; this prevents
+    an in-family reference whose cp calibration differs from Stockfish from
+    corrupting absolute value targets.
+    """
+    s = np.asarray(scores_cp, dtype=np.float64)
+    if s.size == 0:
+        return s.astype(np.float32)
+    rel = s - np.max(s)
+    span = max(1.0, float(-np.min(rel)))
+    return (rel * (max(1.0, float(target_span)) / span)).astype(np.float32)
+
+
+def mix_teacher_policy(primary_scores_cp, reference_scores_cp,
+                       temperature_cp: float, reference_weight: float):
+    """Mix teacher distributions and return a calibrated ranking surrogate."""
+    primary = np.asarray(primary_scores_cp, dtype=np.float32)
+    reference = np.asarray(reference_scores_cp, dtype=np.float32)
+    if primary.shape != reference.shape:
+        raise ValueError("primary/reference score vectors must have identical shapes")
+    w = min(1.0, max(0.0, float(reference_weight)))
+    p0 = soft_policy(primary, temperature_cp)
+    p1 = soft_policy(reference, temperature_cp)
+    mixed = ((1.0 - w) * p0 + w * p1).astype(np.float32)
+    mixed /= max(1e-12, float(mixed.sum()))
+
+    primary_rel = primary - float(np.max(primary))
+    primary_span = max(float(-np.min(primary_rel)), float(temperature_cp), 1.0)
+    ref_rel = _relative_calibrated(reference, primary_span)
+    rank = ((1.0 - w) * primary_rel + w * ref_rel).astype(np.float32)
+    return mixed, rank
+
+
 def build_groups(dataset: TeachingDataset, temperature_cp: float,
-                 limit: int = 0) -> list[Group]:
+                 limit: int = 0, reference_engine: str = "",
+                 reference_nodes: int = REFERENCE_NODES,
+                 reference_weight: float = REFERENCE_WEIGHT,
+                 reference_hash_mb: int = REFERENCE_HASH_MB) -> list[Group]:
     import chess
 
+    backend = None
+    if reference_engine and reference_weight > 0.0:
+        from train.teaching.backends import UciBackend
+        backend = UciBackend(reference_engine, hash_mb=reference_hash_mb,
+                             threads=1, static_fallback_nodes=1)
+
     groups: list[Group] = []
-    for index, row in enumerate(dataset.positions):
-        selected = select_policy_children(row, dataset.moves_for(index))
-        if len(selected) < 2:
-            continue
-        board = chess.Board(record_to_fen(row))
-        child_fens, scores = [], []
-        for packed, _cp_white, parent_pov_cp in selected:
-            try:
-                move = chess.Move.from_uci(unpack_move_uci(packed))
-            except ValueError:
+    try:
+        for index, row in enumerate(dataset.positions):
+            selected = select_policy_children(row, dataset.moves_for(index))
+            if len(selected) < 2:
                 continue
-            if move not in board.legal_moves:
+            board = chess.Board(record_to_fen(row))
+            parent_white = bool(board.turn)
+            child_fens: list[str] = []
+            primary_scores: list[float] = []
+            reference_scores: list[float] = []
+            for packed, _cp_white, parent_pov_cp in selected:
+                try:
+                    move = chess.Move.from_uci(unpack_move_uci(packed))
+                except ValueError:
+                    continue
+                if move not in board.legal_moves:
+                    continue
+                board.push(move)
+                child_fen = board.fen()
+                child_fens.append(child_fen)
+                primary_scores.append(float(parent_pov_cp))
+                if backend is not None:
+                    lines = backend.search(child_fen, bool(board.turn),
+                                           nodes=max(1, int(reference_nodes)), multipv=1)
+                    if lines:
+                        reference_scores.append(parent_pov_score(
+                            lines[0].cp_white, parent_white))
+                    else:
+                        reference_scores.append(float(parent_pov_cp))
+                board.pop()
+
+            if len(child_fens) < 2:
                 continue
-            board.push(move)
-            child_fens.append(board.fen())
-            scores.append(float(parent_pov_cp))
-            board.pop()
-        if len(child_fens) >= 2:
-            s = np.asarray(scores, dtype=np.float32)
-            groups.append(Group(child_fens, s, soft_policy(s, temperature_cp)))
+            primary = np.asarray(primary_scores, dtype=np.float32)
+            if backend is None:
+                policy = soft_policy(primary, temperature_cp)
+                rank = primary.copy()
+            else:
+                reference = np.asarray(reference_scores, dtype=np.float32)
+                policy, rank = mix_teacher_policy(
+                    primary, reference, temperature_cp, reference_weight)
+            groups.append(Group(child_fens, primary, rank, policy))
             if limit and len(groups) >= limit:
                 break
+    finally:
+        if backend is not None:
+            backend.close()
     return groups
 
 
@@ -119,18 +205,21 @@ def batch_loss(model: NNUE, groups: list[Group], device: torch.device,
                min_rank_margin_cp: float):
     fens: list[str] = []
     boundaries = [0]
-    teacher_scores = []
+    value_scores = []
+    rank_scores = []
     teacher_policy = []
     for group in groups:
         fens.extend(group.child_fens)
-        teacher_scores.extend(group.parent_scores_cp.tolist())
+        value_scores.extend(group.value_scores_cp.tolist())
+        rank_scores.extend(group.rank_scores_cp.tolist())
         teacher_policy.extend(group.target_policy.tolist())
         boundaries.append(len(fens))
 
     pred_child = _forward_fens(model, fens, device).clamp(1e-6, 1 - 1e-6)
-    scores = torch.as_tensor(teacher_scores, dtype=torch.float32, device=device)
+    value_scores_t = torch.as_tensor(value_scores, dtype=torch.float32, device=device)
+    rank_scores_t = torch.as_tensor(rank_scores, dtype=torch.float32, device=device)
     q_all = torch.as_tensor(teacher_policy, dtype=torch.float32, device=device)
-    value_targets = torch.sigmoid(-scores / 320.0)
+    value_targets = torch.sigmoid(-value_scores_t / 320.0)
     value_loss = F.binary_cross_entropy(pred_child, value_targets)
 
     child_logit = torch.logit(pred_child)
@@ -146,7 +235,7 @@ def batch_loss(model: NNUE, groups: list[Group], device: torch.device,
         policy_terms.append(-(q * F.log_softmax(student * scale, dim=0)).sum())
         if int(student.argmax()) == int(q.argmax()):
             top1_ok += 1
-        teacher = scores[a:b]
+        teacher = rank_scores_t[a:b]
         best = int(teacher.argmax())
         for j in range(len(teacher)):
             if j == best:
@@ -206,6 +295,10 @@ def main() -> int:
     p.add_argument("--seed", type=int, default=SEED)
     p.add_argument("--limit", type=int, default=LIMIT)
     p.add_argument("--device", default="auto")
+    p.add_argument("--reference-engine", default=REFERENCE_ENGINE)
+    p.add_argument("--reference-nodes", type=int, default=REFERENCE_NODES)
+    p.add_argument("--reference-weight", type=float, default=REFERENCE_WEIGHT)
+    p.add_argument("--reference-hash-mb", type=int, default=REFERENCE_HASH_MB)
     p.add_argument("--show-config", action="store_true")
     a = p.parse_args()
     if a.show_config:
@@ -214,12 +307,21 @@ def main() -> int:
         return 0
     if not (a.input / "metadata.json").is_file():
         raise SystemExit(f"teaching dataset not found: {a.input}")
+    if a.reference_weight < 0.0 or a.reference_weight > 1.0:
+        raise SystemExit("--reference-weight must be in [0, 1]")
+    if a.reference_engine and not Path(a.reference_engine).is_file():
+        raise SystemExit(f"reference engine not found: {a.reference_engine}")
 
     torch.manual_seed(a.seed); np.random.seed(a.seed); random.seed(a.seed)
     device = torch.device("cuda" if a.device == "auto" and torch.cuda.is_available()
                           else ("cpu" if a.device == "auto" else a.device))
     dataset = TeachingDataset(a.input)
-    groups = build_groups(dataset, a.temperature_cp, max(0, a.limit))
+    groups = build_groups(
+        dataset, a.temperature_cp, max(0, a.limit),
+        reference_engine=a.reference_engine,
+        reference_nodes=max(1, a.reference_nodes),
+        reference_weight=a.reference_weight,
+        reference_hash_mb=max(1, a.reference_hash_mb))
     if len(groups) < 10:
         raise SystemExit(f"too few policy groups: {len(groups)}")
     rng = random.Random(a.seed)
@@ -232,7 +334,10 @@ def main() -> int:
     model = NNUE().to(device)
     model.load_state_dict(weights, strict=True)
     optimizer = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=a.weight_decay)
-    print(f"groups train={len(train_groups)} val={len(val_groups)} source_epoch={source_epoch} device={device}")
+    ref_desc = (f"{a.reference_engine} nodes={a.reference_nodes} weight={a.reference_weight:.2f}"
+                if a.reference_engine and a.reference_weight > 0 else "none")
+    print(f"groups train={len(train_groups)} val={len(val_groups)} source_epoch={source_epoch} "
+          f"device={device} reference={ref_desc}")
 
     freeze_epochs = max(0, a.freeze_l1_epochs)
     for epoch in range(1, max(1, a.epochs) + 1):
@@ -272,6 +377,9 @@ def main() -> int:
             "temperature_cp": a.temperature_cp, "value_weight": a.value_weight,
             "rank_weight": a.rank_weight, "freeze_l1_epochs": freeze_epochs,
             "seed": a.seed,
+            "reference_engine": str(a.reference_engine),
+            "reference_nodes": int(a.reference_nodes),
+            "reference_weight": float(a.reference_weight),
         },
     }, a.output)
     print(f"saved {a.output}")
