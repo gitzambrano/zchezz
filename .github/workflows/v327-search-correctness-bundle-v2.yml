@@ -1,0 +1,203 @@
+name: v3.27 search correctness bundle v2
+
+on:
+  push:
+    branches: ["fix/v327-search-correctness-bundle"]
+    paths:
+      - ".github/workflows/v327-search-correctness-bundle-v2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  validate-freeze-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize full correctness bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main v327-search-efficiency
+          git worktree add --detach /tmp/base origin/main
+          git worktree add --detach /tmp/fix "$GITHUB_SHA"
+          cd /tmp/fix
+          python tests/apply_v327_search_correctness_bundle.py
+          git diff --check
+          git show origin/v327-search-efficiency:tests/bench_v327_candidate_structure.py > tests/bench_v327_candidate_structure.py
+          echo '### Correctness bundle diff' >> "$GITHUB_STEP_SUMMARY"
+          echo '```diff' >> "$GITHUB_STEP_SUMMARY"
+          git diff -- engine/c/zchezz_v326/search.c >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
+          from pathlib import Path
+          s=Path('engine/c/zchezz_v326/search.c').read_text(encoding='utf-8')
+          assert 'quiet_direct_check(' not in s
+          assert s.count('move_gives_check_pre(') >= 5
+          assert 'quiet_count > lmp_lim && !move_gives_check_pre(b, m)' in s
+          assert 'ch_hp < hp_thresh && !move_gives_check_pre(b, m)' in s
+          assert '!is_pv && is_quiet && legal_count > 0 && depth <= 4' in s
+          assert 'sv < see_thresh && !move_gives_check_pre(b, m)' in s
+          assert s.count('||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery)') == 4
+          assert 'depth >= 3, not in check, reduced depth still >= 2' in s
+          print('source invariants: OK')
+          PY
+
+      - name: Unit-test pre-pruning check classifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('engine/c/zchezz_v326/search.c').read_text(encoding='utf-8')
+          m=re.search(r'static inline int move_gives_check_pre\(const Board \*bd, const Move \*m\) \{.*?\n\}', s, re.S)
+          if not m: raise RuntimeError('move_gives_check_pre helper not found')
+          helper=m.group(0)
+          test=f'''#include <stdio.h>\n#include <stdlib.h>\n#include "board.h"\n\n{helper}\n\nstatic void check_case(const char *fen, const char *uci, int expected) {{\n    Board b = {{0}};\n    board_bind_undo_global(&b);\n    board_bind_nnue_global(&b);\n    if (!board_load_fen(&b, fen)) {{ fprintf(stderr, "bad fen: %s\\n", fen); exit(2); }}\n    Move m = {{0}};\n    if (!move_from_uci(&b, uci, &m)) {{ fprintf(stderr, "bad move: %s\\n", uci); exit(3); }}\n    int got = move_gives_check_pre(&b, &m);\n    if (got != expected) {{ fprintf(stderr, "%s expected %d got %d\\n", uci, expected, got); exit(4); }}\n}}\n\nint main(void) {{\n    board_init();\n    check_case("4k3/8/8/8/8/8/4B3/K3R3 w - - 0 1", "e2f3", 1);\n    check_case("4k3/8/8/8/8/8/4N3/K3R3 w - - 0 1", "e2c3", 1);\n    check_case("4k3/8/3P4/8/8/8/8/K7 w - - 0 1", "d6d7", 1);\n    check_case("4k3/8/8/8/1R6/8/8/K7 w - - 0 1", "b4b5", 0);\n    check_case("4k3/8/8/8/1R6/8/8/K7 w - - 0 1", "b4e4", 1);\n    check_case("4k3/8/8/3n4/4P3/8/8/K3R3 w - - 0 1", "e4d5", 1);\n    check_case("7k/8/8/3Pp3/8/8/8/B6K w - e6 0 1", "d5e6", 1);\n    puts("move_gives_check_pre regression cases: OK");\n    return 0;\n}}\n'''
+          Path('/tmp/test_check_pre.c').write_text(test,encoding='utf-8')
+          PY
+          gcc -O2 -D_GNU_SOURCE -std=c11 -Iengine/c/zchezz_v326 \
+            -o /tmp/test_check_pre /tmp/test_check_pre.c \
+            engine/c/zchezz_v326/board.c engine/c/zchezz_v326/nnue.c -lm
+          /tmp/test_check_pre
+
+      - name: Build and standard correctness suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C /tmp/base/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          make -C /tmp/fix/engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          cd /tmp/fix
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+
+      - name: Dynamically prove pawn and en-passant post-move checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          cp engine/c/zchezz_v326/search.c /tmp/search.fixed.c
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('engine/c/zchezz_v326/search.c')
+          s=p.read_text(encoding='utf-8')
+          pat=re.compile(r'if \(gpt>=3\|\|gpt==2\|\|m->prom\|\|m->epc\|\|\(gdr>gdc\?gdr:gdc\)<=2\|\|pawn_discovery\)\s*\n\s*gives_check = board_in_check\(b\);')
+          body='''if (gpt>=3||gpt==2||m->prom||m->epc||(gdr>gdc?gdr:gdc)<=2||pawn_discovery) {\n                      int exact_gc = board_in_check(b);\n                      if ((pawn_discovery || m->epc) && exact_gc)\n                          fprintf(stderr, "[GCHECK_BUNDLE] pawn=%d ep=%d exact=1\\n", pawn_discovery, m->epc ? 1 : 0);\n                      gives_check = exact_gc;\n                  }'''
+          s,n=pat.subn(body,s)
+          if n != 4: raise RuntimeError(f'expected four post-move blocks, found {n}')
+          p.write_text(s,encoding='utf-8')
+          PY
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          printf 'uci\nisready\nposition fen 4k3/8/8/3n4/4P3/8/8/K3R3 w - - 0 1\ngo depth 6\nquit\n' | engine/c/zchezz_v326/zchezz.exe >/tmp/pawn.out 2>/tmp/pawn.err
+          printf 'uci\nisready\nposition fen 7k/8/8/3Pp3/8/8/8/B6K w - e6 0 1\ngo depth 6\nquit\n' | engine/c/zchezz_v326/zchezz.exe >/tmp/ep.out 2>/tmp/ep.err
+          grep -q '\[GCHECK_BUNDLE\].*pawn=1.*exact=1' /tmp/pawn.err
+          grep -q '\[GCHECK_BUNDLE\].*ep=1.*exact=1' /tmp/ep.err
+          cp /tmp/search.fixed.c engine/c/zchezz_v326/search.c
+          rm -f engine/c/zchezz_v326/zchezz.exe
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+
+      - name: Structural fixed-depth screen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/base/engine/c/zchezz_v326/zchezz.exe /tmp/fix/engine/c/zchezz_v326/zchezz_baseline.exe
+          cp /tmp/fix/engine/c/zchezz_v326/zchezz.exe /tmp/fix/engine/c/zchezz_v326/zchezz_candidate.exe
+          cd /tmp/fix
+          OUT=artifacts/v327-correctness-bundle-v2-structure
+          PYTHONPATH=tests python tests/bench_v327_candidate_structure.py \
+            --baseline engine/c/zchezz_v326/zchezz_baseline.exe \
+            --candidate engine/c/zchezz_v326/zchezz_candidate.exe \
+            --source engine/c/zchezz_v326/main.c \
+            --output "$OUT"
+          cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Prepare pinned paired UHO block
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          mkdir -p artifacts/uho
+          URL="https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip"
+          curl -L --fail --retry 3 --retry-delay 2 "$URL" -o artifacts/uho/uho.zip
+          EPD_NAME="$(unzip -Z1 artifacts/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          unzip -p artifacts/uho/uho.zip "$EPD_NAME" > artifacts/uho/all.epd
+          python - <<'PY'
+          from pathlib import Path
+          import random
+          lines=[]
+          for raw in Path('artifacts/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              q=s.split()
+              if len(q)>=4: lines.append(' '.join(q[:4]))
+          rng=random.Random(327708)
+          rng.shuffle(lines)
+          chosen=lines[7050:7100]
+          if len(chosen)!=50: raise RuntimeError(f'expected 50 openings, got {len(chosen)}')
+          Path('artifacts/uho/openings.epd').write_text('\n'.join(chosen)+'\n',encoding='utf-8')
+          PY
+          make -C engine/build TOOLS_ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= arena
+
+      - name: 100-game serial H2H at 200 ms
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          OUT=artifacts/v327-correctness-bundle-v2-h2h
+          mkdir -p "$OUT"
+          ./engine/build/arena.exe \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_baseline.exe)" \
+            --player "uci:$(realpath engine/c/zchezz_v326/zchezz_candidate.exe)" \
+            --games 100 --threads 1 --movetime 200 --nodes 0 --max-plies 400 \
+            --openings artifacts/uho/openings.epd --seed 327708 \
+            --tt-mb 64 --uci-timeout 15000 \
+            --json "$OUT/result.json" --pgn "$OUT/games.pgn" 2>&1 | tee "$OUT/arena.log"
+          python - <<'PY'
+          from pathlib import Path
+          import json, math
+          p=json.loads(Path('artifacts/v327-correctness-bundle-v2-h2h/result.json').read_text())['pairings'][0]
+          w,d,l=int(p['l']),int(p['d']),int(p['w'])
+          n=w+d+l; s=(w+0.5*d)/n
+          elo=400*math.log10(s/(1-s)) if 0<s<1 else 0.0
+          second=(w+0.25*d)/n; var=max(0.0,second-s*s); se=math.sqrt(var/n)
+          deriv=400/math.log(10)/(s*(1-s)) if 0<s<1 else 0.0
+          ci=1.96*deriv*se
+          text=f'Candidate W-D-L: {w}-{d}-{l}\nScore: {100*s:.2f}%\nElo: {elo:+.1f}\n95% CI: ±{ci:.1f}\n'
+          Path('artifacts/v327-correctness-bundle-v2-h2h/summary.txt').write_text(text)
+          print(text)
+          PY
+          cat "$OUT/summary.txt" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Freeze tested source on branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/fix
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add engine/c/zchezz_v326/search.c
+          git diff --cached --quiet && { echo "No source diff to freeze"; exit 1; }
+          git commit -m "fix(v327): preserve checking moves across pruning gates"
+          git push --force-with-lease=refs/heads/fix/v327-search-correctness-bundle:${GITHUB_SHA} \
+            origin HEAD:refs/heads/fix/v327-search-correctness-bundle
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-search-correctness-bundle-v2-${{ github.run_id }}
+          path: |
+            /tmp/fix/artifacts/v327-correctness-bundle-v2-structure
+            /tmp/fix/artifacts/v327-correctness-bundle-v2-h2h
