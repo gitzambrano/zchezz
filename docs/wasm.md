@@ -9,7 +9,7 @@ make -C engine/build ENGINE=v325 wasm
 make -C engine/build ENGINE=v325 bundle
 ```
 
-The same targets can be used with `ENGINE=v500` when the v500 browser artifact is the intended output.
+The same targets can be used with `ENGINE=v506` when the v506 browser artifact is the intended output.
 
 Emscripten is required. Web builds define `NO_TABLEBASES` and `NO_BOOK` for native file-I/O integrations.
 
@@ -18,7 +18,7 @@ Emscripten is required. Web builds define `NO_TABLEBASES` and `NO_BOOK` for nati
 The bundle must embed the NNUE matching the selected engine:
 
 - v325 → NNU3, 426,864-byte installed file;
-- v500 → compact NNU4, 248,020-byte installed file.
+- v506 → compact NNU4, 248,020-byte installed file.
 
 The HTML template is architecture-neutral. Do not hard-code network dimensions in generic bundling code when they can be derived from the selected profile/artifact.
 

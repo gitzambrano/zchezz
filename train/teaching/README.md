@@ -1,6 +1,6 @@
 # Zchezz teaching pipeline
 
-This directory turns large chess corpora into reusable architecture-neutral teacher datasets. Expensive teacher work is performed once; v325/NNU3, v500/NNU4, and future value/policy networks can consume the same labels.
+This directory turns large chess corpora into reusable architecture-neutral teacher datasets. Expensive teacher work is performed once; v325/NNU3, v506/NNU4, and future value/policy networks can consume the same labels.
 
 ## Bare run
 
@@ -57,12 +57,12 @@ For Parquet-heavy archives, `train/labeling/process_positions.py` remains the ge
 - soft policy distributions with arbitrary temperature/top-K;
 - pairwise `(better_move, worse_move, margin)` targets for move ordering.
 
-For the **current v325 and v500 value trainers**, use the compatibility exporter:
+For the **current v325 and v506 value trainers**, use the compatibility exporter:
 
 ```bash
 python train/teaching/export_eval_bin.py
 python train/run.py --profile v325 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
-python train/run.py --profile v500 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v506 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
 ```
 
 `k=0` is required for this evaluator-only export: it tells the current trainer to learn the teacher evaluation instead of an unknown/placeholder game outcome. The exporter writes a JSON provenance manifest next to the `.bin`.

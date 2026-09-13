@@ -28,7 +28,7 @@ These identifiers define stable observable requirements. Tests should cite them 
 - **NNU3-02** — runtime H2 compaction preserves only L3-nonzero file neurons and pads the live set to the compiled SIMD slot count.
 - **NNU3-03** — mutable accumulator/cache state is private per search thread.
 
-## v500 / NNU4
+## v506 / NNU4
 
 - **NNU4-01** — HalfKP-4-Bucket feature indexing uses the documented perspective coordinate transform.
 - **NNU4-02** — concat order is `[stm, opp]`.

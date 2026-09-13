@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Export a v500 HalfKP-4-Bucket checkpoint to NNU4."""
+"""Export a v506 HalfKP-4-Bucket checkpoint to NNU4."""
 from __future__ import annotations
 import argparse, struct
 from pathlib import Path
 import numpy as np, torch
 ROOT=Path(__file__).resolve().parents[1]; L1_IN=2560; L1_OUT=48; L2_IN=96; L2_OUT=20; L3_IN=20
 QA=255.0; QB=64.0; SHIFT=8.0; QA_EFF=254.0; OUT_SCALE=320.0/(QB*QB); EXPECTED_SIZE=248_020
-DEFAULT_CKPT=ROOT/'checkpoints/v500/latest.pt'; DEFAULT_DST=ROOT/'artifacts/nnu4/nnue_weights.bin'
+DEFAULT_CKPT=ROOT/'checkpoints/v506/latest.pt'; DEFAULT_DST=ROOT/'artifacts/nnu4/nnue_weights.bin'
 def _q(a,scale,limit,dtype,name):
     q=np.rint(a*scale); n=int((np.abs(q)>limit).sum())
     if n: print(f'WARNING: clipping {n} {name} values')

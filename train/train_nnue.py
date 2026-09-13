@@ -4,7 +4,7 @@
 Importing this module exposes the complete NNU4 data/source infrastructure,
 including the private parsing helpers consumed by the NNU3 implementation.
 Executing it directly follows the repository default and trains v325. Select
-v500 explicitly with ``python train/run.py --profile v500``.
+v506 explicitly with ``python train/run.py --profile v506``.
 """
 from __future__ import annotations
 import importlib

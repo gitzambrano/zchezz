@@ -2,13 +2,13 @@
 
 Zchezz deliberately supports two incompatible NNUE families. Profile selection must happen before encoding, checkpoint loading, export or engine startup.
 
-## v326 / v325 — NNU3
+## v328 / v325 — NNU3
 
-Released installed file: `engine/c/zchezz_v326/nnue_weights.bin`
+Released installed file: `engine/c/zchezz_v328/nnue_weights.bin`
 
 Frozen comparison file: `engine/c/zchezz_v325/nnue_weights.bin`
 
-v3.26 reuses the v3.25 NNU3 weights unchanged; the release difference is in search selectivity, not evaluation.
+v3.28 reuses the v3.25 NNU3 weights unchanged; the release difference is in search selectivity, not evaluation.
 
 ### File contract
 
@@ -33,9 +33,9 @@ Each search thread has its own `NnueAccum`. The half-mirror contribution is main
 
 Weights are process-global read-only after load; mutable accumulator/search state is not shared between helpers.
 
-## v500 — NNU4 HalfKP-4-Bucket
+## v506 — NNU4 HalfKP-4-Bucket
 
-Installed file: `engine/c/zchezz_v500/nnue_weights.bin`
+Installed file: `engine/c/zchezz_v506/nnue_weights.bin`
 
 ```text
 magic       NNU4
@@ -59,9 +59,9 @@ A king move that changes its bucket invalidates all features for that perspectiv
 Canonical paths:
 
 ```text
-checkpoints/v326/latest.pt
+checkpoints/v328/latest.pt
 checkpoints/v325/latest.pt   # frozen baseline if reconstructed explicitly
-checkpoints/v500/latest.pt
+checkpoints/v506/latest.pt
 ```
 
 Checkpoint metadata must identify a compatible architecture before state tensors are loaded. Installed weights plus the corresponding importer must be sufficient to reconstruct a resumable checkpoint when no `.pt` exists.
@@ -69,14 +69,14 @@ Checkpoint metadata must identify a compatible architecture before state tensors
 ## Tools
 
 ```bash
-python tools/check_nnue.py                 # v326 default
-python tools/check_nnue.py --profile v326
+python tools/check_nnue.py                 # v328 default
+python tools/check_nnue.py --profile v328
 python tools/check_nnue.py --profile v325
-python tools/check_nnue.py --profile v500
+python tools/check_nnue.py --profile v506
 python train/import_nnu3.py
 python train/import_nnu4.py
 python train/export_nnu3.py
 python train/export_nnu4.py
 ```
 
-Never use an NNU3 importer/exporter/model with v500 or an NNU4 path with v325/v326.
+Never use an NNU3 importer/exporter/model with v506 or an NNU4 path with v325/v328.

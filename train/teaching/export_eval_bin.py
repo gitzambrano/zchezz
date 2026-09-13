@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export teaching value labels to the current Zchezz SAMPLE_DTYPE .bin.
 
-This is the compatibility bridge for the existing v325/NNU3 and v500/NNU4
+This is the compatibility bridge for the existing v325/NNU3 and v506/NNU4
 value trainers. Use k=0 for this exported source so training follows the
 teacher eval rather than the placeholder/unknown game outcome.
 """

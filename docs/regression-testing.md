@@ -28,7 +28,7 @@ A short paired H2H can detect catastrophic regressions. Promotion requires enoug
 
 ## Cross-family matches
 
-Use UCI subprocesses for v325-v500 or Zchezz-vs-Stockfish comparisons. Native in-process `arena` uses the v500-compatible host ABI and is intended for same-family native experiments.
+Use UCI subprocesses for v325-v506 or Zchezz-vs-Stockfish comparisons. Native in-process `arena` uses the v506-compatible host ABI and is intended for same-family native experiments.
 
 ## Stockfish
 

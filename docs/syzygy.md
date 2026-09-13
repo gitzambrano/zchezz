@@ -8,7 +8,7 @@ The shared Makefile enables Fathom only when the expected source/header pair is 
 
 ```bash
 make -C engine/build ENGINE=v325 native
-make -C engine/build ENGINE=v500 native
+make -C engine/build ENGINE=v506 native
 ```
 
 Both commands must remain buildable without local tablebases.

@@ -11,9 +11,9 @@ pip install -e ".[dev]"
 python tools/check_repo.py
 python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py -q
 make -C engine/build ENGINE=v325 STATIC_FLAG= ARCH_FLAGS= native
-make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= native
+make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS= native
 python tools/check_nnue.py --profile v325
-python tools/check_nnue.py --profile v500
+python tools/check_nnue.py --profile v506
 ```
 
 CI does not commit/push, train networks, play long tournaments, publish releases, run heavyweight browser setup or mutate branches.
@@ -32,7 +32,7 @@ Local execution is authoritative for deeper validation. Relevant checks include:
 
 ## Default profile
 
-Public orchestration defaults to v325. Use explicit `--profile v500` or `ENGINE=v500` only when the v500 family is the intended subject.
+Public orchestration defaults to v325. Use explicit `--profile v506` or `ENGINE=v506` only when the v506 family is the intended subject.
 
 ## Result semantics
 

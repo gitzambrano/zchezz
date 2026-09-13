@@ -24,9 +24,9 @@ The search stack includes:
 
 The v325 TT uses three 10-byte entries inside a 32-byte aligned cluster. Entries store a 16-bit key fragment, compact depth/generation/bound metadata, compact move, score and static evaluation. Hash size is dynamically allocated from the UCI `Hash` setting.
 
-## v500
+## v506
 
-v500 has its own search implementation/API. Do not assume its internal `SearchState`, TT or NNUE instance ABI is source-compatible with v325. Generic comparisons use UCI processes.
+v506 has its own search implementation/API. Do not assume its internal `SearchState`, TT or NNUE instance ABI is source-compatible with v325. Generic comparisons use UCI processes.
 
 ## Strength interpretation
 

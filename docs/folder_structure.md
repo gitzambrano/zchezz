@@ -11,9 +11,9 @@ docs/                          maintained project documentation
 engine/ACTIVE_ENGINE           `v325`
 engine/build/                   shared build/bundle infrastructure
 engine/c/zchezz_v325/          default UCI engine, NNU3
-engine/c/zchezz_v500/          supported secondary UCI engine, NNU4
+engine/c/zchezz_v506/          supported secondary UCI engine, NNU4
 engine/c/zchezz_v314..v324/    historical v3 snapshots
-engine/c/tools/                 native self-play/arena/GA tools, v500-host API
+engine/c/tools/                 native self-play/arena/GA tools, v506-host API
 engine/c/tests/                 C invariant harness
 
 train/                         architecture-neutral data + profile-specific NNUE code
@@ -26,7 +26,7 @@ artifacts/                     generated test/evidence output
 
 ## Supported engine files
 
-Both `zchezz_v325/` and `zchezz_v500/` contain the engine-facing source modules:
+Both `zchezz_v325/` and `zchezz_v506/` contain the engine-facing source modules:
 
 - `main.c` — UCI process, options and search-thread orchestration;
 - `board.c/.h` — position representation, move generation/make-unmake, hashing;
@@ -36,13 +36,13 @@ Both `zchezz_v325/` and `zchezz_v500/` contain the engine-facing source modules:
 - `book.c/.h`, `poly_keys.h` — Polyglot opening book support;
 - `nnue_weights.bin` — installed network for that profile.
 
-The evaluator contracts differ; never copy an NNU3 binary into v500 or an NNU4 binary into v325.
+The evaluator contracts differ; never copy an NNU3 binary into v506 or an NNU4 binary into v325.
 
 ## Training
 
-`train/run.py` is the profile-aware training entry point. `train/_train_nnu3_core.py` and `train/_train_nnu4_core.py` are family implementations. `encoding_nnu3.py` / `model_nnu3.py` belong to v325; `encoding.py` / `model.py` belong to v500.
+`train/run.py` is the profile-aware training entry point. `train/_train_nnu3_core.py` and `train/_train_nnu4_core.py` are family implementations. `encoding_nnu3.py` / `model_nnu3.py` belong to v325; `encoding.py` / `model.py` belong to v506.
 
-`checkpoints/v325/latest.pt` and `checkpoints/v500/latest.pt` are the canonical resumable checkpoints when present.
+`checkpoints/v325/latest.pt` and `checkpoints/v506/latest.pt` are the canonical resumable checkpoints when present.
 
 ## Historical utilities
 

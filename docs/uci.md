@@ -32,4 +32,4 @@ Tests, not documentation prose, are authoritative for the exact option inventory
 
 ## Cross-family use
 
-Treat UCI as the stable boundary between v325, v500 and external engines such as Stockfish. Do not link v325 and v500 search/evaluator internals into one generic comparison process.
+Treat UCI as the stable boundary between v325, v506 and external engines such as Stockfish. Do not link v325 and v506 search/evaluator internals into one generic comparison process.

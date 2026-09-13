@@ -4,7 +4,7 @@ A release is an evidence package, not just a successful compile.
 
 ## 1. Identify the profile and exact inputs
 
-Record candidate Git SHA/profile, baseline SHA/profile, installed NNUE SHA-256 and relevant local resources. The repository default is v325; v500 remains secondary until explicitly promoted.
+Record candidate Git SHA/profile, baseline SHA/profile, installed NNUE SHA-256 and relevant local resources. The repository default is v325; v506 remains secondary until explicitly promoted.
 
 ## 2. Repository and deterministic checks
 
@@ -14,9 +14,9 @@ At minimum:
 python tools/check_repo.py
 python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py -q
 make -C engine/build ENGINE=v325 STATIC_FLAG= ARCH_FLAGS= native
-make -C engine/build ENGINE=v500 STATIC_FLAG= ARCH_FLAGS= native
+make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS= native
 python tools/check_nnue.py --profile v325
-python tools/check_nnue.py --profile v500
+python tools/check_nnue.py --profile v506
 ```
 
 Run additional perft, UCI, C-invariant, sanitizer or web gates relevant to the changed surface. A skipped gate is missing evidence, not a pass.

@@ -5,11 +5,11 @@ The shared build entry point is `engine/build/Makefile`.
 ## Defaults
 
 ```text
-ENGINE ?= v326
-TOOLS_ENGINE ?= v500
+ENGINE ?= v328
+TOOLS_ENGINE ?= v506
 ```
 
-`ENGINE` selects the UCI engine build. `TOOLS_ENGINE` selects the native in-process tool host because the current tool API follows the v500/NNU4 family. `v325` remains available as a frozen comparison build.
+`ENGINE` selects the UCI engine build. `TOOLS_ENGINE` selects the native in-process tool host because the current tool API follows the v506/NNU4 family. `v325` remains available as a frozen comparison build.
 
 ## Native engine
 
@@ -17,21 +17,21 @@ Linux/macOS:
 
 ```bash
 make -C engine/build native
-make -C engine/build ENGINE=v326 native
+make -C engine/build ENGINE=v328 native
 make -C engine/build ENGINE=v325 native
-make -C engine/build ENGINE=v500 native
+make -C engine/build ENGINE=v506 native
 ```
 
 Windows:
 
 ```bat
 mingw32-make -C engine/build native
-mingw32-make -C engine/build ENGINE=v326 native
+mingw32-make -C engine/build ENGINE=v328 native
 mingw32-make -C engine/build ENGINE=v325 native
-mingw32-make -C engine/build ENGINE=v500 native
+mingw32-make -C engine/build ENGINE=v506 native
 ```
 
-A bare shared build means v326.
+A bare shared build means v328.
 
 ## Tablebases
 
@@ -42,18 +42,18 @@ The normal strength benchmark keeps tablebases disabled so results do not depend
 ## Other targets
 
 ```bash
-make -C engine/build ENGINE=v326 debug
-make -C engine/build ENGINE=v326 sanitize
-make -C engine/build ENGINE=v326 test-c
-make -C engine/build ENGINE=v326 wasm
-make -C engine/build ENGINE=v326 bundle
+make -C engine/build ENGINE=v328 debug
+make -C engine/build ENGINE=v328 sanitize
+make -C engine/build ENGINE=v328 test-c
+make -C engine/build ENGINE=v328 wasm
+make -C engine/build ENGINE=v328 bundle
 
-make -C engine/build ENGINE=v500 debug
-make -C engine/build ENGINE=v500 sanitize
-make -C engine/build ENGINE=v500 test-c
+make -C engine/build ENGINE=v506 debug
+make -C engine/build ENGINE=v506 sanitize
+make -C engine/build ENGINE=v506 test-c
 ```
 
-Native in-process data/arena tools use the v500 tool host:
+Native in-process data/arena tools use the v506 tool host:
 
 ```bash
 make -C engine/build selfplay
@@ -61,7 +61,7 @@ make -C engine/build arena
 make -C engine/build ga_tune
 ```
 
-Do not use those native tools as a cross-family ABI; use the Python/UCI runners when v326 and v500 must play each other. Use `ENGINE=v325` only when an explicit frozen-baseline comparison is needed.
+Do not use those native tools as a cross-family ABI; use the Python/UCI runners when v328 and v506 must play each other. Use `ENGINE=v325` only when an explicit frozen-baseline comparison is needed.
 
 ## CI portability
 

@@ -1,8 +1,8 @@
-# Shared build entrypoint. Bare invocations always target v327.
-ENGINE       ?= v327
+# Shared build entrypoint. Bare invocations always target v328.
+ENGINE       ?= v328
 # Native in-process arena/selfplay/GA need the NNU4 per-instance API.
-# v505 is the supported NNU4 host; cross-family work uses UCI runners.
-TOOLS_ENGINE ?= v505
+# v506 is the supported NNU4 host; cross-family work uses UCI runners.
+TOOLS_ENGINE ?= v506
 ARCH_FLAGS   ?= -mavx2
 STATIC_FLAG  ?= -static
 
@@ -46,7 +46,7 @@ EMFLAGS = -O3 -std=c11 -msimd128 -DNO_TABLEBASES -DNO_BOOK \
           -s 'EXPORTED_FUNCTIONS=["_board_apply_moves","_board_init","_search_init","_board_load_fen","_search_best_sret","_nnue_load_from_mem","_nnue_reset_global","_nnue_ready","_malloc","_free"]' \
           -s 'EXPORTED_RUNTIME_METHODS=["ccall","cwrap","HEAPU8"]' \
           -s ALLOW_MEMORY_GROWTH=1 -s INITIAL_MEMORY=268435456 \
-          -s MAXIMUM_MEMORY=536870912 -s STACK_SIZE=4194304 \
+          -s MAXIMUM_MEMORY=536870912 -s TOTAL_STACK=4194304 \
           -s 'ENVIRONMENT=web,worker' -s NO_EXIT_RUNTIME=1
 WASM_SRCS = $(CORE_SRCS)
 WASM_TEMPLATE = zchezz_wasm.html

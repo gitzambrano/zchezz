@@ -7,4 +7,4 @@ def test_files_and_bodies_match():
     assert _body(ROOT/"AGENTS.md") == _body(ROOT/"CLAUDE.md")
 def test_dual_family_contract_is_explicit():
     text=(ROOT/"AGENTS.md").read_text(encoding="utf-8")
-    for token in ("`v325`","`v500`","engine/ACTIVE_ENGINE","GitHub Actions","latest.pt"): assert token in text
+    for token in ("`v327`","`v506`","engine/ACTIVE_ENGINE","GitHub Actions","latest.pt"): assert token in text
