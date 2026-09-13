@@ -1,0 +1,51 @@
+name: v3.27 correctness macOS smoke
+
+on:
+  push:
+    branches: ["test/v327-correctness-macos"]
+    paths:
+      - ".github/workflows/v327-correctness-macos-smoke.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Materialize correctness bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/apply_v327_search_correctness_bundle.py
+          git diff --check
+      - name: Unit-test pre-pruning check classifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          s=Path('engine/c/zchezz_v326/search.c').read_text(encoding='utf-8')
+          m=re.search(r'static inline int move_gives_check_pre\(const Board \*bd, const Move \*m\) \{.*?\n\}', s, re.S)
+          if not m: raise RuntimeError('move_gives_check_pre helper not found')
+          helper=m.group(0)
+          test=f'''#include <stdio.h>\n#include <stdlib.h>\n#include "board.h"\n\n{helper}\n\nstatic void check_case(const char *fen, const char *uci, int expected) {{\n    Board b = {{0}}; board_bind_undo_global(&b); board_bind_nnue_global(&b);\n    if (!board_load_fen(&b, fen)) exit(2);\n    Move m = {{0}}; if (!move_from_uci(&b, uci, &m)) exit(3);\n    int got = move_gives_check_pre(&b, &m);\n    if (got != expected) {{ fprintf(stderr, "%s expected %d got %d\\n", uci, expected, got); exit(4); }}\n}}\nint main(void) {{\n    board_init();\n    check_case("4k3/8/8/8/8/8/4B3/K3R3 w - - 0 1", "e2f3", 1);\n    check_case("4k3/8/8/8/8/8/4N3/K3R3 w - - 0 1", "e2c3", 1);\n    check_case("4k3/8/3P4/8/8/8/8/K7 w - - 0 1", "d6d7", 1);\n    check_case("4k3/8/8/8/1R6/8/8/K7 w - - 0 1", "b4b5", 0);\n    check_case("4k3/8/8/8/1R6/8/8/K7 w - - 0 1", "b4e4", 1);\n    check_case("4k3/8/8/3n4/4P3/8/8/K3R3 w - - 0 1", "e4d5", 1);\n    check_case("7k/8/8/3Pp3/8/8/8/B6K w - e6 0 1", "d5e6", 1);\n    puts("pre-pruning check classifier: OK"); return 0;\n}}\n'''
+          Path('/tmp/test_check_pre.c').write_text(test,encoding='utf-8')
+          PY
+          clang -O2 -D_GNU_SOURCE -std=c11 -Iengine/c/zchezz_v326 \
+            -o /tmp/test_check_pre /tmp/test_check_pre.c \
+            engine/c/zchezz_v326/board.c engine/c/zchezz_v326/nnue.c -lm
+          /tmp/test_check_pre
+      - name: Build and standard tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python3 tests/test_perft.py --version v326
+          python3 tests/test_uci_extended.py --version v326
+          python3 tools/check_nnue.py --profile v326
