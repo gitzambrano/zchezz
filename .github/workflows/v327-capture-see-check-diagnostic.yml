@@ -1,0 +1,114 @@
+name: v3.27 capture SEE check diagnostic
+
+on:
+  push:
+    branches: [investigate/v327-preprune-checks]
+    paths:
+      - ".github/workflows/v327-capture-see-check-diagnostic.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  capture-see-diagnostic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize observe-only diagnostic from promoted v3.26
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git worktree add --detach /tmp/diag origin/main
+          cp tests/instrument_v327_capture_see_checks.py /tmp/diag/tests/
+          cd /tmp/diag
+          python tests/instrument_v327_capture_see_checks.py
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= TB_DEFS=-DNO_TABLEBASES native
+
+      - name: Standard correctness smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd /tmp/diag
+          make -C engine/build ENGINE=v326 STATIC_FLAG= ARCH_FLAGS= test-c
+          python tests/test_perft.py --version v326
+          python tests/test_uci_extended.py --version v326
+          python tools/check_nnue.py --profile v326
+
+      - name: Sweep pinned UHO positions at fixed depth
+        shell: bash
+        env:
+          BOOK_COMMIT: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/uho
+          curl -L --fail --retry 3 --retry-delay 2 \
+            "https://raw.githubusercontent.com/official-stockfish/books/${BOOK_COMMIT}/UHO_4060_v4.epd.zip" \
+            -o /tmp/uho/uho.zip
+          EPD_NAME="$(unzip -Z1 /tmp/uho/uho.zip | grep -Ei '\.epd$' | head -n1)"
+          unzip -p /tmp/uho/uho.zip "$EPD_NAME" > /tmp/uho/all.epd
+          cd /tmp/diag
+          python - <<'PY'
+          from pathlib import Path
+          import random, re, subprocess, threading, time
+
+          lines=[]
+          for raw in Path('/tmp/uho/all.epd').read_text(encoding='utf-8',errors='replace').splitlines():
+              s=raw.strip()
+              if not s or s.startswith('#'): continue
+              p=s.split()
+              if len(p)>=4: lines.append(' '.join(p[:4]))
+          rng=random.Random(327778)
+          rng.shuffle(lines)
+          fens=lines[7100:7180]
+          if len(fens)!=80: raise RuntimeError('missing UHO positions')
+
+          exe=Path('engine/c/zchezz_v326/zchezz.exe').resolve()
+          p=subprocess.Popen([str(exe)],cwd=exe.parent,text=True,bufsize=1,
+                             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+          err=[]
+          def drain_err():
+              for line in p.stderr: err.append(line.rstrip())
+          t=threading.Thread(target=drain_err,daemon=True); t.start()
+          def send(x): p.stdin.write(x+'\n'); p.stdin.flush()
+          def until(prefix,timeout=120):
+              end=time.time()+timeout
+              while time.time()<end:
+                  line=p.stdout.readline()
+                  if not line: raise RuntimeError('engine stdout closed')
+                  if line.startswith(prefix): return line.strip()
+              raise TimeoutError(prefix)
+          send('uci'); until('uciok')
+          send('setoption name Threads value 1')
+          send('setoption name Hash value 64')
+          send('isready'); until('readyok')
+          for fen in fens:
+              send('ucinewgame')
+              send('position fen '+fen)
+              send('go depth 8')
+              until('bestmove ')
+          send('quit'); p.wait(timeout=30); t.join(timeout=5)
+          if p.returncode: raise RuntimeError(f'engine rc={p.returncode}')
+          text='\n'.join(err)
+          ms=re.findall(r'\[CAPSEE_CHECK_DIAG\] pruned=(\d+) legal=(\d+) actual_check=(\d+)',text)
+          if not ms: raise RuntimeError('capture SEE diagnostic line missing')
+          pruned,legal,checks=map(int,ms[-1])
+          summary=(f'Capture SEE candidates pruned: {pruned}\n'
+                   f'Legal pruned captures: {legal}\n'
+                   f'Legal pruned captures that actually give check: {checks}\n')
+          print(summary)
+          Path('/tmp/capture-see-summary.txt').write_text(summary)
+          if checks == 0:
+              print('No checking capture was dynamically discarded in this sample; hypothesis not proven.')
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: v327-capture-see-check-diagnostic-${{ github.run_id }}
+          path: /tmp/capture-see-summary.txt
