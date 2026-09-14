@@ -6,6 +6,7 @@ on:
       - .github/workflows/v507-global-projection.yml
       - train/global_features.py
       - train/teaching/train_global_projection_nnu4.py
+      - train/teaching/train_global_projection_info_nnu4.py
       - train/export_nnu4_global.py
       - tools/make_nnu4_global_runtime.py
       - train/teaching/selfsearch_methods.py
@@ -75,7 +76,7 @@ jobs:
             set -- $SPEC
             NAME=$1
             FSET=$2
-            python train/teaching/train_global_projection_nnu4.py \
+            python train/teaching/train_global_projection_info_nnu4.py \
               --input data/teaching/v507_global_rootprobe \
               --init-weights engine/c/zchezz_v506/nnue_weights.bin \
               --output "checkpoints/v507/${NAME}.pt" \
