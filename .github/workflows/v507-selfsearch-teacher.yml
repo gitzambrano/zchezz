@@ -1,0 +1,119 @@
+name: v507 self-search teacher
+on:
+  push:
+    branches: [exp/v507-selfsearch-teacher]
+    paths:
+      - .github/workflows/v507-selfsearch-teacher.yml
+permissions: {contents: write}
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  train-and-screen:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install stack
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Build baselines
+        run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tools/check_nnue.py engine/c/zchezz_v507r/nnue_weights.bin --profile v506
+      - name: Build pinned Stockfish 19 reference
+        run: |
+          git clone --depth=1 --branch sf_19 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish19
+          make -C /tmp/stockfish19/src -j2 build ARCH=x86-64-avx2
+          test -x /tmp/stockfish19/src/stockfish
+      - name: Generate broad replay corpus
+        run: |
+          rm -rf data/v507_self_v506 data/v507_self_v328
+          python tests/run_selfplay.py --profile v506 --games 32 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_self_v506
+          python tests/run_selfplay.py --profile v328 --games 32 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_self_v328
+          cat $(find data/v507_self_v506 data/v507_self_v328 -name '*.epd' -type f | sort) > /tmp/v507_self_mix.epd
+          test -s /tmp/v507_self_mix.epd
+          wc -l /tmp/v507_self_mix.epd
+      - name: Deep v507r self-search teaching
+        run: |
+          export ZCHEZZ_STOCKFISH="$GITHUB_WORKSPACE/engine/c/zchezz_v507r/zchezz.exe"
+          python train/teacher.py \
+            --input /tmp/v507_self_mix.epd \
+            --output data/teaching/v507_self_teacher \
+            --limit 10000 --workers 4 --batch-size 64 --max-in-flight 8 \
+            --policy-sample-rate 0.90 --shallow-nodes 8000 --deep-nodes 40000 \
+            --gap-hard-cp 45 --search-interest 0.25 --deep-interest 0.70 --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_self_teacher
+      - name: Train self-search policy variants
+        run: |
+          for SPEC in "ss0 0.00" "ss15 0.15" "ss30 0.30"; do
+            set -- $SPEC
+            NAME=$1
+            REF=$2
+            python train/teaching/train_policy_trust_nnu4.py \
+              --input data/teaching/v507_self_teacher \
+              --init-weights engine/c/zchezz_v507r/nnue_weights.bin \
+              --output "checkpoints/v507/${NAME}.pt" \
+              --reference-engine /tmp/stockfish19/src/stockfish \
+              --reference-nodes 8000 --reference-weight "$REF" --reference-hash-mb 32 \
+              --epochs 8 --batch-groups 64 --replay-per-group 2 \
+              --lr 0.000008 --weight-decay 0.0001 \
+              --temperature-cp 110 --value-weight 0.0 --rank-weight 0.12 \
+              --min-rank-margin-cp 20 --preserve-weight 0.25 --preserve-scale-cp 32 \
+              --freeze-l1-epochs 2 --device cpu
+          done
+      - name: Materialize and validate candidates
+        run: |
+          for NAME in ss0 ss15 ss30; do
+            DIR="engine/c/zchezz_v507${NAME}"
+            rm -rf "$DIR"
+            cp -a engine/c/zchezz_v507r "$DIR"
+            rm -f "$DIR/zchezz.exe" "$DIR/zchezz"
+            python train/export_nnu4.py --checkpoint "checkpoints/v507/${NAME}.pt" --output "$DIR/nnue_weights.bin"
+            make -C engine/build ENGINE="v507${NAME}" STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+            EXE="$GITHUB_WORKSPACE/$DIR/zchezz.exe"
+            python tests/test_perft.py --exe "$EXE"
+            python tests/test_uci_extended.py --exe "$EXE"
+          done
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 48-game screen ss0 vs v507r
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507ss0/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-ss0 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss0.json
+          cat /tmp/ss0.json
+      - name: 48-game screen ss15 vs v507r
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507ss15/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-ss15 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss15.json
+          cat /tmp/ss15.json
+      - name: 48-game screen ss30 vs v507r
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507ss30/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-ss30 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss30.json
+          cat /tmp/ss30.json
+      - name: Freeze source-only candidates
+        run: |
+          rm -f engine/c/zchezz_v507ss*/zchezz.exe engine/c/zchezz_v507ss*/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507ss0 engine/c/zchezz_v507ss15 engine/c/zchezz_v507ss30
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): freeze self-search teacher variants'
+          git push origin HEAD:exp/v507-selfsearch-teacher
