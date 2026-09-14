@@ -1,0 +1,50 @@
+name: v507r replication gate
+on:
+  push:
+    branches: [exp/v507-selfsearch-teacher]
+    paths:
+      - .github/workflows/v507r-replication-gate.yml
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  robust:
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - name: Build v507r and v506
+        run: |
+          make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+      - name: Smoke v507r
+        run: |
+          EXE="$GITHUB_WORKSPACE/engine/c/zchezz_v507r/zchezz.exe"
+          python tests/test_perft.py --exe "$EXE"
+          python tests/test_uci_extended.py --exe "$EXE"
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 50-game independent shard
+        run: |
+          SEED=$((5078400 + ${{ matrix.shard }}))
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507r/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-trust --label-b v506 --pairs 25 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed "$SEED" --max-plies 400 \
+            --json "/tmp/v507r-repl-${{ matrix.shard }}.json"
+          cat "/tmp/v507r-repl-${{ matrix.shard }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v507r-repl-${{ matrix.shard }}
+          path: /tmp/v507r-repl-${{ matrix.shard }}.json
