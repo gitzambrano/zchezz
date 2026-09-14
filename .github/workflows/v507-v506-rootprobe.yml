@@ -1,0 +1,143 @@
+name: v507 v506 root-probe control
+on:
+  push:
+    branches: [exp/v507-v506-rootprobe]
+    paths:
+      - .github/workflows/v507-v506-rootprobe.yml
+      - train/teaching/selfsearch_methods.py
+      - train/teaching/backends.py
+      - train/teaching/train_policy_trust_nnu4.py
+permissions: {contents: write}
+concurrency:
+  group: v507-v506-rootprobe
+  cancel-in-progress: true
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  train-and-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install stack
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Build baselines
+        run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tools/check_nnue.py engine/c/zchezz_v506/nnue_weights.bin --profile v506
+      - name: Build pinned Stockfish 19 reference
+        run: |
+          git clone --depth=1 --branch sf_19 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish19
+          make -C /tmp/stockfish19/src -j2 build ARCH=x86-64-avx2
+          test -x /tmp/stockfish19/src/stockfish
+      - name: Generate mostly on-policy v506 replay corpus
+        run: |
+          rm -rf data/v507_v506_self data/v507_v506_v328
+          python tests/run_selfplay.py \
+            --exe engine/c/zchezz_v506/zchezz.exe --engine-label v506 \
+            --games 24 --concurrency 2 --movetime 35 --max-plies 220 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_v506_self
+          python tests/run_selfplay.py \
+            --profile v328 --games 8 --concurrency 2 --movetime 35 --max-plies 220 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_v506_v328
+          cat $(find data/v507_v506_self data/v507_v506_v328 -name '*.epd' -type f | sort) > /tmp/v507_v506_mix.epd
+          test -s /tmp/v507_v506_mix.epd
+          wc -l /tmp/v507_v506_mix.epd
+      - name: Explicit root-probe v506 teaching
+        run: |
+          export ZCHEZZ_STOCKFISH="$GITHUB_WORKSPACE/engine/c/zchezz_v506/zchezz.exe"
+          python train/teacher.py \
+            --input /tmp/v507_v506_mix.epd \
+            --output data/teaching/v507_v506_rootprobe \
+            --limit 4000 --workers 4 --batch-size 32 --max-in-flight 8 \
+            --methods root_probe_policy --plugin train.teaching.selfsearch_methods \
+            --shallow-nodes 2000 --deep-nodes 2000 --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_v506_rootprobe
+          python - <<'PY'
+          from train.teaching.format import TeachingDataset, MISSING_CP
+          ds=TeachingDataset('data/teaching/v507_v506_rootprobe')
+          n=len(ds.positions)
+          moves=sum(len(ds.moves_for(i)) for i in range(n))
+          refined=sum(sum(int(m['search_cp']) != int(MISSING_CP) for m in ds.moves_for(i)) for i in range(n))
+          print(f'rootprobe positions={n} moves={moves} refined={refined} avg_moves={moves/max(1,n):.2f} avg_refined={refined/max(1,n):.2f}')
+          assert n >= 1000
+          assert refined >= 4*n
+          PY
+      - name: Train v506-rootprobe variants
+        run: |
+          for SPEC in "b0 0.00 0.00" "bv10 0.00 0.10" "b15 0.15 0.00"; do
+            set -- $SPEC
+            NAME=$1
+            REF=$2
+            VALUE=$3
+            python train/teaching/train_policy_trust_nnu4.py \
+              --input data/teaching/v507_v506_rootprobe \
+              --init-weights engine/c/zchezz_v506/nnue_weights.bin \
+              --output "checkpoints/v507/${NAME}.pt" \
+              --reference-engine /tmp/stockfish19/src/stockfish \
+              --reference-nodes 2000 --reference-weight "$REF" --reference-hash-mb 32 \
+              --epochs 8 --batch-groups 64 --replay-per-group 2 \
+              --lr 0.000008 --weight-decay 0.0001 \
+              --temperature-cp 110 --value-weight "$VALUE" --rank-weight 0.12 \
+              --min-rank-margin-cp 20 --preserve-weight 0.25 --preserve-scale-cp 32 \
+              --freeze-l1-epochs 2 --device cpu
+          done
+      - name: Materialize and validate candidates
+        run: |
+          for NAME in b0 bv10 b15; do
+            DIR="engine/c/zchezz_v507${NAME}"
+            rm -rf "$DIR"
+            cp -a engine/c/zchezz_v506 "$DIR"
+            rm -f "$DIR/zchezz.exe" "$DIR/zchezz"
+            python train/export_nnu4.py --checkpoint "checkpoints/v507/${NAME}.pt" --output "$DIR/nnue_weights.bin"
+            make -C engine/build ENGINE="v507${NAME}" STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+            EXE="$GITHUB_WORKSPACE/$DIR/zchezz.exe"
+            python tests/test_perft.py --exe "$EXE"
+            python tests/test_uci_extended.py --exe "$EXE"
+          done
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 64-game screen b0 vs v506
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507b0/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-b0 --label-b v506 --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078601 --max-plies 400 --json /tmp/b0.json
+          cat /tmp/b0.json
+      - name: 64-game screen bv10 vs v506
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507bv10/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-bv10 --label-b v506 --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078601 --max-plies 400 --json /tmp/bv10.json
+          cat /tmp/bv10.json
+      - name: 64-game screen b15 vs v506
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507b15/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-b15 --label-b v506 --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078601 --max-plies 400 --json /tmp/b15.json
+          cat /tmp/b15.json
+      - name: Freeze source-only candidates
+        run: |
+          rm -f engine/c/zchezz_v507b*/zchezz.exe engine/c/zchezz_v507b*/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507b0 engine/c/zchezz_v507bv10 engine/c/zchezz_v507b15
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): freeze v506 root-probe controls'
+          git push origin HEAD:exp/v507-v506-rootprobe
