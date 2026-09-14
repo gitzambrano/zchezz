@@ -4,6 +4,7 @@ on:
     branches: [exp/v507-selfsearch-teacher]
     paths:
       - .github/workflows/v507-selfsearch-teacher.yml
+      - train/teaching/selfsearch_methods.py
 permissions: {contents: write}
 env:
   BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
@@ -40,15 +41,15 @@ jobs:
           cat $(find data/v507_self_v506 data/v507_self_v328 -name '*.epd' -type f | sort) > /tmp/v507_self_mix.epd
           test -s /tmp/v507_self_mix.epd
           wc -l /tmp/v507_self_mix.epd
-      - name: Deep v507r self-search teaching
+      - name: Deep v507r search-only teaching
         run: |
           export ZCHEZZ_STOCKFISH="$GITHUB_WORKSPACE/engine/c/zchezz_v507r/zchezz.exe"
           python train/teacher.py \
             --input /tmp/v507_self_mix.epd \
             --output data/teaching/v507_self_teacher \
-            --limit 10000 --workers 4 --batch-size 64 --max-in-flight 8 \
-            --policy-sample-rate 0.90 --shallow-nodes 8000 --deep-nodes 40000 \
-            --gap-hard-cp 45 --search-interest 0.25 --deep-interest 0.70 --no-resume
+            --limit 8000 --workers 4 --batch-size 64 --max-in-flight 8 \
+            --methods search_policy_all --plugin train.teaching.selfsearch_methods \
+            --shallow-nodes 12000 --deep-nodes 12000 --no-resume
           python train/teaching/inspect_dataset.py --input data/teaching/v507_self_teacher
       - name: Train self-search policy variants
         run: |
@@ -61,7 +62,7 @@ jobs:
               --init-weights engine/c/zchezz_v507r/nnue_weights.bin \
               --output "checkpoints/v507/${NAME}.pt" \
               --reference-engine /tmp/stockfish19/src/stockfish \
-              --reference-nodes 8000 --reference-weight "$REF" --reference-hash-mb 32 \
+              --reference-nodes 2000 --reference-weight "$REF" --reference-hash-mb 32 \
               --epochs 8 --batch-groups 64 --replay-per-group 2 \
               --lr 0.000008 --weight-decay 0.0001 \
               --temperature-cp 110 --value-weight 0.0 --rank-weight 0.12 \
