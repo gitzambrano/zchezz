@@ -1,0 +1,98 @@
+name: v507 ranking-only
+on:
+  push:
+    branches: [exp/v507-ranking-only]
+    paths: [.github/workflows/v507-ranking-only.yml]
+permissions: {contents: write}
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  train-and-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install stack
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Build pinned Stockfish 19 teacher
+        run: |
+          git clone --depth=1 --branch sf_19 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish19
+          make -C /tmp/stockfish19/src -j2 build ARCH=x86-64-avx2
+          SF=/tmp/stockfish19/src/stockfish
+          test -x "$SF"
+          "$SF" bench 1 1 8 default depth >/tmp/sf19-bench.txt 2>&1
+          head -5 /tmp/sf19-bench.txt
+          echo "ZCHEZZ_STOCKFISH=$SF" >> "$GITHUB_ENV"
+      - name: Validate trainer and baselines
+        run: |
+          python -m pytest tests/test_policy_children_export.py tests/test_policy_distill_nnu4.py tests/test_policy_trust_nnu4.py -q
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tools/check_nnue.py engine/c/zchezz_v507r/nnue_weights.bin --profile v506
+      - name: Generate mixed replay distribution
+        run: |
+          rm -rf data/v507_rank_v506 data/v507_rank_v328
+          python tests/run_selfplay.py --profile v506 --games 24 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_rank_v506
+          python tests/run_selfplay.py --profile v328 --games 24 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_rank_v328
+          cat $(find data/v507_rank_v506 data/v507_rank_v328 -name '*.epd' -type f | sort) > /tmp/v507_rank_mix.epd
+          test -s /tmp/v507_rank_mix.epd
+          wc -l /tmp/v507_rank_mix.epd
+      - name: Active SF19 move teaching
+        run: |
+          python train/teacher.py --input /tmp/v507_rank_mix.epd --output data/teaching/v507_rank_teacher --limit 8000 --workers 4 --batch-size 64 --max-in-flight 8 --policy-sample-rate 0.75 --shallow-nodes 6000 --deep-nodes 30000 --gap-hard-cp 70 --search-interest 0.35 --deep-interest 0.85 --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_rank_teacher
+      - name: Rank-only dual-teacher distillation
+        run: |
+          python train/teaching/train_policy_trust_nnu4.py \
+            --input data/teaching/v507_rank_teacher \
+            --init-weights engine/c/zchezz_v507r/nnue_weights.bin \
+            --output checkpoints/v507/ranking_only.pt \
+            --reference-engine engine/c/zchezz_v328/zchezz.exe \
+            --reference-nodes 4000 --reference-weight 0.60 --reference-hash-mb 32 \
+            --epochs 10 --batch-groups 64 --replay-per-group 3 \
+            --lr 0.000006 --weight-decay 0.0001 \
+            --temperature-cp 105 --value-weight 0.0 --rank-weight 0.30 \
+            --min-rank-margin-cp 18 --preserve-weight 0.30 --preserve-scale-cp 40 \
+            --freeze-l1-epochs 2 --device cpu
+      - name: Materialize and validate candidate
+        run: |
+          rm -rf engine/c/zchezz_v507q
+          cp -a engine/c/zchezz_v507r engine/c/zchezz_v507q
+          rm -f engine/c/zchezz_v507q/zchezz.exe engine/c/zchezz_v507q/zchezz
+          python train/export_nnu4.py --checkpoint checkpoints/v507/ranking_only.pt --output engine/c/zchezz_v507q/nnue_weights.bin
+          make -C engine/build ENGINE=v507q STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          EXE="$GITHUB_WORKSPACE/engine/c/zchezz_v507q/zchezz.exe"
+          python tests/test_perft.py --exe "$EXE"
+          python tests/test_uci_extended.py --exe "$EXE"
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: Paired UHO vs frozen v5.07 trust candidate
+        run: |
+          python tests/experiments/h2h_uci_paired.py --engine-a engine/c/zchezz_v507q/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe --label-a v507-rank-only --label-b v507-trust --pairs 12 --movetime-ms 200 --hash-mb 64 --threads 1 --opening-file "${UHO_EPD}" --opening-seed 5077701 --max-plies 360 --json /tmp/rank-v507r.json
+          cat /tmp/rank-v507r.json
+      - name: Paired UHO vs v5.06
+        run: |
+          python tests/experiments/h2h_uci_paired.py --engine-a engine/c/zchezz_v507q/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe --label-a v507-rank-only --label-b v506 --pairs 12 --movetime-ms 200 --hash-mb 64 --threads 1 --opening-file "${UHO_EPD}" --opening-seed 5077801 --max-plies 360 --json /tmp/rank-v506.json
+          cat /tmp/rank-v506.json
+      - name: Freeze source-only candidate
+        if: success()
+        run: |
+          rm -f engine/c/zchezz_v507q/zchezz.exe engine/c/zchezz_v507q/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507q
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): rank-only SF19 dual-teacher NNU4'
+          git push origin HEAD:exp/v507-ranking-only
