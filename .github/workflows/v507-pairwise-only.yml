@@ -29,16 +29,17 @@ jobs:
           echo "ZCHEZZ_STOCKFISH=/tmp/stockfish19/src/stockfish" >> "$GITHUB_ENV"
       - name: Build baselines and validate trainer
         run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
           make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
           make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
           python -m py_compile train/teaching/train_pairwise_trust_nnu4.py
           python tools/check_nnue.py engine/c/zchezz_v507r/nnue_weights.bin --profile v506
       - name: Generate mixed replay distribution
         run: |
-          rm -rf data/v507_pair_v507r data/v507_pair_v328
-          python tests/run_selfplay.py --profile v507r --games 24 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_pair_v507r
+          rm -rf data/v507_pair_v506 data/v507_pair_v328
+          python tests/run_selfplay.py --profile v506 --games 24 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_pair_v506
           python tests/run_selfplay.py --profile v328 --games 24 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_pair_v328
-          cat $(find data/v507_pair_v507r data/v507_pair_v328 -name '*.epd' -type f | sort) > /tmp/v507_pair_mix.epd
+          cat $(find data/v507_pair_v506 data/v507_pair_v328 -name '*.epd' -type f | sort) > /tmp/v507_pair_mix.epd
           test -s /tmp/v507_pair_mix.epd
           wc -l /tmp/v507_pair_mix.epd
       - name: Active SF19 move teaching
