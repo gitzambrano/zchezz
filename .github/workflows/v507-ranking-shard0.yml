@@ -1,0 +1,47 @@
+name: v507 ranking shard0
+on:
+  push:
+    branches: [exp/v507-ranking-only]
+    paths: [.github/workflows/v507-ranking-shard0.yml]
+permissions: {contents: read}
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  shard0:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - name: Build candidate and predecessor
+        run: |
+          make -C engine/build ENGINE=v507q STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+      - name: Candidate smoke
+        run: |
+          EXE="$GITHUB_WORKSPACE/engine/c/zchezz_v507q/zchezz.exe"
+          python tests/test_perft.py --exe "$EXE"
+          python tests/test_uci_extended.py --exe "$EXE"
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 50-game paired shard0 vs v507r
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507q/zchezz.exe \
+            --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-rank-only --label-b v507-trust \
+            --pairs 25 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5077900 --max-plies 400 \
+            --json /tmp/rank-0.json
+          cat /tmp/rank-0.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: v507-ranking-0
+          path: /tmp/rank-0.json
