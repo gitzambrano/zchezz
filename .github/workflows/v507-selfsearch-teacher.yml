@@ -5,6 +5,7 @@ on:
     paths:
       - .github/workflows/v507-selfsearch-teacher.yml
       - train/teaching/selfsearch_methods.py
+      - train/teaching/backends.py
 permissions: {contents: write}
 concurrency:
   group: v507-selfsearch-teacher
@@ -37,33 +38,50 @@ jobs:
           git clone --depth=1 --branch sf_19 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish19
           make -C /tmp/stockfish19/src -j2 build ARCH=x86-64-avx2
           test -x /tmp/stockfish19/src/stockfish
-      - name: Generate broad replay corpus
+      - name: Generate mostly on-policy replay corpus
         run: |
-          rm -rf data/v507_self_v506 data/v507_self_v328
-          python tests/run_selfplay.py --profile v506 --games 32 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_self_v506
-          python tests/run_selfplay.py --profile v328 --games 32 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_self_v328
-          cat $(find data/v507_self_v506 data/v507_self_v328 -name '*.epd' -type f | sort) > /tmp/v507_self_mix.epd
+          rm -rf data/v507_self_v507r data/v507_self_v328
+          python tests/run_selfplay.py \
+            --exe engine/c/zchezz_v507r/zchezz.exe --engine-label v507r \
+            --games 24 --concurrency 2 --movetime 35 --max-plies 220 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_self_v507r
+          python tests/run_selfplay.py \
+            --profile v328 --games 8 --concurrency 2 --movetime 35 --max-plies 220 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_self_v328
+          cat $(find data/v507_self_v507r data/v507_self_v328 -name '*.epd' -type f | sort) > /tmp/v507_self_mix.epd
           test -s /tmp/v507_self_mix.epd
           wc -l /tmp/v507_self_mix.epd
-      - name: Deep v507r search-only teaching
+      - name: Explicit root-probe v507r teaching
         run: |
           export ZCHEZZ_STOCKFISH="$GITHUB_WORKSPACE/engine/c/zchezz_v507r/zchezz.exe"
           python train/teacher.py \
             --input /tmp/v507_self_mix.epd \
-            --output data/teaching/v507_self_teacher \
-            --limit 8000 --workers 4 --batch-size 64 --max-in-flight 8 \
-            --methods search_policy_all --plugin train.teaching.selfsearch_methods \
-            --shallow-nodes 12000 --deep-nodes 12000 --no-resume
-          python train/teaching/inspect_dataset.py --input data/teaching/v507_self_teacher
-      - name: Train self-search variants
+            --output data/teaching/v507_rootprobe_teacher \
+            --limit 4000 --workers 4 --batch-size 32 --max-in-flight 8 \
+            --methods root_probe_policy --plugin train.teaching.selfsearch_methods \
+            --shallow-nodes 2000 --deep-nodes 2000 --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_rootprobe_teacher
+          python - <<'PY'
+          from train.teaching.format import TeachingDataset, MISSING_CP
+          ds=TeachingDataset('data/teaching/v507_rootprobe_teacher')
+          n=len(ds.positions)
+          moves=sum(len(ds.moves_for(i)) for i in range(n))
+          refined=sum(sum(int(m['search_cp']) != int(MISSING_CP) for m in ds.moves_for(i)) for i in range(n))
+          print(f'rootprobe positions={n} moves={moves} refined={refined} avg_moves={moves/max(1,n):.2f} avg_refined={refined/max(1,n):.2f}')
+          assert n >= 1000
+          assert refined >= 4*n
+          PY
+      - name: Train root-probe variants
         run: |
-          for SPEC in "ss0 0.00 0.00" "ssv10 0.00 0.10" "ss15 0.15 0.00"; do
+          for SPEC in "rp0 0.00 0.00" "rpv10 0.00 0.10" "rp15 0.15 0.00"; do
             set -- $SPEC
             NAME=$1
             REF=$2
             VALUE=$3
             python train/teaching/train_policy_trust_nnu4.py \
-              --input data/teaching/v507_self_teacher \
+              --input data/teaching/v507_rootprobe_teacher \
               --init-weights engine/c/zchezz_v507r/nnue_weights.bin \
               --output "checkpoints/v507/${NAME}.pt" \
               --reference-engine /tmp/stockfish19/src/stockfish \
@@ -76,7 +94,7 @@ jobs:
           done
       - name: Materialize and validate candidates
         run: |
-          for NAME in ss0 ssv10 ss15; do
+          for NAME in rp0 rpv10 rp15; do
             DIR="engine/c/zchezz_v507${NAME}"
             rm -rf "$DIR"
             cp -a engine/c/zchezz_v507r "$DIR"
@@ -93,33 +111,33 @@ jobs:
           curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
           unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
           test -s "${UHO_EPD}"
-      - name: 48-game screen ss0 vs v507r
+      - name: 64-game screen rp0 vs v507r
         run: |
           python tests/experiments/h2h_uci_paired.py \
-            --engine-a engine/c/zchezz_v507ss0/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
-            --label-a v507-ss0 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
-            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss0.json
-          cat /tmp/ss0.json
-      - name: 48-game screen ssv10 vs v507r
+            --engine-a engine/c/zchezz_v507rp0/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-rp0 --label-b v507-trust --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078501 --max-plies 400 --json /tmp/rp0.json
+          cat /tmp/rp0.json
+      - name: 64-game screen rpv10 vs v507r
         run: |
           python tests/experiments/h2h_uci_paired.py \
-            --engine-a engine/c/zchezz_v507ssv10/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
-            --label-a v507-ssv10 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
-            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ssv10.json
-          cat /tmp/ssv10.json
-      - name: 48-game screen ss15 vs v507r
+            --engine-a engine/c/zchezz_v507rpv10/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-rpv10 --label-b v507-trust --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078501 --max-plies 400 --json /tmp/rpv10.json
+          cat /tmp/rpv10.json
+      - name: 64-game screen rp15 vs v507r
         run: |
           python tests/experiments/h2h_uci_paired.py \
-            --engine-a engine/c/zchezz_v507ss15/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
-            --label-a v507-ss15 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
-            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss15.json
-          cat /tmp/ss15.json
+            --engine-a engine/c/zchezz_v507rp15/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-rp15 --label-b v507-trust --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078501 --max-plies 400 --json /tmp/rp15.json
+          cat /tmp/rp15.json
       - name: Freeze source-only candidates
         run: |
-          rm -f engine/c/zchezz_v507ss*/zchezz.exe engine/c/zchezz_v507ss*/zchezz
+          rm -f engine/c/zchezz_v507rp*/zchezz.exe engine/c/zchezz_v507rp*/zchezz
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add engine/c/zchezz_v507ss0 engine/c/zchezz_v507ssv10 engine/c/zchezz_v507ss15
+          git add engine/c/zchezz_v507rp0 engine/c/zchezz_v507rpv10 engine/c/zchezz_v507rp15
           if git diff --cached --quiet; then exit 0; fi
-          git commit -m 'candidate(v507): freeze self-search teacher variants'
+          git commit -m 'candidate(v507): freeze root-probe self-search variants'
           git push origin HEAD:exp/v507-selfsearch-teacher
