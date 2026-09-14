@@ -1,0 +1,75 @@
+name: v507 global projection smoke
+on:
+  push:
+    branches: [exp/v507-global-projection]
+    paths:
+      - .github/workflows/v507-global-projection-smoke.yml
+      - tools/make_nnu4_global_runtime.py
+      - train/export_nnu4_global.py
+      - train/global_features.py
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - name: Materialize base and zero-GLB1 runtime
+        run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tools/make_nnu4_global_runtime.py --source engine/c/zchezz_v506 --dest engine/c/zchezz_v507gz
+          cp engine/c/zchezz_v506/nnue_weights.bin engine/c/zchezz_v507gz/nnue_weights.bin
+          python - <<'PY'
+          import struct
+          from pathlib import Path
+          p=Path('engine/c/zchezz_v507gz/nnue_weights.bin')
+          p.write_bytes(p.read_bytes()+struct.pack('<4sII',b'GLB1',31,48)+bytes(31*48*2))
+          print('zero trailer bytes=',p.stat().st_size)
+          PY
+          make -C engine/build ENGINE=v507gz STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+      - name: Correctness
+        run: |
+          python tests/test_perft.py --exe engine/c/zchezz_v507gz/zchezz.exe
+          python tests/test_uci_extended.py --exe engine/c/zchezz_v507gz/zchezz.exe
+      - name: Zero projection search identity
+        run: |
+          python - <<'PY'
+          import chess, chess.engine
+          fens=[
+            chess.STARTING_FEN,
+            'r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 6',
+            'r2q1rk1/pp1bbppp/2np1n2/2p1p3/4P3/1PN1BN1P/PBPP1PP1/R2Q1RK1 w - - 2 10',
+            '8/5pk1/4p1p1/3pP3/3P1P2/5K2/8/8 w - - 0 40',
+            '8/8/3k4/3P4/3K4/8/8/8 w - - 0 1',
+          ]
+          ea=chess.engine.SimpleEngine.popen_uci('engine/c/zchezz_v506/zchezz.exe')
+          eb=chess.engine.SimpleEngine.popen_uci('engine/c/zchezz_v507gz/zchezz.exe')
+          try:
+            for fen in fens:
+              b=chess.Board(fen)
+              ia=ea.analyse(b,chess.engine.Limit(depth=8))
+              ib=eb.analyse(b,chess.engine.Limit(depth=8))
+              sa=ia['score'].pov(b.turn).score(mate_score=30000)
+              sb=ib['score'].pov(b.turn).score(mate_score=30000)
+              ma=ia['pv'][0].uci(); mb=ib['pv'][0].uci()
+              print(fen, 'base',sa,ma,'global-zero',sb,mb)
+              assert (sa,ma)==(sb,mb),(fen,sa,ma,sb,mb)
+          finally:
+            ea.quit(); eb.quit()
+          PY
+      - name: Global feature sanity
+        run: |
+          python - <<'PY'
+          import chess, numpy as np
+          from train.global_features import global_features_fen, quantize_features_256
+          a,b=global_features_fen(chess.STARTING_FEN)
+          assert a.shape==(31,) and b.shape==(31,)
+          assert np.allclose(a,b)
+          assert a[13]==1 and a[12]==1
+          assert a[14:30].sum()==0
+          q=quantize_features_256(a)
+          assert q[13]==256 and q[12]==256
+          print('startpos globals=',a.tolist())
+          PY
