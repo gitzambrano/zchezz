@@ -1,0 +1,95 @@
+name: v507 pairwise-only
+on:
+  push:
+    branches: [exp/v507-pairwise-only]
+    paths:
+      - .github/workflows/v507-pairwise-only.yml
+permissions: {contents: write}
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  train-and-screen:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install stack
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Build pinned Stockfish 19 teacher
+        run: |
+          git clone --depth=1 --branch sf_19 https://github.com/official-stockfish/Stockfish.git /tmp/stockfish19
+          make -C /tmp/stockfish19/src -j2 build ARCH=x86-64-avx2
+          test -x /tmp/stockfish19/src/stockfish
+          echo "ZCHEZZ_STOCKFISH=/tmp/stockfish19/src/stockfish" >> "$GITHUB_ENV"
+      - name: Build baselines and validate trainer
+        run: |
+          make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python -m py_compile train/teaching/train_pairwise_trust_nnu4.py
+          python tools/check_nnue.py engine/c/zchezz_v507r/nnue_weights.bin --profile v506
+      - name: Generate mixed replay distribution
+        run: |
+          rm -rf data/v507_pair_v507r data/v507_pair_v328
+          python tests/run_selfplay.py --profile v507r --games 24 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_pair_v507r
+          python tests/run_selfplay.py --profile v328 --games 24 --concurrency 2 --movetime 35 --max-plies 220 --opening-mode random --random-plies 6 --no-pgn --epd --no-bin --no-opening-in-epd --results-dir data/v507_pair_v328
+          cat $(find data/v507_pair_v507r data/v507_pair_v328 -name '*.epd' -type f | sort) > /tmp/v507_pair_mix.epd
+          test -s /tmp/v507_pair_mix.epd
+          wc -l /tmp/v507_pair_mix.epd
+      - name: Active SF19 move teaching
+        run: |
+          python train/teacher.py --input /tmp/v507_pair_mix.epd --output data/teaching/v507_pair_teacher --limit 8000 --workers 4 --batch-size 64 --max-in-flight 8 --policy-sample-rate 0.80 --shallow-nodes 6000 --deep-nodes 30000 --gap-hard-cp 60 --search-interest 0.35 --deep-interest 0.85 --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_pair_teacher
+      - name: Pairwise-only dual-teacher distillation
+        run: |
+          python train/teaching/train_pairwise_trust_nnu4.py \
+            --input data/teaching/v507_pair_teacher \
+            --init-weights engine/c/zchezz_v507r/nnue_weights.bin \
+            --output checkpoints/v507/pairwise_only.pt \
+            --reference-engine engine/c/zchezz_v328/zchezz.exe \
+            --reference-nodes 6000 --reference-weight 0.65 --reference-hash-mb 32 \
+            --epochs 6 --batch-groups 64 --replay-per-group 3 \
+            --lr 0.000002 --weight-decay 0.0001 \
+            --temperature-cp 105 --min-margin-cp 22 --margin-scale-cp 320 \
+            --preserve-weight 0.55 --preserve-scale-cp 30 \
+            --freeze-l1-epochs 4 --device cpu
+      - name: Materialize and validate candidate
+        run: |
+          rm -rf engine/c/zchezz_v507p
+          cp -a engine/c/zchezz_v507r engine/c/zchezz_v507p
+          rm -f engine/c/zchezz_v507p/zchezz.exe engine/c/zchezz_v507p/zchezz
+          python train/export_nnu4.py --checkpoint checkpoints/v507/pairwise_only.pt --output engine/c/zchezz_v507p/nnue_weights.bin
+          make -C engine/build ENGINE=v507p STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          EXE="$GITHUB_WORKSPACE/engine/c/zchezz_v507p/zchezz.exe"
+          python tests/test_perft.py --exe "$EXE"
+          python tests/test_uci_extended.py --exe "$EXE"
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: Paired UHO vs v507r
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507p/zchezz.exe \
+            --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-pairwise --label-b v507-trust \
+            --pairs 16 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078101 --max-plies 400 \
+            --json /tmp/pair-v507r.json
+          cat /tmp/pair-v507r.json
+      - name: Freeze source-only candidate
+        run: |
+          rm -f engine/c/zchezz_v507p/zchezz.exe engine/c/zchezz_v507p/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507p
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): pairwise-only SF19 dual-teacher NNU4'
+          git push origin HEAD:exp/v507-pairwise-only
