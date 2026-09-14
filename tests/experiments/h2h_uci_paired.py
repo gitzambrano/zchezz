@@ -85,6 +85,31 @@ def elo_from_score(score: float) -> float:
     return 400.0 * math.log10(score / (1.0 - score))
 
 
+def paired_bootstrap_ci(pair_scores: list[float], *, seed: int,
+                        samples: int = 20000, alpha: float = 0.05) -> dict:
+    """Bootstrap score/Elo uncertainty using opening pairs as the IID unit."""
+    n = len(pair_scores)
+    if n == 0:
+        return {"samples": 0, "score_lo": None, "score_hi": None,
+                "elo_lo": None, "elo_hi": None}
+    rng = random.Random(seed ^ 0x507B0057)
+    scores = []
+    for _ in range(max(1000, int(samples))):
+        scores.append(sum(pair_scores[rng.randrange(n)] for _ in range(n)) / n)
+    scores.sort()
+    lo_i = max(0, min(len(scores) - 1, int((alpha / 2.0) * len(scores))))
+    hi_i = max(0, min(len(scores) - 1, int((1.0 - alpha / 2.0) * len(scores)) - 1))
+    lo = scores[lo_i]
+    hi = scores[hi_i]
+    return {
+        "samples": len(scores),
+        "score_lo": lo,
+        "score_hi": hi,
+        "elo_lo": elo_from_score(lo),
+        "elo_hi": elo_from_score(hi),
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine-a", required=True)
@@ -114,8 +139,10 @@ def main() -> int:
 
     wins = draws = losses = 0
     game_no = 0
+    pair_scores: list[float] = []
     try:
         for pair_no, opening in enumerate(openings, 1):
+            this_pair: list[float] = []
             for swapped in (False, True):
                 game_no += 1
                 board = opening.copy(stack=False)
@@ -136,6 +163,7 @@ def main() -> int:
                 else:
                     a_won = (outcome.winner == chess.WHITE) == white_is_a
                     result_a = 1.0 if a_won else 0.0
+                this_pair.append(result_a)
 
                 if result_a == 1.0:
                     wins += 1
@@ -147,6 +175,7 @@ def main() -> int:
                     draws += 1
                     tag = "D"
                 print(f"game {game_no:03d} pair={pair_no:03d} swap={int(swapped)} result={tag} plies={board.ply()-start_ply}", flush=True)
+            pair_scores.append(sum(this_pair) / len(this_pair))
     finally:
         try:
             a.quit()
@@ -156,6 +185,7 @@ def main() -> int:
     total = wins + draws + losses
     score = (wins + 0.5 * draws) / total
     elo = elo_from_score(score)
+    ci = paired_bootstrap_ci(pair_scores, seed=args.opening_seed)
     payload = {
         "label_a": args.label_a,
         "label_b": args.label_b,
@@ -169,6 +199,8 @@ def main() -> int:
         "hash_mb": args.hash_mb,
         "threads": args.threads,
         "pairs": args.pairs,
+        "pair_scores_a": pair_scores,
+        "paired_bootstrap_95": ci,
         "opening_file": str(opening_path),
         "opening_seed": args.opening_seed,
     }
