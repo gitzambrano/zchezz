@@ -25,5 +25,12 @@ jobs:
           python train/teacher.py --input /tmp/smoke.epd --output /tmp/selfteacher-smoke \
             --limit 3 --workers 1 --batch-size 3 --max-in-flight 1 \
             --methods search_policy_all --plugin train.teaching.selfsearch_methods \
-            --shallow-nodes 100 --deep-nodes 100 --no-resume
+            --shallow-nodes 2000 --deep-nodes 2000 --no-resume
           python train/teaching/inspect_dataset.py --input /tmp/selfteacher-smoke
+          python - <<'PY'
+          from train.teaching.format import TeachingDataset
+          ds=TeachingDataset('/tmp/selfteacher-smoke')
+          counts=[len(ds.moves_for(i)) for i in range(len(ds.positions))]
+          print('moves_per_position=', counts)
+          assert min(counts) >= 2, counts
+          PY
