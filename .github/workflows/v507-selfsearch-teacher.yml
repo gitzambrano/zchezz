@@ -55,12 +55,13 @@ jobs:
             --methods search_policy_all --plugin train.teaching.selfsearch_methods \
             --shallow-nodes 12000 --deep-nodes 12000 --no-resume
           python train/teaching/inspect_dataset.py --input data/teaching/v507_self_teacher
-      - name: Train self-search policy variants
+      - name: Train self-search variants
         run: |
-          for SPEC in "ss0 0.00" "ss15 0.15" "ss30 0.30"; do
+          for SPEC in "ss0 0.00 0.00" "ssv10 0.00 0.10" "ss15 0.15 0.00"; do
             set -- $SPEC
             NAME=$1
             REF=$2
+            VALUE=$3
             python train/teaching/train_policy_trust_nnu4.py \
               --input data/teaching/v507_self_teacher \
               --init-weights engine/c/zchezz_v507r/nnue_weights.bin \
@@ -69,13 +70,13 @@ jobs:
               --reference-nodes 2000 --reference-weight "$REF" --reference-hash-mb 32 \
               --epochs 8 --batch-groups 64 --replay-per-group 2 \
               --lr 0.000008 --weight-decay 0.0001 \
-              --temperature-cp 110 --value-weight 0.0 --rank-weight 0.12 \
+              --temperature-cp 110 --value-weight "$VALUE" --rank-weight 0.12 \
               --min-rank-margin-cp 20 --preserve-weight 0.25 --preserve-scale-cp 32 \
               --freeze-l1-epochs 2 --device cpu
           done
       - name: Materialize and validate candidates
         run: |
-          for NAME in ss0 ss15 ss30; do
+          for NAME in ss0 ssv10 ss15; do
             DIR="engine/c/zchezz_v507${NAME}"
             rm -rf "$DIR"
             cp -a engine/c/zchezz_v507r "$DIR"
@@ -99,6 +100,13 @@ jobs:
             --label-a v507-ss0 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
             --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss0.json
           cat /tmp/ss0.json
+      - name: 48-game screen ssv10 vs v507r
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507ssv10/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
+            --label-a v507-ssv10 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ssv10.json
+          cat /tmp/ssv10.json
       - name: 48-game screen ss15 vs v507r
         run: |
           python tests/experiments/h2h_uci_paired.py \
@@ -106,19 +114,12 @@ jobs:
             --label-a v507-ss15 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
             --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss15.json
           cat /tmp/ss15.json
-      - name: 48-game screen ss30 vs v507r
-        run: |
-          python tests/experiments/h2h_uci_paired.py \
-            --engine-a engine/c/zchezz_v507ss30/zchezz.exe --engine-b engine/c/zchezz_v507r/zchezz.exe \
-            --label-a v507-ss30 --label-b v507-trust --pairs 24 --movetime-ms 200 --hash-mb 64 --threads 1 \
-            --opening-file "${UHO_EPD}" --opening-seed 5078301 --max-plies 400 --json /tmp/ss30.json
-          cat /tmp/ss30.json
       - name: Freeze source-only candidates
         run: |
           rm -f engine/c/zchezz_v507ss*/zchezz.exe engine/c/zchezz_v507ss*/zchezz
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add engine/c/zchezz_v507ss0 engine/c/zchezz_v507ss15 engine/c/zchezz_v507ss30
+          git add engine/c/zchezz_v507ss0 engine/c/zchezz_v507ssv10 engine/c/zchezz_v507ss15
           if git diff --cached --quiet; then exit 0; fi
           git commit -m 'candidate(v507): freeze self-search teacher variants'
           git push origin HEAD:exp/v507-selfsearch-teacher
