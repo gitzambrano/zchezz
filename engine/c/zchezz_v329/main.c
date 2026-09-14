@@ -1,4 +1,4 @@
-/* main.c — Zchezz v3.28 UCI engine
+/* main.c — Zchezz v3.29 UCI engine
  *
  * Full UCI protocol implementation with Syzygy tablebase + Polyglot book support.
  *
