@@ -1,5 +1,5 @@
-# Shared build entrypoint. Bare invocations always target v328.
-ENGINE       ?= v328
+# Shared build entrypoint. Bare invocations always target v329.
+ENGINE       ?= v329
 # Native in-process arena/selfplay/GA need the NNU4 per-instance API.
 # v506 is the supported NNU4 host; cross-family work uses UCI runners.
 TOOLS_ENGINE ?= v506

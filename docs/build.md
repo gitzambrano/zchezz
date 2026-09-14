@@ -5,7 +5,7 @@ The shared build entry point is `engine/build/Makefile`.
 ## Defaults
 
 ```text
-ENGINE ?= v328
+ENGINE ?= v329
 TOOLS_ENGINE ?= v506
 ```
 
@@ -17,7 +17,7 @@ Linux/macOS:
 
 ```bash
 make -C engine/build native
-make -C engine/build ENGINE=v328 native
+make -C engine/build ENGINE=v329 native
 make -C engine/build ENGINE=v325 native
 make -C engine/build ENGINE=v506 native
 ```
@@ -26,12 +26,12 @@ Windows:
 
 ```bat
 mingw32-make -C engine/build native
-mingw32-make -C engine/build ENGINE=v328 native
+mingw32-make -C engine/build ENGINE=v329 native
 mingw32-make -C engine/build ENGINE=v325 native
 mingw32-make -C engine/build ENGINE=v506 native
 ```
 
-A bare shared build means v328.
+A bare shared build means v329.
 
 ## Tablebases
 
@@ -42,11 +42,11 @@ The normal strength benchmark keeps tablebases disabled so results do not depend
 ## Other targets
 
 ```bash
-make -C engine/build ENGINE=v328 debug
-make -C engine/build ENGINE=v328 sanitize
-make -C engine/build ENGINE=v328 test-c
-make -C engine/build ENGINE=v328 wasm
-make -C engine/build ENGINE=v328 bundle
+make -C engine/build ENGINE=v329 debug
+make -C engine/build ENGINE=v329 sanitize
+make -C engine/build ENGINE=v329 test-c
+make -C engine/build ENGINE=v329 wasm
+make -C engine/build ENGINE=v329 bundle
 
 make -C engine/build ENGINE=v506 debug
 make -C engine/build ENGINE=v506 sanitize
@@ -61,7 +61,7 @@ make -C engine/build arena
 make -C engine/build ga_tune
 ```
 
-Do not use those native tools as a cross-family ABI; use the Python/UCI runners when v328 and v506 must play each other. Use `ENGINE=v325` only when an explicit frozen-baseline comparison is needed.
+Do not use those native tools as a cross-family ABI; use the Python/UCI runners when v329 and v506 must play each other. Use `ENGINE=v325` only when an explicit frozen-baseline comparison is needed.
 
 ## CI portability
 
