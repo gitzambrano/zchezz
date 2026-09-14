@@ -1,0 +1,144 @@
+name: v507 NNU4 global projection
+on:
+  push:
+    branches: [exp/v507-global-projection]
+    paths:
+      - .github/workflows/v507-global-projection.yml
+      - train/global_features.py
+      - train/teaching/train_global_projection_nnu4.py
+      - train/export_nnu4_global.py
+      - tools/make_nnu4_global_runtime.py
+      - train/teaching/selfsearch_methods.py
+      - train/teaching/backends.py
+permissions: {contents: write}
+concurrency:
+  group: v507-global-projection
+  cancel-in-progress: true
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  train-and-screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install stack
+        run: |
+          pip install -e ".[dev]"
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Build baselines
+        run: |
+          make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          make -C engine/build ENGINE=v328 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tools/check_nnue.py engine/c/zchezz_v506/nnue_weights.bin --profile v506
+      - name: Generate mostly on-policy v506 corpus
+        run: |
+          rm -rf data/v507_global_v506 data/v507_global_v328
+          python tests/run_selfplay.py \
+            --exe engine/c/zchezz_v506/zchezz.exe --engine-label v506 \
+            --games 24 --concurrency 2 --movetime 35 --max-plies 220 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_global_v506
+          python tests/run_selfplay.py \
+            --profile v328 --games 8 --concurrency 2 --movetime 35 --max-plies 220 \
+            --opening-mode random --random-plies 6 --no-pgn --epd --no-bin \
+            --no-opening-in-epd --results-dir data/v507_global_v328
+          cat $(find data/v507_global_v506 data/v507_global_v328 -name '*.epd' -type f | sort) > /tmp/v507_global_mix.epd
+          test -s /tmp/v507_global_mix.epd
+          wc -l /tmp/v507_global_mix.epd
+      - name: Deep v506 root-probe teacher
+        run: |
+          export ZCHEZZ_STOCKFISH="$GITHUB_WORKSPACE/engine/c/zchezz_v506/zchezz.exe"
+          python train/teacher.py \
+            --input /tmp/v507_global_mix.epd \
+            --output data/teaching/v507_global_rootprobe \
+            --limit 4000 --workers 4 --batch-size 32 --max-in-flight 8 \
+            --methods root_probe_policy --plugin train.teaching.selfsearch_methods \
+            --shallow-nodes 2000 --deep-nodes 2000 --no-resume
+          python train/teaching/inspect_dataset.py --input data/teaching/v507_global_rootprobe
+          python - <<'PY'
+          from train.teaching.format import TeachingDataset, MISSING_CP
+          ds=TeachingDataset('data/teaching/v507_global_rootprobe')
+          n=len(ds.positions)
+          refined=sum(sum(int(m['search_cp']) != int(MISSING_CP) for m in ds.moves_for(i)) for i in range(n))
+          print('positions=',n,'refined=',refined,'avg_refined=',refined/max(1,n))
+          assert n >= 1000 and refined >= 4*n
+          PY
+      - name: Train frozen-base global projections
+        run: |
+          for SPEC in "gall all" "gagg aggregate" "grel relational"; do
+            set -- $SPEC
+            NAME=$1
+            FSET=$2
+            python train/teaching/train_global_projection_nnu4.py \
+              --input data/teaching/v507_global_rootprobe \
+              --init-weights engine/c/zchezz_v506/nnue_weights.bin \
+              --output "checkpoints/v507/${NAME}.pt" \
+              --feature-set "$FSET" --epochs 10 --batch-groups 64 \
+              --replay-per-group 2 --lr 0.0005 --weight-decay 0.0001 \
+              --temperature-cp 110 --rank-weight 0.15 --min-rank-margin-cp 20 \
+              --preserve-weight 0.20 --preserve-scale-cp 28 --device cpu
+          done
+      - name: Materialize, export and validate candidates
+        run: |
+          for SPEC in "gall all" "gagg aggregate" "grel relational"; do
+            set -- $SPEC
+            NAME=$1
+            DIR="engine/c/zchezz_v507${NAME}"
+            python tools/make_nnu4_global_runtime.py --source engine/c/zchezz_v506 --dest "$DIR"
+            python train/export_nnu4_global.py \
+              --base engine/c/zchezz_v506/nnue_weights.bin \
+              --checkpoint "checkpoints/v507/${NAME}.pt" \
+              --output "$DIR/nnue_weights.bin"
+            make -C engine/build ENGINE="v507${NAME}" STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+            EXE="$GITHUB_WORKSPACE/$DIR/zchezz.exe"
+            python tests/test_perft.py --exe "$EXE"
+            python tests/test_uci_extended.py --exe "$EXE"
+          done
+      - name: Speed diagnostic
+        run: |
+          for E in v506 v507gall v507gagg v507grel; do
+            echo "===== $E ====="
+            "$GITHUB_WORKSPACE/engine/c/zchezz_${E}/zchezz.exe" bench 12 2>&1 | tail -n 8 || true
+          done
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 64-game screen all-global vs v506
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507gall/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-gall --label-b v506 --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078701 --max-plies 400 --json /tmp/gall.json
+          cat /tmp/gall.json
+      - name: 64-game screen aggregate-global vs v506
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507gagg/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-gagg --label-b v506 --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078701 --max-plies 400 --json /tmp/gagg.json
+          cat /tmp/gagg.json
+      - name: 64-game screen relational-global vs v506
+        run: |
+          python tests/experiments/h2h_uci_paired.py \
+            --engine-a engine/c/zchezz_v507grel/zchezz.exe --engine-b engine/c/zchezz_v506/zchezz.exe \
+            --label-a v507-grel --label-b v506 --pairs 32 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 5078701 --max-plies 400 --json /tmp/grel.json
+          cat /tmp/grel.json
+      - name: Freeze source-only candidates
+        run: |
+          rm -f engine/c/zchezz_v507g*/zchezz.exe engine/c/zchezz_v507g*/zchezz
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add engine/c/zchezz_v507gall engine/c/zchezz_v507gagg engine/c/zchezz_v507grel
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m 'candidate(v507): freeze global-projection variants'
+          git push origin HEAD:exp/v507-global-projection
