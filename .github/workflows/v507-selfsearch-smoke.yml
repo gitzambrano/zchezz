@@ -1,0 +1,29 @@
+name: v507 self-search smoke
+on:
+  push:
+    branches: [exp/v507-selfsearch-teacher]
+    paths: [.github/workflows/v507-selfsearch-smoke.yml]
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: pip install -e ".[dev]"
+      - name: Build v507r
+        run: make -C engine/build ENGINE=v507r STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+      - name: Search-only teacher smoke
+        run: |
+          cat > /tmp/smoke.epd <<'EOF'
+          rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -
+          r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq -
+          8/8/8/3k4/3P4/3K4/8/8 w - -
+          EOF
+          export ZCHEZZ_STOCKFISH="$GITHUB_WORKSPACE/engine/c/zchezz_v507r/zchezz.exe"
+          python train/teacher.py --input /tmp/smoke.epd --output /tmp/selfteacher-smoke \
+            --limit 3 --workers 1 --batch-size 3 --max-in-flight 1 \
+            --methods search_policy_all --plugin train.teaching.selfsearch_methods \
+            --shallow-nodes 100 --deep-nodes 100 --no-resume
+          python train/teaching/inspect_dataset.py --input /tmp/selfteacher-smoke
