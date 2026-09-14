@@ -31,12 +31,13 @@ jobs:
           make -C engine/build ENGINE=v507gz STATIC_FLAG= ARCH_FLAGS=-mavx2 native
       - name: Correctness
         run: |
-          python tests/test_perft.py --exe engine/c/zchezz_v507gz/zchezz.exe
-          python tests/test_uci_extended.py --exe engine/c/zchezz_v507gz/zchezz.exe
+          python tests/test_perft.py --exe "$GITHUB_WORKSPACE/engine/c/zchezz_v507gz/zchezz.exe"
+          python tests/test_uci_extended.py --exe "$GITHUB_WORKSPACE/engine/c/zchezz_v507gz/zchezz.exe"
       - name: Zero projection search identity
         run: |
           python - <<'PY'
-          import chess, chess.engine
+          import os, chess, chess.engine
+          root=os.environ['GITHUB_WORKSPACE']
           fens=[
             chess.STARTING_FEN,
             'r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 4 6',
@@ -44,8 +45,8 @@ jobs:
             '8/5pk1/4p1p1/3pP3/3P1P2/5K2/8/8 w - - 0 40',
             '8/8/3k4/3P4/3K4/8/8/8 w - - 0 1',
           ]
-          ea=chess.engine.SimpleEngine.popen_uci('engine/c/zchezz_v506/zchezz.exe')
-          eb=chess.engine.SimpleEngine.popen_uci('engine/c/zchezz_v507gz/zchezz.exe')
+          ea=chess.engine.SimpleEngine.popen_uci(root+'/engine/c/zchezz_v506/zchezz.exe')
+          eb=chess.engine.SimpleEngine.popen_uci(root+'/engine/c/zchezz_v507gz/zchezz.exe')
           try:
             for fen in fens:
               b=chess.Board(fen)
