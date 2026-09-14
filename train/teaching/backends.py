@@ -19,10 +19,11 @@ class SearchLine:
 class UciBackend:
     """Raw UCI client optimized for many positions per process.
 
-    Stockfish's non-standard ``eval`` command is used for direct static NNUE
-    evaluation. If an engine does not expose it, ``static_eval`` falls back to
-    a tiny fixed-node search. Search/MultiPV remains available for selective
-    refinement and for generic student engines.
+    Stockfish's non-standard ``eval`` command is supported, as is Zchezz's
+    compact ``info string eval <cp> cp`` response.  ``static_eval`` always
+    returns a WHITE-relative score regardless of the engine's native eval
+    convention. If an engine exposes neither form, it falls back to a tiny
+    fixed-node search. Search/MultiPV remains available for refinement.
     """
 
     def __init__(self, path: str | Path, hash_mb: int = 16, threads: int = 1,
@@ -40,6 +41,7 @@ class UciBackend:
         self._send("setoption name UCI_ShowWDL value false")
         self._ready()
         self._static_supported: bool | None = None
+        self._static_style: str | None = None
 
     def _send(self, line: str) -> None:
         if self.p.poll() is not None:
@@ -83,18 +85,29 @@ class UciBackend:
         self._send("eval")
         value = None
         unknown = False
-        # Stockfish prints a verbose eval table ending in "Final evaluation".
-        # Synchronize with isready afterwards so trailing lines are consumed.
+        style = None
+        # Stockfish prints a verbose table ending in "Final evaluation".
+        # Zchezz prints one compact STM-relative line:
+        #     info string eval <signed_cp> cp
+        # Recognize both before synchronizing with isready.
         for _ in range(512):
             line = self._readline()
             if "Unknown command" in line and "eval" in line:
                 unknown = True
                 break
+            z = re.search(r"(?:^|\s)info\s+string\s+eval\s+([+-]?\d+)\s+cp(?:\s|$)", line)
+            if z:
+                raw_stm = int(z.group(1))
+                value = raw_stm if white_to_move else -raw_stm
+                style = "zchezz_stm_cp"
+                break
             if "Final evaluation" in line:
                 tail = line.split("Final evaluation", 1)[1]
                 m = re.search(r"([+-]?\d+(?:\.\d+)?)", tail)
                 if m:
+                    # Stockfish's Final evaluation is White-relative.
                     value = int(round(float(m.group(1)) * 100.0))
+                    style = "stockfish_white_cp"
                 break
         self._ready()
         if unknown or value is None:
@@ -103,6 +116,7 @@ class UciBackend:
                                 nodes=self.static_fallback_nodes, multipv=1)
             return lines[0].cp_white if lines else 0
         self._static_supported = True
+        self._static_style = style
         return max(-32000, min(32000, value))
 
     def search(self, fen: str, white_to_move: bool, *, nodes: int = 0,
