@@ -2,13 +2,15 @@
 
 Zchezz deliberately supports two incompatible NNUE families. Profile selection must happen before encoding, checkpoint loading, export or engine startup.
 
-## v328 / v325 — NNU3
+## v329 / v328 / v325 — NNU3
 
-Released installed file: `engine/c/zchezz_v328/nnue_weights.bin`
+Released installed file: `engine/c/zchezz_v329/nnue_weights.bin`
+
+Frozen comparison file (pre-v3.29): `engine/c/zchezz_v328/nnue_weights.bin`
 
 Frozen comparison file: `engine/c/zchezz_v325/nnue_weights.bin`
 
-v3.28 reuses the v3.25 NNU3 weights unchanged; the release difference is in search selectivity, not evaluation.
+v3.29 reuses the v3.28/v3.25 NNU3 weights unchanged; the release difference is the addition of pawn-structure correction history to static evaluation.
 
 ### File contract
 
@@ -59,7 +61,8 @@ A king move that changes its bucket invalidates all features for that perspectiv
 Canonical paths:
 
 ```text
-checkpoints/v328/latest.pt
+checkpoints/v329/latest.pt
+checkpoints/v328/latest.pt   # frozen baseline if reconstructed explicitly
 checkpoints/v325/latest.pt   # frozen baseline if reconstructed explicitly
 checkpoints/v506/latest.pt
 ```
@@ -69,7 +72,8 @@ Checkpoint metadata must identify a compatible architecture before state tensors
 ## Tools
 
 ```bash
-python tools/check_nnue.py                 # v328 default
+python tools/check_nnue.py                 # v329 default
+python tools/check_nnue.py --profile v329
 python tools/check_nnue.py --profile v328
 python tools/check_nnue.py --profile v325
 python tools/check_nnue.py --profile v506
@@ -79,4 +83,4 @@ python train/export_nnu3.py
 python train/export_nnu4.py
 ```
 
-Never use an NNU3 importer/exporter/model with v506 or an NNU4 path with v325/v328.
+Never use an NNU3 importer/exporter/model with v506 or an NNU4 path with v325/v328/v329.

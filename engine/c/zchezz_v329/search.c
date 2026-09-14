@@ -90,6 +90,21 @@ void tt_clear(void) {
     if (g_tt && g_tt_bytes) memset(g_tt, 0, g_tt_bytes);
 }
 
+/* Portable aligned allocation: MinGW-W64/msvcrt does not expose
+ * posix_memalign even with _GNU_SOURCE; use _aligned_malloc there. */
+#ifdef __MINGW32__
+static void *tt_aligned_alloc(size_t align, size_t size) {
+    return _aligned_malloc(size, align);
+}
+static void tt_aligned_free(void *p) { _aligned_free(p); }
+#else
+static void *tt_aligned_alloc(size_t align, size_t size) {
+    void *p = NULL;
+    return (posix_memalign(&p, align, size) == 0) ? p : NULL;
+}
+static void tt_aligned_free(void *p) { free(p); }
+#endif
+
 int tt_resize_mb(int mb) {
     if (mb < 1) mb = 1;
     if (mb > 1024) mb = 1024;
@@ -99,12 +114,13 @@ int tt_resize_mb(int mb) {
     size_t bytes = clusters * sizeof(TTCluster32);
     void *mem = NULL;
     while (clusters) {
-        if (posix_memalign(&mem, 32, bytes) == 0 && mem) break;
+        mem = tt_aligned_alloc(32, bytes);
+        if (mem) break;
         clusters >>= 1;
         bytes = clusters * sizeof(TTCluster32);
     }
     if (!mem || !clusters) return 0;
-    free(g_tt);
+    tt_aligned_free(g_tt);
     g_tt = (TTCluster32 *)mem;
     g_tt_clusters = clusters;
     g_tt_bytes = bytes;
