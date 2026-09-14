@@ -6,6 +6,9 @@ on:
       - .github/workflows/v507-selfsearch-teacher.yml
       - train/teaching/selfsearch_methods.py
 permissions: {contents: write}
+concurrency:
+  group: v507-selfsearch-teacher
+  cancel-in-progress: true
 env:
   BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
   UHO_ZIP: UHO_4060_v4.epd.zip
@@ -13,6 +16,7 @@ env:
 jobs:
   train-and-screen:
     runs-on: ubuntu-24.04
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
