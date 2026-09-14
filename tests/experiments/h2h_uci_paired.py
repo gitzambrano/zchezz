@@ -13,7 +13,16 @@ import chess.engine
 import chess.pgn
 
 
-def _load_pgn(path: Path, count: int, plies: int, seed: int) -> list[chess.Board]:
+def _partition_indices(size: int, count: int, seed: int, offset: int) -> list[int]:
+    need = offset + count
+    if size < need:
+        raise SystemExit(f"need {need} openings for offset={offset}, found {size}")
+    indices = list(range(size))
+    random.Random(seed).shuffle(indices)
+    return indices[offset:need]
+
+
+def _load_pgn(path: Path, count: int, plies: int, seed: int, offset: int) -> list[chess.Board]:
     candidates: list[chess.Board] = []
     with path.open("r", encoding="utf-8", errors="replace") as f:
         while True:
@@ -26,13 +35,10 @@ def _load_pgn(path: Path, count: int, plies: int, seed: int) -> list[chess.Board
                     break
                 board.push(move)
             candidates.append(board.copy(stack=False))
-    if len(candidates) < count:
-        raise SystemExit(f"need {count} openings, found {len(candidates)} in {path}")
-    rng = random.Random(seed)
-    return [candidates[i] for i in rng.sample(range(len(candidates)), count)]
+    return [candidates[i] for i in _partition_indices(len(candidates), count, seed, offset)]
 
 
-def _load_epd(path: Path, count: int, seed: int) -> list[chess.Board]:
+def _load_epd(path: Path, count: int, seed: int, offset: int) -> list[chess.Board]:
     candidates: list[chess.Board] = []
     with path.open("r", encoding="utf-8", errors="replace") as f:
         for raw in f:
@@ -48,18 +54,15 @@ def _load_epd(path: Path, count: int, seed: int) -> list[chess.Board]:
                     continue
                 board = chess.Board(" ".join(fields[:4] + ["0", "1"]))
             candidates.append(board.copy(stack=False))
-    if len(candidates) < count:
-        raise SystemExit(f"need {count} openings, found {len(candidates)} in {path}")
-    rng = random.Random(seed)
-    return [candidates[i] for i in rng.sample(range(len(candidates)), count)]
+    return [candidates[i] for i in _partition_indices(len(candidates), count, seed, offset)]
 
 
-def load_openings(path: Path, count: int, plies: int, seed: int) -> list[chess.Board]:
+def load_openings(path: Path, count: int, plies: int, seed: int, offset: int = 0) -> list[chess.Board]:
     suffix = path.suffix.lower()
     if suffix == ".pgn":
-        return _load_pgn(path, count, plies, seed)
+        return _load_pgn(path, count, plies, seed, offset)
     if suffix in {".epd", ".fen"}:
-        return _load_epd(path, count, seed)
+        return _load_epd(path, count, seed, offset)
     raise SystemExit(f"unsupported opening format: {path}")
 
 
@@ -123,14 +126,19 @@ def main() -> int:
     ap.add_argument("--opening-file", required=True)
     ap.add_argument("--opening-plies", type=int, default=16)
     ap.add_argument("--opening-seed", type=int, default=3280926)
+    ap.add_argument("--opening-offset", type=int, default=0,
+                    help="offset into one deterministic shuffled opening order; use disjoint offsets across shards")
     ap.add_argument("--max-plies", type=int, default=300)
     ap.add_argument("--json", default="")
     args = ap.parse_args()
+    if args.opening_offset < 0:
+        ap.error("--opening-offset must be >= 0")
 
     opening_path = Path(args.opening_file)
     if not opening_path.is_file():
         raise SystemExit(f"opening file not found: {opening_path}")
-    openings = load_openings(opening_path, args.pairs, args.opening_plies, args.opening_seed)
+    openings = load_openings(opening_path, args.pairs, args.opening_plies,
+                             args.opening_seed, args.opening_offset)
     limit = chess.engine.Limit(time=args.movetime_ms / 1000.0)
     a = chess.engine.SimpleEngine.popen_uci(args.engine_a, timeout=20.0)
     b = chess.engine.SimpleEngine.popen_uci(args.engine_b, timeout=20.0)
@@ -185,7 +193,7 @@ def main() -> int:
     total = wins + draws + losses
     score = (wins + 0.5 * draws) / total
     elo = elo_from_score(score)
-    ci = paired_bootstrap_ci(pair_scores, seed=args.opening_seed)
+    ci = paired_bootstrap_ci(pair_scores, seed=args.opening_seed ^ args.opening_offset)
     payload = {
         "label_a": args.label_a,
         "label_b": args.label_b,
@@ -203,6 +211,7 @@ def main() -> int:
         "paired_bootstrap_95": ci,
         "opening_file": str(opening_path),
         "opening_seed": args.opening_seed,
+        "opening_offset": args.opening_offset,
     }
     print("RESULT " + json.dumps(payload, sort_keys=True), flush=True)
     if args.json:
