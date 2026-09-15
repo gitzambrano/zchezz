@@ -1,0 +1,91 @@
+name: v3.29 TT move legality validation
+on:
+  push:
+    branches: [fix/v329-tt-move-legality-validation]
+  workflow_dispatch:
+permissions: {contents: read}
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      STOCKFISH_SHA: 031dfeb437fa6b06cdbdf4ef89dfb82f6b83c4d3
+      BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+      UHO_ZIP: UHO_4060_v4.epd.zip
+      UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]"
+      - name: Patch TT move validation in worktree
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('engine/c/zchezz_v329/search.c')
+          s = p.read_text()
+          old = '''        uint8_t pp = b->b[mfr];
+        if (pp && PC_COLOR(pp) == b->turn && m->castle <= 4) {
+'''
+          new = '''        uint8_t pp = b->b[mfr];
+        int tt_pseudo_ok = 0;
+        if (pp && PC_COLOR(pp) == b->turn && m->castle <= 4) {
+            Move verify[MAX_MOVES];
+            int verify_n = board_gen_moves(b, verify);
+            for (int vi = 0; vi < verify_n; vi++) {
+                if (verify[vi].from == m->from && verify[vi].to == m->to &&
+                    verify[vi].prom == m->prom && verify[vi].epc == m->epc &&
+                    verify[vi].castle == m->castle) {
+                    tt_pseudo_ok = 1;
+                    break;
+                }
+            }
+        }
+        if (tt_pseudo_ok) {
+'''
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one Stage-1 guard, found {s.count(old)}')
+          p.write_text(s.replace(old, new), encoding='utf-8')
+          PY
+      - name: Build and mechanical regression
+        run: |
+          make -C engine/build ENGINE=v329 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tests/test_perft.py --version v329
+          python tests/test_uci_extended.py --version v329
+          python - <<'PY'
+          import chess, chess.engine
+          fen='8/1p4k1/3q2bp/3n4/4pR2/PBP3P1/1P3PK1/8 w - - 0 40'
+          e=chess.engine.SimpleEngine.popen_uci('engine/c/zchezz_v329/zchezz.exe')
+          try:
+              b=chess.Board(fen)
+              for _ in range(20):
+                  r=e.play(b, chess.engine.Limit(time=0.2))
+                  assert r.move in b.legal_moves, (fen, r.move)
+              print('exact-fen legality regression: PASS')
+          finally:
+              e.quit()
+          PY
+      - name: Build pinned Stockfish
+        run: |
+          git init /tmp/stockfish
+          git -C /tmp/stockfish remote add origin https://github.com/official-stockfish/Stockfish.git
+          git -C /tmp/stockfish fetch --depth=1 origin "$STOCKFISH_SHA"
+          git -C /tmp/stockfish checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/stockfish rev-parse HEAD)" = "$STOCKFISH_SHA"
+          make -C /tmp/stockfish/src -j2 build ARCH=x86-64-avx2
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "$UHO_EPD"
+      - name: Re-run failed 3000 benchmark
+        run: |
+          python tests/experiments/h2h_stockfish_limited.py \
+            --zchezz engine/c/zchezz_v329/zchezz.exe \
+            --stockfish /tmp/stockfish/src/stockfish \
+            --stockfish-elo 3000 \
+            --pairs 25 --movetime-ms 200 --hash-mb 64 --threads 1 \
+            --opening-file "$UHO_EPD" --opening-seed 3291015 --max-plies 260 \
+            --json /tmp/v329-sf-3000-ttfix.json
+          cat /tmp/v329-sf-3000-ttfix.json
