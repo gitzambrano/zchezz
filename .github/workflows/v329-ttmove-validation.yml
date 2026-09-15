@@ -2,8 +2,9 @@ name: v3.29 TT move legality validation
 on:
   push:
     branches: [fix/v329-tt-move-legality-validation]
-  workflow_dispatch:
-permissions: {contents: read}
+  workflow_dispatch: {}
+permissions:
+  contents: read
 jobs:
   validate:
     runs-on: ubuntu-24.04
@@ -16,7 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
+        with:
+          python-version: "3.12"
       - run: pip install -e ".[dev]"
       - name: Patch TT move validation in worktree
         run: |
@@ -24,25 +26,25 @@ jobs:
           from pathlib import Path
           p = Path('engine/c/zchezz_v329/search.c')
           s = p.read_text()
-          old = '''        uint8_t pp = b->b[mfr];
-        if (pp && PC_COLOR(pp) == b->turn && m->castle <= 4) {
-'''
-          new = '''        uint8_t pp = b->b[mfr];
-        int tt_pseudo_ok = 0;
-        if (pp && PC_COLOR(pp) == b->turn && m->castle <= 4) {
-            Move verify[MAX_MOVES];
-            int verify_n = board_gen_moves(b, verify);
-            for (int vi = 0; vi < verify_n; vi++) {
-                if (verify[vi].from == m->from && verify[vi].to == m->to &&
-                    verify[vi].prom == m->prom && verify[vi].epc == m->epc &&
-                    verify[vi].castle == m->castle) {
-                    tt_pseudo_ok = 1;
-                    break;
-                }
-            }
-        }
-        if (tt_pseudo_ok) {
-'''
+          old = "        uint8_t pp = b->b[mfr];\n        if (pp && PC_COLOR(pp) == b->turn && m->castle <= 4) {\n"
+          new = "\n".join([
+              "        uint8_t pp = b->b[mfr];",
+              "        int tt_pseudo_ok = 0;",
+              "        if (pp && PC_COLOR(pp) == b->turn && m->castle <= 4) {",
+              "            Move verify[MAX_MOVES];",
+              "            int verify_n = board_gen_moves(b, verify);",
+              "            for (int vi = 0; vi < verify_n; vi++) {",
+              "                if (verify[vi].from == m->from && verify[vi].to == m->to &&",
+              "                    verify[vi].prom == m->prom && verify[vi].epc == m->epc &&",
+              "                    verify[vi].castle == m->castle) {",
+              "                    tt_pseudo_ok = 1;",
+              "                    break;",
+              "                }",
+              "            }",
+              "        }",
+              "        if (tt_pseudo_ok) {",
+              "",
+          ])
           if s.count(old) != 1:
               raise SystemExit(f'expected exactly one Stage-1 guard, found {s.count(old)}')
           p.write_text(s.replace(old, new), encoding='utf-8')
