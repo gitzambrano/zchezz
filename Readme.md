@@ -40,6 +40,7 @@ Zchezz implements a mature alpha-beta search stack:
 - **SEE-based pruning** — drops losing captures and quiet moves that SEE predicts to fail badly
 - **Pawn-structure correction history** *(v3.29)* — adjusts static evaluation using a per-pawn-hash correction term, improving positional consistency across similar structures
 - **Compact clustered Transposition Table** — 32-byte aligned clusters, each holding three 10-byte entries; supports age-based replacement, hash score correction, and TT-move ordering
+- **TT-move pseudo-legality validation** *(v3.30)* — rejects stale or colliding compact-TT moves whose geometry or special-move fields are impossible in the current position before they reach make/unmake
 - **Move ordering**: TT move → winning captures (MVV-LVA + SEE) → killer moves → counter moves → quiet history → losing captures
 - **MultiPV** — analyse multiple lines simultaneously (up to 6)
 - **Lazy SMP** — multi-threaded parallel search with per-thread private search state and NNUE accumulators; no shared mutable state between helpers
@@ -80,7 +81,7 @@ Built-in **Polyglot** (`.bin`) opening book support. Load your own book via `Boo
 
 ### WebAssembly
 
-Zchezz compiles to **WebAssembly** via Emscripten. The browser build embeds the full NNUE weights (~417 KB) and communicates through exported UCI-facing WASM helpers. The browser version runs single-threaded (no Lazy SMP) but uses the same search and evaluation code as the native engine.
+Zchezz compiles to **WebAssembly** via Emscripten. The browser build embeds the full NNUE weights (~417 KB) and communicates through exported UCI-facing WASM helpers. The browser version runs single-threaded (no Lazy SMP) but uses the same search and evaluation code as the native engine version from which that published bundle was built.
 
 ---
 
@@ -132,19 +133,19 @@ Contempt         = 0
 
 ```bash
 make -C engine/build native
-# → engine/c/zchezz_v329/zchezz
+# → engine/c/zchezz_v330/zchezz.exe
 ```
 
 ### Windows (MinGW)
 
 ```bat
 mingw32-make -C engine/build native
-:: → engine\c\zchezz_v329\zchezz.exe
+:: → engine\c\zchezz_v330\zchezz.exe
 ```
 
 ### With Syzygy tablebase support
 
-Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v329/`. The build system detects them automatically — no flags required.
+Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v330/`. The build system detects them automatically — no flags required.
 
 ### WebAssembly
 
@@ -162,10 +163,10 @@ Zchezz maintains two engine families in parallel:
 
 | Family | Current | Evaluator | Status |
 | ------------- | ------- | ------------------------------------------------------------- | ------------------------------------- |
-| **3.x** | v3.29 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
-| **5.x** | v5.06 | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
+| **3.x** | v3.30 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
+| **5.x** | v506 (v5.06) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
 
-The **3.x family** is the released engine for play and tournaments. The **5.x family** is an experimental line with a richer, bucket-based NNUE architecture under active development. Released binaries are always from the 3.x family unless explicitly labelled otherwise.
+The **3.x family** is the released engine for play and tournaments. The previous released profile is **v329 (v3.29)**, while **v328 (v3.28)** remains a supported historical baseline. The **5.x family** uses profile **v506 (v5.06)** and is an experimental line with a richer, bucket-based NNUE architecture under active development. Released binaries are always from the 3.x family unless explicitly labelled otherwise.
 
 For contributor and developer documentation see the [`docs/`](docs/) directory.
 

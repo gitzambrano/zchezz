@@ -5,11 +5,11 @@ The shared build entry point is `engine/build/Makefile`.
 ## Defaults
 
 ```text
-ENGINE ?= v329
+ENGINE ?= v330
 TOOLS_ENGINE ?= v506
 ```
 
-`ENGINE` selects the UCI engine build. `TOOLS_ENGINE` selects the native in-process tool host because the current tool API follows the v506/NNU4 family. `v325` remains available as a frozen comparison build.
+`ENGINE` selects the UCI engine build. `TOOLS_ENGINE` selects the native in-process tool host because the current tool API follows the v506/NNU4 family. `v329` remains available as the previous released 3.x build, and `v325` remains available as a frozen comparison build.
 
 ## Native engine
 
@@ -17,8 +17,8 @@ Linux/macOS:
 
 ```bash
 make -C engine/build native
+make -C engine/build ENGINE=v330 native
 make -C engine/build ENGINE=v329 native
-make -C engine/build ENGINE=v325 native
 make -C engine/build ENGINE=v506 native
 ```
 
@@ -26,12 +26,12 @@ Windows:
 
 ```bat
 mingw32-make -C engine/build native
+mingw32-make -C engine/build ENGINE=v330 native
 mingw32-make -C engine/build ENGINE=v329 native
-mingw32-make -C engine/build ENGINE=v325 native
 mingw32-make -C engine/build ENGINE=v506 native
 ```
 
-A bare shared build means v329.
+A bare shared build means v330.
 
 ## Tablebases
 
@@ -42,11 +42,11 @@ The normal strength benchmark keeps tablebases disabled so results do not depend
 ## Other targets
 
 ```bash
-make -C engine/build ENGINE=v329 debug
-make -C engine/build ENGINE=v329 sanitize
-make -C engine/build ENGINE=v329 test-c
-make -C engine/build ENGINE=v329 wasm
-make -C engine/build ENGINE=v329 bundle
+make -C engine/build ENGINE=v330 debug
+make -C engine/build ENGINE=v330 sanitize
+make -C engine/build ENGINE=v330 test-c
+make -C engine/build ENGINE=v330 wasm
+make -C engine/build ENGINE=v330 bundle
 
 make -C engine/build ENGINE=v506 debug
 make -C engine/build ENGINE=v506 sanitize
@@ -61,7 +61,7 @@ make -C engine/build arena
 make -C engine/build ga_tune
 ```
 
-Do not use those native tools as a cross-family ABI; use the Python/UCI runners when v329 and v506 must play each other. Use `ENGINE=v325` only when an explicit frozen-baseline comparison is needed.
+Do not use those native tools as a cross-family ABI; use the Python/UCI runners when v330 and v506 must play each other. Use `ENGINE=v329` for the previous 3.x release and `ENGINE=v325` only when an explicit frozen-baseline comparison is needed.
 
 ## CI portability
 
