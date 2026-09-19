@@ -1,0 +1,66 @@
+name: v330 TT 6-way key16 gate
+on:
+  push:
+    branches: [exp/v330-tt-ablation]
+    paths:
+      - .github/workflows/v330-tt16cl64-gate.yml
+      - tests/experiments/materialize_v330_tt_ablation.py
+      - tests/experiments/materialize_v330_tt32.py
+      - tests/experiments/h2h_uci_paired_offset.py
+      - tests/experiments/aggregate_paired_h2h.py
+permissions: {contents: read}
+concurrency:
+  group: v330-tt16cl64-gate
+  cancel-in-progress: true
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Build baseline and 6-way key16
+        run: |
+          pip install -e ".[dev]"
+          rm -rf /tmp/v330 /tmp/key16cl64
+          cp -a engine/c/zchezz_v330 /tmp/v330
+          python tests/experiments/materialize_v330_tt_ablation.py --variant key16cl64 --out /tmp/key16cl64
+          cmp /tmp/v330/nnue_weights.bin /tmp/key16cl64/nnue_weights.bin
+          for D in /tmp/v330 /tmp/key16cl64; do
+            gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I"$D" -DNO_TABLEBASES               -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized               -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses               -o "$D/zchezz.exe" "$D/main.c" "$D/board.c" "$D/search.c" "$D/nnue.c" "$D/syzygy.c" "$D/book.c" -lm -pthread
+          done
+      - name: Regression tests
+        run: |
+          python tests/test_perft.py --exe /tmp/key16cl64/zchezz.exe
+          python tests/test_uci_extended.py --exe /tmp/key16cl64/zchezz.exe
+      - name: Bench
+        run: |
+          printf 'bench\nquit\n' | /tmp/v330/zchezz.exe 2>&1 | tee /tmp/bench-base.txt
+          printf 'bench\nquit\n' | /tmp/key16cl64/zchezz.exe 2>&1 | tee /tmp/bench-candidate.txt
+      - name: Prepare UHO
+        run: |
+          mkdir -p /tmp/uho /tmp/results
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 96-game independent gate
+        run: |
+          python tests/experiments/h2h_uci_paired_offset.py             --engine-a /tmp/key16cl64/zchezz.exe --engine-b /tmp/v330/zchezz.exe             --label-a key16cl64 --label-b v330             --pairs 48 --movetime-ms 80 --hash-mb 64 --threads 1             --opening-file "${UHO_EPD}" --opening-seed 3306802 --opening-offset 320 --max-plies 260             --json /tmp/results/h2h.json
+      - name: Paired bootstrap
+        run: |
+          cd /tmp/results
+          python "$GITHUB_WORKSPACE/tests/experiments/aggregate_paired_h2h.py"             --glob 'h2h.json' --out aggregate.json --bootstrap 50000
+          cat aggregate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tt16cl64-gate
+          retention-days: 14
+          path: |
+            /tmp/results/
+            /tmp/bench-base.txt
+            /tmp/bench-candidate.txt
