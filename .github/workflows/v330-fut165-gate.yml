@@ -1,0 +1,123 @@
+name: v330 fut165 400-game gate
+
+on:
+  push:
+    branches: [exp/v330-fut165-gate]
+    paths:
+      - .github/workflows/v330-fut165-gate.yml
+      - tests/experiments/materialize_v330_search_gate1.py
+      - tests/experiments/h2h_uci_paired_offset.py
+      - tests/experiments/aggregate_paired_h2h.py
+  workflow_dispatch:
+
+permissions: {contents: read}
+
+concurrency:
+  group: v330-fut165-gate
+  cancel-in-progress: true
+
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install and build
+        run: |
+          pip install -e ".[dev]"
+          rm -rf /tmp/v330 /tmp/fut165
+          cp -a engine/c/zchezz_v330 /tmp/v330
+          python tests/experiments/materialize_v330_search_gate1.py --variant fut165 --out /tmp/fut165
+          cmp /tmp/v330/nnue_weights.bin /tmp/fut165/nnue_weights.bin
+          for D in /tmp/v330 /tmp/fut165; do
+            gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I"$D" -DNO_TABLEBASES               -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized               -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses               -o "$D/zchezz.exe" "$D/main.c" "$D/board.c" "$D/search.c" "$D/nnue.c" "$D/syzygy.c" "$D/book.c" -lm -pthread
+          done
+      - name: Functional tests
+        run: |
+          python tests/test_perft.py --exe /tmp/fut165/zchezz.exe
+          python tests/test_uci_extended.py --exe /tmp/fut165/zchezz.exe
+      - name: Bench
+        run: |
+          printf 'bench\nquit\n' | /tmp/v330/zchezz.exe 2>&1 | tee /tmp/bench-v330.txt
+          printf 'bench\nquit\n' | /tmp/fut165/zchezz.exe 2>&1 | tee /tmp/bench-fut165.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fut165-validation
+          retention-days: 14
+          path: |
+            /tmp/bench-v330.txt
+            /tmp/bench-fut165.txt
+
+  h2h:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: 0, offset: 0}
+          - {shard: 1, offset: 25}
+          - {shard: 2, offset: 50}
+          - {shard: 3, offset: 75}
+          - {shard: 4, offset: 100}
+          - {shard: 5, offset: 125}
+          - {shard: 6, offset: 150}
+          - {shard: 7, offset: 175}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Build engines
+        run: |
+          pip install -e ".[dev]"
+          rm -rf /tmp/v330 /tmp/fut165
+          cp -a engine/c/zchezz_v330 /tmp/v330
+          python tests/experiments/materialize_v330_search_gate1.py --variant fut165 --out /tmp/fut165
+          cmp /tmp/v330/nnue_weights.bin /tmp/fut165/nnue_weights.bin
+          for D in /tmp/v330 /tmp/fut165; do
+            gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I"$D" -DNO_TABLEBASES               -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized               -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses               -o "$D/zchezz.exe" "$D/main.c" "$D/board.c" "$D/search.c" "$D/nnue.c" "$D/syzygy.c" "$D/book.c" -lm -pthread
+          done
+      - name: Prepare pinned UHO
+        run: |
+          mkdir -p /tmp/uho /tmp/results
+          curl --fail --location --retry 3             "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}"             -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 50-game paired shard at 80 ms
+        run: |
+          python tests/experiments/h2h_uci_paired_offset.py             --engine-a /tmp/fut165/zchezz.exe --engine-b /tmp/v330/zchezz.exe             --label-a fut165 --label-b v330             --pairs 25 --movetime-ms 80 --hash-mb 64 --threads 1             --opening-file "${UHO_EPD}" --opening-seed 3306501             --opening-offset ${{ matrix.offset }} --max-plies 260             --json /tmp/results/shard-${{ matrix.shard }}.json
+          cat /tmp/results/shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fut165-shard-${{ matrix.shard }}
+          retention-days: 14
+          path: /tmp/results/shard-${{ matrix.shard }}.json
+
+  aggregate:
+    needs: h2h
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: fut165-shard-*
+          path: artifacts
+          merge-multiple: true
+      - name: Aggregate paired bootstrap
+        run: |
+          python tests/experiments/aggregate_paired_h2h.py             --glob 'artifacts/*.json' --out fut165-aggregate.json --bootstrap 50000
+          cat fut165-aggregate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fut165-aggregate
+          retention-days: 30
+          path: fut165-aggregate.json
