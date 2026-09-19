@@ -1,0 +1,144 @@
+name: v330 TT32-key 400-game gate
+
+on:
+  push:
+    branches: [exp/v330-tt32-gate]
+    paths:
+      - .github/workflows/v330-tt32-gate.yml
+      - tests/experiments/materialize_v330_tt32.py
+      - tests/experiments/h2h_uci_paired_offset.py
+      - tests/experiments/aggregate_paired_h2h.py
+  workflow_dispatch:
+
+permissions: {contents: read}
+
+concurrency:
+  group: v330-tt32-gate
+  cancel-in-progress: true
+
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install and syntax check
+        run: |
+          pip install -e ".[dev]"
+          python -m py_compile tests/experiments/materialize_v330_tt32.py tests/experiments/h2h_uci_paired_offset.py tests/experiments/aggregate_paired_h2h.py
+      - name: Build baseline and TT32-key candidate
+        run: |
+          make -C engine/build ENGINE=v330 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tests/experiments/materialize_v330_tt32.py --out /tmp/tt32
+          cmp engine/c/zchezz_v330/nnue_weights.bin /tmp/tt32/nnue_weights.bin
+          gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I/tmp/tt32 -DNO_TABLEBASES \
+            -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized \
+            -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses \
+            -o /tmp/tt32/zchezz.exe \
+            /tmp/tt32/main.c /tmp/tt32/board.c /tmp/tt32/search.c /tmp/tt32/nnue.c \
+            /tmp/tt32/syzygy.c /tmp/tt32/book.c -lm -pthread
+      - name: Regression tests
+        run: |
+          python tests/test_perft.py --exe /tmp/tt32/zchezz.exe
+          python tests/test_uci_extended.py --exe /tmp/tt32/zchezz.exe
+      - name: Bench baseline and candidate
+        run: |
+          echo '===== v3.30 ====='
+          printf 'bench\nquit\n' | engine/c/zchezz_v330/zchezz.exe 2>&1 | tee /tmp/bench-v330.txt
+          echo '===== TT32-key ====='
+          printf 'bench\nquit\n' | /tmp/tt32/zchezz.exe 2>&1 | tee /tmp/bench-tt32.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tt32-validation
+          retention-days: 14
+          path: |
+            /tmp/bench-v330.txt
+            /tmp/bench-tt32.txt
+
+  h2h:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: 0, offset: 0}
+          - {shard: 1, offset: 25}
+          - {shard: 2, offset: 50}
+          - {shard: 3, offset: 75}
+          - {shard: 4, offset: 100}
+          - {shard: 5, offset: 125}
+          - {shard: 6, offset: 150}
+          - {shard: 7, offset: 175}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Build engines
+        run: |
+          make -C engine/build ENGINE=v330 STATIC_FLAG= ARCH_FLAGS=-mavx2 native
+          python tests/experiments/materialize_v330_tt32.py --out /tmp/tt32
+          cmp engine/c/zchezz_v330/nnue_weights.bin /tmp/tt32/nnue_weights.bin
+          gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I/tmp/tt32 -DNO_TABLEBASES \
+            -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized \
+            -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses \
+            -o /tmp/tt32/zchezz.exe \
+            /tmp/tt32/main.c /tmp/tt32/board.c /tmp/tt32/search.c /tmp/tt32/nnue.c \
+            /tmp/tt32/syzygy.c /tmp/tt32/book.c -lm -pthread
+      - name: Prepare pinned UHO openings
+        run: |
+          mkdir -p /tmp/uho
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" \
+            -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 50-game paired shard at 80 ms
+        run: |
+          mkdir -p /tmp/tt32-shard
+          python tests/experiments/h2h_uci_paired_offset.py \
+            --engine-a /tmp/tt32/zchezz.exe \
+            --engine-b engine/c/zchezz_v330/zchezz.exe \
+            --label-a tt32-key --label-b v330 \
+            --pairs 25 --movetime-ms 80 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 3303201 \
+            --opening-offset ${{ matrix.offset }} --max-plies 260 \
+            --json /tmp/tt32-shard/shard-${{ matrix.shard }}.json
+          cat /tmp/tt32-shard/shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tt32-shard-${{ matrix.shard }}
+          retention-days: 14
+          path: /tmp/tt32-shard/shard-${{ matrix.shard }}.json
+
+  aggregate:
+    needs: h2h
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tt32-shard-*
+          path: artifacts
+          merge-multiple: true
+      - name: Aggregate paired bootstrap
+        run: |
+          python tests/experiments/aggregate_paired_h2h.py \
+            --glob 'artifacts/*.json' --out tt32-aggregate.json --bootstrap 50000
+          cat tt32-aggregate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tt32-aggregate
+          retention-days: 30
+          path: tt32-aggregate.json
