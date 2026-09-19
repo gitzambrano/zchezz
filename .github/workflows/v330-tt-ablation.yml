@@ -1,0 +1,71 @@
+name: v330 TT structural ablation
+
+on:
+  workflow_dispatch:
+
+permissions: {contents: read}
+
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+
+jobs:
+  key16cl64-vs-key32cl64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install and materialize
+        run: |
+          pip install -e ".[dev]"
+          python -m py_compile tests/experiments/materialize_v330_tt_ablation.py tests/experiments/h2h_uci_paired_offset.py
+          python tests/experiments/materialize_v330_tt_ablation.py --variant key16cl64 --out /tmp/key16cl64
+          python tests/experiments/materialize_v330_tt_ablation.py --variant key32cl64 --out /tmp/key32cl64
+          cmp /tmp/key16cl64/nnue_weights.bin /tmp/key32cl64/nnue_weights.bin
+      - name: Build
+        run: |
+          for D in /tmp/key16cl64 /tmp/key32cl64; do
+            gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I"$D" -DNO_TABLEBASES \
+              -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized \
+              -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses \
+              -o "$D/zchezz.exe" \
+              "$D/main.c" "$D/board.c" "$D/search.c" "$D/nnue.c" "$D/syzygy.c" "$D/book.c" -lm -pthread
+          done
+      - name: Smoke and bench
+        run: |
+          python tests/test_perft.py --exe /tmp/key16cl64/zchezz.exe
+          python tests/test_perft.py --exe /tmp/key32cl64/zchezz.exe
+          printf 'bench\nquit\n' | /tmp/key16cl64/zchezz.exe 2>&1 | tee /tmp/bench-key16.txt
+          printf 'bench\nquit\n' | /tmp/key32cl64/zchezz.exe 2>&1 | tee /tmp/bench-key32.txt
+      - name: Prepare openings
+        run: |
+          mkdir -p /tmp/uho /tmp/results
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+      - name: Fixed-node direction
+        run: |
+          python tests/experiments/h2h_uci_paired_offset.py \
+            --engine-a /tmp/key32cl64/zchezz.exe --engine-b /tmp/key16cl64/zchezz.exe \
+            --label-a key32cl64 --label-b key16cl64 \
+            --pairs 8 --nodes 50000 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 3304201 --opening-offset 0 --max-plies 260 \
+            --json /tmp/results/fixed50k.json
+      - name: 64-game timed direction
+        run: |
+          python tests/experiments/h2h_uci_paired_offset.py \
+            --engine-a /tmp/key32cl64/zchezz.exe --engine-b /tmp/key16cl64/zchezz.exe \
+            --label-a key32cl64 --label-b key16cl64 \
+            --pairs 32 --movetime-ms 80 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 3304202 --opening-offset 0 --max-plies 260 \
+            --json /tmp/results/time80.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tt-ablation
+          retention-days: 14
+          path: |
+            /tmp/results/
+            /tmp/bench-key16.txt
+            /tmp/bench-key32.txt
