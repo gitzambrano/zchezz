@@ -1,0 +1,80 @@
+name: v330 search gate 1
+on:
+  push:
+    branches: [exp/v330-search-gate1]
+    paths:
+      - .github/workflows/v330-search-gate1.yml
+      - tests/experiments/materialize_v330_search_gate1.py
+      - tests/experiments/h2h_uci_paired_offset.py
+      - tests/experiments/aggregate_paired_h2h.py
+permissions: {contents: read}
+concurrency:
+  group: v330-search-gate1
+  cancel-in-progress: true
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [lmp80, hist96, qsee50, fut165, histgravity]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Install and materialize
+        run: |
+          pip install -e ".[dev]"
+          python -m py_compile tests/experiments/materialize_v330_search_gate1.py tests/experiments/h2h_uci_paired_offset.py tests/experiments/aggregate_paired_h2h.py
+          rm -rf /tmp/v330 /tmp/candidate
+          cp -a engine/c/zchezz_v330 /tmp/v330
+          python tests/experiments/materialize_v330_search_gate1.py --variant ${{ matrix.variant }} --out /tmp/candidate
+          cmp /tmp/v330/nnue_weights.bin /tmp/candidate/nnue_weights.bin
+      - name: Build
+        run: |
+          for D in /tmp/v330 /tmp/candidate; do
+            gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I"$D" -DNO_TABLEBASES \
+              -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized \
+              -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses \
+              -o "$D/zchezz.exe" "$D/main.c" "$D/board.c" "$D/search.c" "$D/nnue.c" "$D/syzygy.c" "$D/book.c" -lm -pthread
+          done
+      - name: Functional tests
+        run: |
+          python tests/test_perft.py --exe /tmp/candidate/zchezz.exe
+          python tests/test_uci_extended.py --exe /tmp/candidate/zchezz.exe
+      - name: Bench
+        run: |
+          printf 'bench\nquit\n' | /tmp/v330/zchezz.exe 2>&1 | tee /tmp/bench-base.txt
+          printf 'bench\nquit\n' | /tmp/candidate/zchezz.exe 2>&1 | tee /tmp/bench-candidate.txt
+      - name: Prepare pinned UHO
+        run: |
+          mkdir -p /tmp/uho /tmp/results
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: 96-game independent gate
+        run: |
+          python tests/experiments/h2h_uci_paired_offset.py \
+            --engine-a /tmp/candidate/zchezz.exe --engine-b /tmp/v330/zchezz.exe \
+            --label-a ${{ matrix.variant }} --label-b v330 \
+            --pairs 48 --movetime-ms 80 --hash-mb 64 --threads 1 \
+            --opening-file "${UHO_EPD}" --opening-seed 3306102 --opening-offset 64 --max-plies 260 \
+            --json /tmp/results/h2h.json
+      - name: Paired bootstrap
+        run: |
+          cd /tmp/results
+          python "$GITHUB_WORKSPACE/tests/experiments/aggregate_paired_h2h.py" --glob 'h2h.json' --out aggregate.json --bootstrap 50000
+          cat aggregate.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gate1-${{ matrix.variant }}
+          retention-days: 14
+          path: |
+            /tmp/results/
+            /tmp/bench-base.txt
+            /tmp/bench-candidate.txt
