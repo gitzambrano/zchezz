@@ -1,0 +1,62 @@
+name: v330 child TT prefetch fix
+on:
+  push:
+    branches: [exp/v330-prefetch-fix]
+    paths:
+      - .github/workflows/v330-prefetch-fix.yml
+      - tests/experiments/materialize_v330_prefetch_fix.py
+      - tests/experiments/h2h_uci_paired_offset.py
+permissions: {contents: read}
+concurrency:
+  group: v330-prefetch-fix
+  cancel-in-progress: true
+env:
+  BOOKS_SHA: 65815ccdbc7727cd4f6aee252ba8f67fb740e92f
+  UHO_ZIP: UHO_4060_v4.epd.zip
+  UHO_EPD: /tmp/uho/UHO_4060_v4.epd
+jobs:
+  screen:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - name: Build isolated candidate
+        run: |
+          pip install -e ".[dev]"
+          rm -rf /tmp/v330 /tmp/prefetch
+          cp -a engine/c/zchezz_v330 /tmp/v330
+          python tests/experiments/materialize_v330_prefetch_fix.py --out /tmp/prefetch
+          cmp /tmp/v330/nnue_weights.bin /tmp/prefetch/nnue_weights.bin
+          for D in /tmp/v330 /tmp/prefetch; do
+            gcc -O3 -ffast-math -D_GNU_SOURCE -std=c11 -mavx2 -I"$D" -DNO_TABLEBASES               -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized               -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses               -o "$D/zchezz.exe" "$D/main.c" "$D/board.c" "$D/search.c" "$D/nnue.c" "$D/syzygy.c" "$D/book.c" -lm -pthread
+          done
+      - name: Regression tests
+        run: |
+          python tests/test_perft.py --exe /tmp/prefetch/zchezz.exe
+          python tests/test_uci_extended.py --exe /tmp/prefetch/zchezz.exe
+      - name: Bench
+        run: |
+          printf 'bench\nquit\n' | /tmp/v330/zchezz.exe 2>&1 | tee /tmp/bench-base.txt
+          printf 'bench\nquit\n' | /tmp/prefetch/zchezz.exe 2>&1 | tee /tmp/bench-candidate.txt
+      - name: Prepare UHO
+        run: |
+          mkdir -p /tmp/uho /tmp/results
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/official-stockfish/books/${BOOKS_SHA}/${UHO_ZIP}" -o "/tmp/${UHO_ZIP}"
+          unzip -q "/tmp/${UHO_ZIP}" -d /tmp/uho
+          test -s "${UHO_EPD}"
+      - name: Fixed-node screen
+        run: |
+          python tests/experiments/h2h_uci_paired_offset.py             --engine-a /tmp/prefetch/zchezz.exe --engine-b /tmp/v330/zchezz.exe             --label-a prefetchfix --label-b v330             --pairs 8 --nodes 50000 --hash-mb 64 --threads 1             --opening-file "${UHO_EPD}" --opening-seed 3306701 --opening-offset 256 --max-plies 260             --json /tmp/results/fixed50k.json
+      - name: Time-control screen
+        run: |
+          python tests/experiments/h2h_uci_paired_offset.py             --engine-a /tmp/prefetch/zchezz.exe --engine-b /tmp/v330/zchezz.exe             --label-a prefetchfix --label-b v330             --pairs 16 --movetime-ms 80 --hash-mb 64 --threads 1             --opening-file "${UHO_EPD}" --opening-seed 3306702 --opening-offset 256 --max-plies 260             --json /tmp/results/time80.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prefetch-fix-screen
+          retention-days: 14
+          path: |
+            /tmp/results/
+            /tmp/bench-base.txt
+            /tmp/bench-candidate.txt
