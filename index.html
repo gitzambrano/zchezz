@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>Zchezz NNUE 3.30</title>
+  <title>Zchezz NNUE 3.31</title>
   <link
     href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=JetBrains+Mono:wght@300;400;500;600&display=swap"
     rel="stylesheet">
@@ -1093,7 +1093,7 @@
     <div id="info-modal" onclick="if(event.target===this)this.classList.remove('show')">
       <div id="info-box">
         <h2>♟ ZCHEZZ</h2>
-        <div class="info-ver">NNUE · Version 3.30</div>
+        <div class="info-ver">NNUE · Version 3.31</div>
         <p>WebAssembly chess engine with<br>Efficiently Updatable Neural Network evaluation.</p>
         <p style="margin-top:10px">Author: <strong>Gustavo Zambrano</strong></p>
         <p>2026</p>
@@ -1202,7 +1202,7 @@
         <div id="g-movelog-wrap">
           <div id="g-movelog"></div>
         </div>
-        <div id="engine-info">Zchezz NNUE 3.30 · WebAssembly</div>
+        <div id="engine-info">Zchezz NNUE 3.31 · WebAssembly</div>
       </div>
     </div>
 
@@ -1921,6 +1921,7 @@
 
     let gameState = parseFen(STARTFEN);
     let playerColor = 'w', engineDepth = 11, engineTimeMs = 0, engineBusy = false, gameOver = false;
+    let _ponderExpectedMove = '';
 
     // ── Game Clock State ──────────────────────────────────────────
     let clockMode = false;     // true when using game clocks
@@ -5201,6 +5202,34 @@ const OPENING_BOOK = {
     // ════════════════════════════════════════════════════════════
     // ENGINE
     // ════════════════════════════════════════════════════════════
+    function stopGamePonder(reason) {
+      if (_ponderExpectedMove && reason) dbg('ponder ' + reason + ' expected=' + _ponderExpectedMove, 'dbg-info');
+      _ponderExpectedMove = '';
+      if (window.zchezzPonderCancel) window.zchezzPonderCancel();
+    }
+
+    function startGamePonder(msg) {
+      // Ponder only in real clock games. The search runs in short slices in
+      // the existing Web Worker, so the main browser thread never blocks.
+      if (!clockMode || gameOver || !window.zchezzPonderStart || !msg || !msg.pv) return;
+      const pv = msg.pv.trim().split(/\s+/).filter(Boolean);
+      if (pv.length < 2) return;
+      const expected = pv[1];
+      if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(expected)) return;
+      const { from, to } = uciParts(expected);
+      if (from < 0 || to < 0 || !gameState.board[from] || !legalDstsFor(from, gameState).includes(to)) return;
+
+      _ponderExpectedMove = expected;
+      const predictedMoves = moveHistory.map(m => m.uci).concat(expected).join(' ');
+      window.zchezzPonderStart({
+        fen: STARTFEN,
+        moves: predictedMoves,
+        depth: 40,
+        multiPv: 1
+      });
+      dbg('ponder start expected=' + expected, 'dbg-info');
+    }
+
     function askEngine() {
       if (engineBusy || gameOver || !window.zchezzSearch) return;
       const ec = playerColor === 'w' ? 'b' : 'w';
@@ -5276,7 +5305,7 @@ const OPENING_BOOK = {
             if (clockMode && !gameOver) { stopClock(); addIncrement(ec); startClock(playerColor); }
             const e = checkEnd(gameState);
             if (e) { gameOver = true; stopClock(); document.getElementById('stxt').textContent = e.msg; playGameEnd(); }
-            else updateStatusLine();
+            else { updateStatusLine(); startGamePonder(msg); }
             draw(); updateBars(); anSyncToEnd();
           });
         } else {
@@ -5287,7 +5316,7 @@ const OPENING_BOOK = {
           if (clockMode && !gameOver) { stopClock(); addIncrement(ec); startClock(playerColor); }
           const e = checkEnd(gameState);
           if (e) { gameOver = true; stopClock(); document.getElementById('stxt').textContent = e.msg; playGameEnd(); }
-          else updateStatusLine();
+          else { updateStatusLine(); startGamePonder(msg); }
           draw(); updateBars(); anSyncToEnd();
         }
       });
@@ -5314,6 +5343,11 @@ const OPENING_BOOK = {
 
     function _applyAndFinish(uci, gsBefore) {
       const _gb = gsBefore;
+      if (_ponderExpectedMove) {
+        const hit = uci === _ponderExpectedMove;
+        dbg('ponder ' + (hit ? 'hit' : 'miss') + ' actual=' + uci + ' expected=' + _ponderExpectedMove, 'dbg-info');
+      }
+      stopGamePonder('');
       recordMove(uci);
       applyMove(uci, gameState);
       pushPosition(gameState);
@@ -5381,6 +5415,7 @@ const OPENING_BOOK = {
     // GAME CONTROLS
     // ════════════════════════════════════════════════════════════
     function newGame() {
+      stopGamePonder('newgame');
       gameState = parseFen(STARTFEN);
       selected = -1; legalDsts = []; lastMove = null; moveHistory = []; gameOver = false; engineBusy = false; searchId = 0;
       resetPositionHistory();
@@ -5940,8 +5975,8 @@ const OPENING_BOOK = {
       document.getElementById('fp-title').textContent = 'PGN';
       // Build PGN for export
       const now = new Date().toISOString().slice(0, 10).replace(/-/g, '.');
-      const w = playerColor === 'b' ? 'Zchezz NNUE 3.30' : 'Human', b = playerColor === 'b' ? 'Human' : 'Zchezz NNUE 3.30';
-      let pgn = '[Event "Zchezz NNUE 3.30"]\n[Date "' + now + '"]\n[White "' + w + '"]\n[Black "' + b + '"]\n[Result "*"]\n\n';
+      const w = playerColor === 'b' ? 'Zchezz NNUE 3.31' : 'Human', b = playerColor === 'b' ? 'Human' : 'Zchezz NNUE 3.31';
+      let pgn = '[Event "Zchezz NNUE 3.31"]\n[Date "' + now + '"]\n[White "' + w + '"]\n[Black "' + b + '"]\n[Result "*"]\n\n';
       for (let i = 0; i < anHistory.length; i++) { if (i % 2 === 0) pgn += i / 2 + 1 + '. '; pgn += anHistory[i].san + ' '; }
       document.getElementById('fp-textarea').value = (pgn.trim() + ' *');
       const m = document.getElementById('fp-modal'); m.style.display = 'flex';
@@ -6381,13 +6416,45 @@ function doSearch(fen,moves,depth,id,timeLimitMs,multiPv,startDepth){
       if (msg._status) {
         dbg('status: ' + JSON.stringify(msg), msg._status === 'error' ? 'dbg-error' : 'dbg-info');
         if (msg._status === 'ready') {
-          window.zchezzSearch = (p, cb) => { dbg('\u2192 id=' + p.id + ' d=' + p.depth + ' mvs=' + ((p.moves || '').split(' ').length - 1), 'dbg-send'); cbs[p.id] = cb; worker.postMessage(p); };
+          const PONDER_SLICE_MS = 80;
+          const PONDER_YIELD_MS = 20;
+          let ponderToken = 0;
+          let ponderSerial = 0;
+
+          const isPonderId = id => typeof id === 'string' && id.startsWith('__ponder_');
+          const sendSearch = (p, cb) => {
+            if (!isPonderId(p.id)) dbg('\u2192 id=' + p.id + ' d=' + p.depth + ' mvs=' + ((p.moves || '').split(' ').length - 1), 'dbg-send');
+            cbs[p.id] = cb || (() => {});
+            worker.postMessage(p);
+          };
+          const cancelPonder = () => { ponderToken++; };
+          const startPonder = (p, onSlice) => {
+            const token = ++ponderToken;
+            const base = { ...p, multiPv: 1, startDepth: 0 };
+            const step = () => {
+              if (token !== ponderToken) return;
+              const q = { ...base, id: '__ponder_' + token + '_' + (++ponderSerial), timeLimitMs: PONDER_SLICE_MS };
+              sendSearch(q, msg => {
+                if (token !== ponderToken) return;
+                if (onSlice) onSlice(msg);
+                setTimeout(step, PONDER_YIELD_MS);
+              });
+            };
+            step();
+            return token;
+          };
+
+          window.zchezzSearch = (p, cb) => { cancelPonder(); sendSearch(p, cb); };
+          window.zchezzPonderStart = startPonder;
+          window.zchezzPonderCancel = cancelPonder;
           if (window._onZchezzReady) window._onZchezzReady(msg.nnue);
         }
         if (msg._status === 'error' && window._onZchezzReady) window._onZchezzReady(false);
         return;
       }
-      dbg('\u2190 id=' + msg.id + ' uci=' + (msg.uci || '') + (msg.error ? ' ERR=' + msg.error : ''), 'dbg-recv');
+      if (!(typeof msg.id === 'string' && msg.id.startsWith('__ponder_'))) {
+        dbg('\u2190 id=' + msg.id + ' uci=' + (msg.uci || '') + (msg.error ? ' ERR=' + msg.error : ''), 'dbg-recv');
+      }
       if (msg.id !== undefined && cbs[msg.id]) { cbs[msg.id](msg); delete cbs[msg.id]; }
     };
     worker.postMessage({ _init: true, wasmBytes, weightsBytes }, [wasmBytes, weightsBytes]);
@@ -6405,7 +6472,7 @@ startEngine();
     // ════════════════════════════════════════════════════════════
     window._onZchezzReady = function (nnue) {
       dbg('ready nnue=' + nnue, 'dbg-info');
-      document.getElementById('engine-info').textContent = 'Zchezz NNUE 3.30 · WebAssembly · ' + (nnue ? 'NNUE ✓' : 'classical eval');
+      document.getElementById('engine-info').textContent = 'Zchezz NNUE 3.31 · WebAssembly · ' + (nnue ? 'NNUE ✓' : 'classical eval');
       setTimeout(() => { resizeAll(); newGame(); }, 80);
     };
 
