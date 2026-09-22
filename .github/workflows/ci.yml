@@ -1,6 +1,6 @@
 name: ci
 on:
-  push: {branches: [main, release/v331-v507-ponder]}
+  push: {branches: [main]}
   pull_request:
   workflow_dispatch:
 permissions: {contents: read}
