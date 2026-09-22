@@ -4,16 +4,16 @@
 #
 # Usage:
 #   chmod +x build_termux.sh
-#   ./build_termux.sh              # v328, full suite
-#   ./build_termux.sh v506         # explicit supported secondary profile
+#   ./build_termux.sh              # v331, full suite
+#   ./build_termux.sh v507         # explicit supported secondary profile
 #   ./build_termux.sh v325 quick   # explicit frozen baseline, quick suite
 #
 # This helper tests an already-copied Termux engine directory. The repository
 # build itself is documented in engine/build/termux.md. Bare execution follows
-# the repository default and therefore targets v328.
+# the repository default and therefore targets v331.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-VERSION="${1:-v328}"
+VERSION="${1:-v331}"
 MODE="${2:-full}"
 ENGINE_DIR="$HOME/zchezz_${VERSION}"
 ENGINE="${ENGINE_DIR}/zchezz"

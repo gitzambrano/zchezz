@@ -4,7 +4,7 @@ import os, shutil
 from dataclasses import dataclass
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILE = "v330"
+DEFAULT_PROFILE = "v331"
 @dataclass(frozen=True)
 class EngineProfile:
     name:str; network_format:str; engine_dir:Path; checkpoint_dir:Path; trainer:Path; exporter:Path; importer:Path
@@ -19,9 +19,11 @@ PROFILES={
  "v328":EngineProfile("v328","NNU3",ROOT/"engine/c/zchezz_v328",ROOT/"checkpoints/v328",ROOT/"train/_train_nnu3_core.py",ROOT/"train/_export_nnu3_core.py",ROOT/"train/import_nnu3.py"),
  "v329":EngineProfile("v329","NNU3",ROOT/"engine/c/zchezz_v329",ROOT/"checkpoints/v329",ROOT/"train/_train_nnu3_core.py",ROOT/"train/_export_nnu3_core.py",ROOT/"train/import_nnu3.py"),
  "v330":EngineProfile("v330","NNU3",ROOT/"engine/c/zchezz_v330",ROOT/"checkpoints/v330",ROOT/"train/_train_nnu3_core.py",ROOT/"train/_export_nnu3_core.py",ROOT/"train/import_nnu3.py"),
+ "v331":EngineProfile("v331","NNU3",ROOT/"engine/c/zchezz_v331",ROOT/"checkpoints/v331",ROOT/"train/_train_nnu3_core.py",ROOT/"train/_export_nnu3_core.py",ROOT/"train/import_nnu3.py"),
  "v500":EngineProfile("v500","NNU4",ROOT/"engine/c/zchezz_v500",ROOT/"checkpoints/v500",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
  "v505":EngineProfile("v505","NNU4",ROOT/"engine/c/zchezz_v505",ROOT/"checkpoints/v505",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
  "v506":EngineProfile("v506","NNU4",ROOT/"engine/c/zchezz_v506",ROOT/"checkpoints/v506",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
+ "v507":EngineProfile("v507","NNU4",ROOT/"engine/c/zchezz_v507",ROOT/"checkpoints/v507",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
 }
 def normalize_profile(value:str|None=None)->str:
     token=(value or os.environ.get("ZCHEZZ_ENGINE") or DEFAULT_PROFILE).strip().lower()

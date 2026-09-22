@@ -1,9 +1,9 @@
 @echo off
-REM Shared native build launcher. Bare execution builds the active engine (v330).
-REM Pass v506 (or another explicit retained source version) as the first argument to override.
+REM Shared native build launcher. Bare execution builds the active engine (v331).
+REM Pass v507 (or another explicit retained source version) as the first argument to override.
 set "ENGINE=%~1"
 if not defined ENGINE set /p ENGINE=<"%~dp0..\ACTIVE_ENGINE"
-if not defined ENGINE set ENGINE=v330
+if not defined ENGINE set ENGINE=v331
 set "PATH=C:\mingw64\bin;%PATH%"
 cd /d "%~dp0"
 echo Compiling Zchezz (ENGINE=%ENGINE%)...
