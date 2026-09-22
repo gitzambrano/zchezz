@@ -16,7 +16,7 @@ def main() -> int:
     for name in required:
         if not (ROOT/name).exists(): error(f"missing required path: {name}")
     if (ROOT/"engine/ACTIVE_ENGINE").read_text(encoding="utf-8").strip()!=DEFAULT_PROFILE: error(f"ACTIVE_ENGINE must be {DEFAULT_PROFILE}")
-    if set(PROFILES)!={"v325","v326","v327","v328","v329","v330","v500","v505","v506"}: error(f"supported profiles drifted: {sorted(PROFILES)}")
+    if set(PROFILES)!={"v325","v326","v327","v328","v329","v330","v331","v500","v505","v506","v507"}: error(f"supported profiles drifted: {sorted(PROFILES)}")
     for p in PROFILES.values():
         if not p.engine_dir.is_dir(): error(f"missing engine profile: {p.engine_dir.relative_to(ROOT)}")
         if not p.weights.is_file(): error(f"missing NNUE weights: {p.weights.relative_to(ROOT)}")
@@ -36,8 +36,8 @@ def main() -> int:
     offenders=sorted(new_absolute_root_files(ROOT))
     if offenders: error(f"new hard-coded absolute repository roots: {offenders}")
     make=(ROOT/'engine/build/Makefile').read_text(encoding='utf-8')
-    if not re.search(r'^ENGINE\s*\?=\s*v330\b',make,re.M): error('Makefile default must be v330')
-    if not re.search(r'^TOOLS_ENGINE\s*\?=\s*v506\b',make,re.M): error('native tool host must be v506')
+    if not re.search(r'^ENGINE\s*\?=\s*v331\b',make,re.M): error('Makefile default must be v331')
+    if not re.search(r'^TOOLS_ENGINE\s*\?=\s*v507\b',make,re.M): error('native tool host must be v507')
     for item in ERRORS: print('ERROR:',item)
     if ERRORS:
         print(f'FAILED: {len(ERRORS)} issue(s)'); return 1
