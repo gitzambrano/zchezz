@@ -180,13 +180,45 @@ function doSearch(fen,moves,depth,id,timeLimitMs,multiPv,startDepth){{
       if (msg._status) {{
         dbg('status: ' + JSON.stringify(msg), msg._status === 'error' ? 'dbg-error' : 'dbg-info');
         if (msg._status === 'ready') {{
-          window.zchezzSearch = (p, cb) => {{ dbg('\\u2192 id=' + p.id + ' d=' + p.depth + ' mvs=' + ((p.moves || '').split(' ').length - 1), 'dbg-send'); cbs[p.id] = cb; worker.postMessage(p); }};
+          const PONDER_SLICE_MS = 80;
+          const PONDER_YIELD_MS = 20;
+          let ponderToken = 0;
+          let ponderSerial = 0;
+
+          const isPonderId = id => typeof id === 'string' && id.startsWith('__ponder_');
+          const sendSearch = (p, cb) => {{
+            if (!isPonderId(p.id)) dbg('\\u2192 id=' + p.id + ' d=' + p.depth + ' mvs=' + ((p.moves || '').split(' ').length - 1), 'dbg-send');
+            cbs[p.id] = cb || (() => {{}});
+            worker.postMessage(p);
+          }};
+          const cancelPonder = () => {{ ponderToken++; }};
+          const startPonder = (p, onSlice) => {{
+            const token = ++ponderToken;
+            const base = {{ ...p, multiPv: 1, startDepth: 0 }};
+            const step = () => {{
+              if (token !== ponderToken) return;
+              const q = {{ ...base, id: '__ponder_' + token + '_' + (++ponderSerial), timeLimitMs: PONDER_SLICE_MS }};
+              sendSearch(q, msg => {{
+                if (token !== ponderToken) return;
+                if (onSlice) onSlice(msg);
+                setTimeout(step, PONDER_YIELD_MS);
+              }});
+            }};
+            step();
+            return token;
+          }};
+
+          window.zchezzSearch = (p, cb) => {{ cancelPonder(); sendSearch(p, cb); }};
+          window.zchezzPonderStart = startPonder;
+          window.zchezzPonderCancel = cancelPonder;
           if (window._onZchezzReady) window._onZchezzReady(msg.nnue);
         }}
         if (msg._status === 'error' && window._onZchezzReady) window._onZchezzReady(false);
         return;
       }}
-      dbg('\\u2190 id=' + msg.id + ' uci=' + (msg.uci || '') + (msg.error ? ' ERR=' + msg.error : ''), 'dbg-recv');
+      if (!(typeof msg.id === 'string' && msg.id.startsWith('__ponder_'))) {{
+        dbg('\\u2190 id=' + msg.id + ' uci=' + (msg.uci || '') + (msg.error ? ' ERR=' + msg.error : ''), 'dbg-recv');
+      }}
       if (msg.id !== undefined && cbs[msg.id]) {{ cbs[msg.id](msg); delete cbs[msg.id]; }}
     }};
     worker.postMessage({{ _init: true, wasmBytes, weightsBytes }}, [wasmBytes, weightsBytes]);

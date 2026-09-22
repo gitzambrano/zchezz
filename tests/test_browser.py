@@ -11,6 +11,7 @@ Covered contracts:
   B3  Analysis returns a score and a non-empty PV.
   B4  MultiPV returns a real second line.
   B5  Clock-mode search returns a move when the opening book is unavailable.
+  B6  Sliced pondering keeps the browser main thread responsive and cancels cleanly.
 
 Usage:
   python tests/test_browser.py --version v403 --html zchezz_bundle.html --headless
@@ -306,6 +307,70 @@ def test_clock_search_without_book(page) -> None:
     page.screenshot(path=str(SCREENSHOT_DIR / "clock_no_book.png"))
 
 
+def test_ponder_responsiveness(page) -> None:
+    print("\n--- B6: Ponder responsiveness ---")
+    check(
+        "Ponder API is exposed",
+        page.evaluate(
+            "() => typeof window.zchezzPonderStart === 'function' && "
+            "typeof window.zchezzPonderCancel === 'function'"
+        ),
+    )
+    if not page.evaluate("() => typeof window.zchezzPonderStart === 'function'"):
+        return
+
+    # Run continuous pondering while a 10 ms main-thread interval counts heartbeats.
+    # A blocking implementation would starve this counter; a Worker implementation
+    # must leave it advancing freely while search slices run.
+    page.evaluate(
+        """() => {
+            window.__ponderHeartbeat = 0;
+            window.__ponderLast = null;
+            window.__ponderTimer = setInterval(() => { window.__ponderHeartbeat++; }, 10);
+            window.zchezzPonderStart({
+                fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+                moves: '',
+                depth: 40,
+                multiPv: 1
+            }, m => { window.__ponderLast = m; });
+        }"""
+    )
+    page.wait_for_timeout(900)
+    heartbeats = page.evaluate("() => window.__ponderHeartbeat")
+    check(
+        "Main thread remains responsive while pondering",
+        heartbeats >= 25,
+        f"heartbeats={heartbeats} in ~900 ms",
+    )
+    check(
+        "At least one ponder slice completed",
+        wait_js(page, "() => window.__ponderLast !== null", timeout=5_000),
+        debug_log(page),
+    )
+
+    # A normal search must cancel future slices and still complete promptly.
+    page.evaluate(
+        """() => {
+            clearInterval(window.__ponderTimer);
+            window.__afterPonder = null;
+            window.zchezzPonderCancel();
+            window.zchezzSearch({
+                fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+                moves: '',
+                depth: 5,
+                timeLimitMs: 500,
+                id: '__after_ponder_test'
+            }, m => { window.__afterPonder = m; });
+        }"""
+    )
+    ok = wait_js(
+        page,
+        "() => window.__afterPonder && !!window.__afterPonder.uci",
+        timeout=SEARCH_TIMEOUT_MS,
+    )
+    check("Normal search completes after ponder cancel", ok, debug_log(page))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("legacy_version", nargs="?", default="")
@@ -403,6 +468,7 @@ def main() -> int:
                 test_analysis_pv(page)
                 test_multipv(page)
                 test_clock_search_without_book(page)
+                test_ponder_responsiveness(page)
 
             browser.close()
     finally:
