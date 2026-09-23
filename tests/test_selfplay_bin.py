@@ -78,7 +78,7 @@ DEFAULT_BIN_PATHS: list[str] = [
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "train"))
 import numpy as np
-from dataset import SAMPLE_DTYPE, MultiShardSelfplay, wl_target  # noqa: E402
+from dataset import SAMPLE_DTYPE, MultiShardSelfplay, wl_target, read_bin_header  # noqa: E402
 
 # Zchezz piece codes: COL_W=8, COL_B=16, type 1..6 (P,N,B,R,Q,K) -> WP=9..BK=22.
 MIN_PIECE_CODE = 9
@@ -155,12 +155,14 @@ def check_shard(path: str) -> list[str]:
     size = os.path.getsize(path)
     if size == 0:
         return [f"{path}: empty file"]
-    if size % SAMPLE_DTYPE.itemsize != 0:
-        return [f"{path}: size {size} is not a multiple of record size {SAMPLE_DTYPE.itemsize}"]
+    header_offset, provenance = read_bin_header(path)
+    record_size = size - header_offset
+    if record_size % SAMPLE_DTYPE.itemsize != 0:
+        return [f"{path}: size {size} (minus {header_offset}-byte header = {record_size}) is not a multiple of record size {SAMPLE_DTYPE.itemsize}"]
 
-    arr = np.memmap(path, dtype=SAMPLE_DTYPE, mode="r")
+    arr = np.memmap(path, dtype=SAMPLE_DTYPE, mode="r", offset=header_offset)
     n = len(arr)
-    print(f"{path}: {n} records ({size} bytes)")
+    print(f"{path}: {n} records ({size} bytes, header={header_offset})")
 
     # ── 1. dtype / padding sanity ──────────────────────────────────
     if not np.all(arr["_pad"] == 0):

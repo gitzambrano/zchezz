@@ -714,8 +714,8 @@ def build_bin_records(states, winner) -> bytes:
         else:
             stm_score = raw_score if is_white_stm else -raw_score
             if abs(stm_score) >= MATE_SCORE // 2:
-                stm_score = MATE_SCORE if stm_score > 0 else -MATE_SCORE
-            eval_cp = max(-32000, min(32000, stm_score))
+                stm_score = 19000 if stm_score > 0 else -19000
+            eval_cp = max(-19000, min(19000, stm_score))
         if winner is None:
             game_result = 0
         else:
