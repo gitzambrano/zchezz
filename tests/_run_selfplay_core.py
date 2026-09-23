@@ -108,7 +108,7 @@ for _s in (_sys.stdout, _sys.stderr):
     except (AttributeError, ValueError):
         pass  # already-redirected or non-reconfigurable stream
 
-import os, sys, json, subprocess, time, math, random, threading, datetime, tempfile, signal, io
+import os, re, sys, json, subprocess, time, math, random, threading, datetime, tempfile, signal, io
 import collections
 from queue import Queue, Empty
 import chess
@@ -125,7 +125,7 @@ from elo_calc import elo_difference as _elo_difference
 # stays a cheap import even when SAVE_BIN is off.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "train"))
 import numpy as np
-from dataset import SAMPLE_DTYPE
+from dataset import SAMPLE_DTYPE, encode_bin_header
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  CONFIGURATION — edit this block and run; every constant is also a CLI flag
@@ -205,6 +205,9 @@ OPENING_MODE        = "book"  # how each game's starting position is chosen:
 BOOK_PORTION        = 0.97    # "book+random" only: fraction of iterations drawn from the book
 OPENING_FOLDER      = "openings/lines"  # walked recursively for .pgn/.epd files, see header docstring
 RANDOM_PLIES        = 6       # plies of random legal moves, for "random" and the random half of "book+random"
+SEED                = 0       # 0 = unseeded (OS entropy). >0 seeds the schedule shuffle and derives each
+                              # game's random opening from (SEED, game id), so one seed reproduces the
+                              # same openings regardless of which worker plays which game.
 SAME_OPENING_TWICE  = True    # True: color-swap pair reuses the SAME opening; False: advances to the next one
 COLOR_SWAP          = True    # every opening is always played from both sides (not actually optional — see main())
 
@@ -246,6 +249,7 @@ CLI = [
     ("BOOK_PORTION",        "--book-portion",    float, "'book+random' mode: fraction drawn from the book"),
     ("OPENING_FOLDER",      "--openings",        str,   "folder walked recursively for .pgn/.epd openings"),
     ("RANDOM_PLIES",        "--random-plies",    int,   "ply count for the random opening mode"),
+    ("SEED",                "--seed",            int,   "opening RNG seed; 0 = unseeded"),
     ("SAME_OPENING_TWICE",  "--same-opening-twice", bool, "color-swap pair reuses the same opening"),
     ("ENGINE_PATH",         "--engine",          str,   "override the path of EVERY ENGINES_CFG entry"),
     ("ENGINE_LABEL",        "--engine-label",    str,   "override the label of EVERY ENGINES_CFG entry"),
@@ -604,13 +608,14 @@ def load_all_openings(folder_path):
     log(f"[Openings] Indexed {len(idx)} positions from '{folder_path}' (offsets only, no RAM load)")
     return idx
 
-def random_opening(n_plies: int, start_board=None) -> dict:
+def random_opening(n_plies: int, start_board=None, rng=None) -> dict:
+    rng = rng or random
     board = start_board.copy() if start_board else chess.Board()
     moves = []
     for _ in range(n_plies):
         legal = list(board.legal_moves)
         if not legal or board.is_game_over(): break
-        move = random.choice(legal)
+        move = rng.choice(legal)
         moves.append(move.uci()); board.push(move)
     return {"moves": moves, "fen": None}
 
@@ -695,6 +700,28 @@ def pack_move16(move: "chess.Move", board: "chess.Board") -> int:
     prom     = move.promotion or 0   # python-chess promotion 2..5 == Zchezz PC_TYPE N..Q
     epc      = 1 if board.is_en_passant(move) else 0
     return (from_zsq & 63) | ((to_zsq & 63) << 6) | ((prom & 7) << 12) | (epc << 15)
+
+def _bin_provenance_header() -> bytes | None:
+    """Format-v2 header for a new .bin, or None when provenance is ambiguous.
+
+    A header is written only when every ENGINES_CFG entry is the same
+    executable (one evaluator per file, same rule as arena.c's --bin gate)
+    and that executable lives in an engine/c/zchezz_vNNN directory whose
+    nnue_weights.bin exists. The engine process runs with cwd=its own
+    directory, so that file is the one it loads. Mixed-engine runs stay
+    headerless and read back with provenance "unknown".
+    """
+    paths = {os.path.normcase(os.path.abspath(cfg["path"])) for cfg in ENGINES_CFG}
+    if len(paths) != 1:
+        return None
+    engine_dir = os.path.dirname(paths.pop())
+    m = re.search(r"zchezz_v(\d+)$", engine_dir.replace("\\", "/"))
+    weights = os.path.join(engine_dir, "nnue_weights.bin")
+    if not m or not os.path.isfile(weights):
+        return None
+    rel = os.path.relpath(weights, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return encode_bin_header(int(m.group(1)), rel)
+
 
 def build_bin_records(states, winner) -> bytes:
     """states: list of {"fen": <pre-move FEN>, "score": <white-relative cp|None>,
@@ -960,6 +987,7 @@ def main():
                 next_oidx = (oidx + 1) % max(1, len(all_openings)) if kind == "book" else None
                 schedule.append((gid, j, i, kind, next_oidx)); gid += 1
 
+    if SEED: random.seed(SEED)
     random.shuffle(schedule)
 
     # start_time set here, AFTER indexing, so ETA reflects actual game time
@@ -983,7 +1011,8 @@ def main():
                 if kind == "book":
                     opening = all_openings.fetch(oidx)
                 else:
-                    opening = random_opening(RANDOM_PLIES)
+                    game_rng = random.Random(SEED * 1_000_003 + gid) if SEED else None
+                    opening = random_opening(RANDOM_PLIES, rng=game_rng)
                 play_game(gid, instances[w_idx], instances[b_idx], opening, res_q)
                 task_q.task_done()
             except Empty: break
@@ -996,6 +1025,9 @@ def main():
     fe = open(EPD_FILE, "w", encoding="utf-8") if SAVE_EPD else None
     fp = open(PGN_FILE, "w", encoding="utf-8") if SAVE_PGN else None
     fb = open(BIN_FILE, "ab") if SAVE_BIN else None  # append mode, matches selfplay.exe's --out convention
+    if fb and fb.tell() == 0:
+        header = _bin_provenance_header()
+        if header: fb.write(header); fb.flush()
 
     try:
         while completed_games < _real_total_games:

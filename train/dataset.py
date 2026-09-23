@@ -230,6 +230,33 @@ def read_bin_header(path: str) -> tuple[int, Provenance]:
         weight_path=weight_path,
     )
 
+
+def weight_fingerprint(path: str) -> int:
+    """FNV-1a 64 over a weight file's raw bytes (same as sample.h's
+    sample_fnv1a64), so Python writers and selfplay.c agree on identity."""
+    h = 14695981039346656037
+    with open(path, "rb") as f:
+        data = f.read()
+    for byte in data:
+        h = ((h ^ byte) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def encode_bin_header(engine_version: int, weight_path: str) -> bytes:
+    """Build a format-v2 SampleFileHeader for a single-evaluator .bin file.
+
+    `engine_version` is major*100+minor (e.g. 331). `weight_path` must name
+    the weight file that produced every eval_cp in the file; it is hashed
+    with weight_fingerprint() and stored NUL-padded/truncated to 128 bytes.
+    """
+    hdr = np.zeros(1, dtype=HEADER_DTYPE)
+    hdr["magic"] = SAMPLE_FILE_MAGIC
+    hdr["header_size"] = HEADER_DTYPE.itemsize
+    hdr["engine_version"] = engine_version
+    hdr["weight_fingerprint"] = weight_fingerprint(weight_path)
+    hdr["weight_path"] = weight_path.replace("\\", "/").encode("utf-8")[:128]
+    return hdr.tobytes()
+
 # ── Record dtype — SEE MODULE DOCSTRING: THIS IS A CROSS-LANGUAGE CONTRACT ──
 SAMPLE_DTYPE = np.dtype([
     ("board", "u1", (64,)),   # mailbox pieces, Zchezz encoding, zsq 0=a8..63=h1

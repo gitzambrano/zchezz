@@ -15,7 +15,9 @@ TEDIR   = ../c/zchezz_$(TOOLS_ENGINE)
 TOOLDIR = ../c/tools
 
 CFLAGS      = -O3 -ffast-math -D_GNU_SOURCE -std=c11 $(ARCH_FLAGS) -I$(EDIR)
-TOOL_CFLAGS = -O3 -ffast-math -D_GNU_SOURCE -std=c11 $(ARCH_FLAGS) -I$(TEDIR)
+# Native tools stamp .bin provenance headers with the host profile number (v507 -> 507).
+TOOLS_VERSION = $(patsubst v%,%,$(TOOLS_ENGINE))
+TOOL_CFLAGS = -O3 -ffast-math -D_GNU_SOURCE -std=c11 $(ARCH_FLAGS) -I$(TEDIR) -DSAMPLE_ENGINE_VERSION=$(TOOLS_VERSION)
 WARNS   = -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized \
           -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses
 EMWARNS = -Wno-unused-variable -Wno-unused-but-set-variable -Wno-uninitialized \
