@@ -16,7 +16,7 @@ Training checkpoints live under `checkpoints/<profile>/`. `latest.pt` is the can
 
 ## Installed NNUE weights
 
-`engine/c/zchezz_v325/nnue_weights.bin` and `engine/c/zchezz_v506/nnue_weights.bin` are runtime inputs tracked with their engine profiles. They are not disposable build output.
+`engine/c/zchezz_v331/nnue_weights.bin` and `engine/c/zchezz_v507/nnue_weights.bin` are runtime inputs tracked with their engine profiles. They are not disposable build output. Frozen baselines such as `zchezz_v328` and `zchezz_v325` also track their installed networks.
 
 ## Browser bundle
 

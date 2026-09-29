@@ -9,11 +9,11 @@ Zchezz separates repository contracts, deterministic engine correctness and stat
 ```bash
 pip install -e ".[dev]"
 python tools/check_repo.py
-python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py -q
-make -C engine/build ENGINE=v325 STATIC_FLAG= ARCH_FLAGS= native
-make -C engine/build ENGINE=v506 STATIC_FLAG= ARCH_FLAGS= native
-python tools/check_nnue.py --profile v325
-python tools/check_nnue.py --profile v506
+python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py tests/test_teaching_format.py tests/test_teaching_methods.py -q
+make -C engine/build ENGINE=v331 STATIC_FLAG= ARCH_FLAGS= native
+make -C engine/build ENGINE=v507 STATIC_FLAG= ARCH_FLAGS= native
+python tools/check_nnue.py --profile v331
+python tools/check_nnue.py --profile v507
 ```
 
 CI does not commit/push, train networks, play long tournaments, publish releases, run heavyweight browser setup or mutate branches.
@@ -32,7 +32,7 @@ Local execution is authoritative for deeper validation. Relevant checks include:
 
 ## Default profile
 
-Public orchestration defaults to v325. Use explicit `--profile v506` or `ENGINE=v506` only when the v506 family is the intended subject.
+Public orchestration defaults to v331. Use explicit `--profile v507` or `ENGINE=v507` only when the v507 family is the intended subject. Frozen baseline comparisons may explicitly select `--profile v328` or `--profile v325`.
 
 ## Result semantics
 

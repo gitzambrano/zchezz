@@ -7,8 +7,8 @@ Both supported engine families contain a Syzygy bridge. Native tablebase probing
 The shared Makefile enables Fathom only when the expected source/header pair is available for the selected engine. Otherwise it defines `NO_TABLEBASES`.
 
 ```bash
-make -C engine/build ENGINE=v325 native
-make -C engine/build ENGINE=v506 native
+make -C engine/build ENGINE=v331 native
+make -C engine/build ENGINE=v507 native
 ```
 
 Both commands must remain buildable without local tablebases.

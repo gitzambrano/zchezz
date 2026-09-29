@@ -22,13 +22,13 @@ These identifiers define stable observable requirements. Tests should cite them 
 - **NNUE-01** — incremental evaluation state agrees with a clean rebuild for the same position/network.
 - **NNUE-02** — a selected profile rejects the other family's NNUE magic/dimensions instead of reinterpreting bytes.
 
-## v325 / NNU3
+## v331 / NNU3
 
 - **NNU3-01** — the installed file is NNU3 with file dimensions `799,256,256,64,64` and size 426,864 bytes.
 - **NNU3-02** — runtime H2 compaction preserves only L3-nonzero file neurons and pads the live set to the compiled SIMD slot count.
 - **NNU3-03** — mutable accumulator/cache state is private per search thread.
 
-## v506 / NNU4
+## v507 / NNU4
 
 - **NNU4-01** — HalfKP-4-Bucket feature indexing uses the documented perspective coordinate transform.
 - **NNU4-02** — concat order is `[stm, opp]`.

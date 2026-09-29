@@ -1,8 +1,8 @@
 # Search
 
-## v325
+## v331
 
-`engine/c/zchezz_v325/search.c` is the current default search implementation.
+`engine/c/zchezz_v331/search.c` is the current default search implementation.
 
 The search stack includes:
 
@@ -20,13 +20,14 @@ The search stack includes:
 - Syzygy probing when enabled;
 - MultiPV root handling;
 - time, node and external-stop limits;
-- Lazy SMP helper threads with thread-private mutable search/NNUE state.
+- Lazy SMP helper threads with thread-private mutable search/NNUE state;
+- validated UCI pondering (`go ponder` / `ponderhit`).
 
-The v325 TT uses three 10-byte entries inside a 32-byte aligned cluster. Entries store a 16-bit key fragment, compact depth/generation/bound metadata, compact move, score and static evaluation. Hash size is dynamically allocated from the UCI `Hash` setting.
+The v331 TT uses three 10-byte entries inside a 32-byte aligned cluster. Entries store a 16-bit key fragment, compact depth/generation/bound metadata, compact move, score and static evaluation. Hash size is dynamically allocated from the UCI `Hash` setting.
 
-## v506
+## v507
 
-v506 has its own search implementation/API. Do not assume its internal `SearchState`, TT or NNUE instance ABI is source-compatible with v325. Generic comparisons use UCI processes.
+v507 has its own search implementation/API. Do not assume its internal `SearchState`, TT or NNUE instance ABI is source-compatible with v331. Generic comparisons use UCI processes.
 
 ## Strength interpretation
 

@@ -9,17 +9,17 @@ The reusable teaching format under `train/teaching/` follows the same rule. It s
 ## Profile entry point
 
 ```bash
-python train/run.py                    # v329
-python train/run.py --profile v329
+python train/run.py                    # v331
+python train/run.py --profile v331
 python train/run.py --profile v328    # frozen NNU3 baseline (pre-v3.29)
 python train/run.py --profile v325    # frozen NNU3 baseline
-python train/run.py --profile v506
+python train/run.py --profile v507
 python train/run.py --show-config
 ```
 
-A bare run defaults to v329. Inspection mode must not train or modify artifacts.
+A bare run defaults to v331. Inspection mode must not train or modify artifacts.
 
-## v329 / v328 / v325 NNU3 family
+## v331 / v328 / v325 NNU3 family
 
 - `train/encoding_nnu3.py`
 - `train/model_nnu3.py`
@@ -28,9 +28,9 @@ A bare run defaults to v329. Inspection mode must not train or modify artifacts.
 - `train/import_nnu3.py`
 - `train/export_nnu3.py`
 
-The installed runtime artifact is NNU3. v329 uses the same installed NNU3 weights as v328/v325; the v3.29 release adds pawn-structure correction history to static evaluation.
+The installed runtime artifact is NNU3. v331 uses the same installed NNU3 weights as v330/v328/v325.
 
-## v506 family
+## v507 family
 
 - `train/encoding.py`
 - `train/model.py`
@@ -71,8 +71,8 @@ For the existing v329/v328/v325 NNU3 and v506 NNU4 value trainers, `train/teachi
 
 ```bash
 python train/teaching/export_eval_bin.py
-python train/run.py --profile v329 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
-python train/run.py --profile v506 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v331 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v507 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
 ```
 
 Useful teaching commands:

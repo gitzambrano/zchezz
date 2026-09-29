@@ -1,6 +1,6 @@
 # UCI Interface
 
-The default engine is `engine/c/zchezz_v325/` and identifies itself as Zchezz 3.25.
+The default engine is `engine/c/zchezz_v331/` and identifies itself as Zchezz 3.31.
 
 ## Core commands
 
@@ -8,9 +8,9 @@ The engine handles the normal UCI lifecycle: `uci`, `isready`, `ucinewgame`, `se
 
 `go` supports the standard search controls used by the repository runners, including depth, movetime, clock/increment, movestogo, nodes, mate, infinite, ponder and searchmoves.
 
-## v325 options
+## Options
 
-The v325 UCI layer exposes at least:
+The v331 UCI layer exposes at least:
 
 - `Hash`
 - `Threads`
@@ -32,4 +32,4 @@ Tests, not documentation prose, are authoritative for the exact option inventory
 
 ## Cross-family use
 
-Treat UCI as the stable boundary between v325, v506 and external engines such as Stockfish. Do not link v325 and v506 search/evaluator internals into one generic comparison process.
+Treat UCI as the stable boundary between v331, v507 and external engines such as Stockfish. Do not link v331 and v507 search/evaluator internals into one generic comparison process.

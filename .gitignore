@@ -117,3 +117,4 @@ engine/build/test_engine_invariants.exe
 zchezz_devtools.egg-info/
 zchezz_devtools.egg/
 .pytest_cache/
+scratch/

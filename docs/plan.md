@@ -3,8 +3,7 @@
 Objetivo: um release do Zchezz com rating **medido** acima de 3100, com intervalo de confiança
 de 95% cujo limite inferior fique acima de 3050.
 
-Este documento define as fases, os gates e as regras de decisão. Resultados de experimentos
-entram em `docs/experiments/`; este arquivo só muda quando a estratégia muda.
+Este documento define as fases, os gates e as regras de decisão. O histórico e o status dos experimentos da linha v5 ficam registrados em `docs/v5-status.md`; este arquivo só muda quando a estratégia muda.
 
 ## 1. Ponto de partida (fatos do repositório)
 
@@ -12,11 +11,11 @@ entram em `docs/experiments/`; este arquivo só muda quando a estratégia muda.
 |---|---|---|
 | Linha principal | v3.31, NNU3 (799 → 256 → 64 → 1, sem king buckets) | `docs/nnue.md` |
 | Força declarada | "~2900 Elo". Não há no repo a medição que sustente o número (pool, controle de tempo, IC) | `Readme.md` |
-| Linha v5 (NNU4) | Mais fraca que a v3: v5.01 −73,7 Elo vs v3.24; v5.21 −137 vs v3.28 (200k nós) | `docs/v501-release.md`, ledger v5 |
-| Avaliação estática vs Stockfish | v3.28 MAE 141 cp; v5.06 MAE 162 cp | ledger v5 (v5.22) |
-| Micro-ajustes locais da rede v5 | Esgotados (v5.24–v5.31 todos rejeitados) | ledger v5 |
+| Linha v5 (NNU4) | Mais fraca que a v3: v5.01 −73,7 Elo vs v3.24; v5.21 −137 vs v3.28 (200k nós) | `docs/releases.md`, `docs/v5-status.md` |
+| Avaliação estática vs Stockfish | v3.28 MAE 141 cp; v5.06 MAE 162 cp | `docs/v5-status.md` (v5.22) |
+| Micro-ajustes locais da rede v5 | Esgotados (v5.24–v5.31 todos rejeitados) | `docs/v5-status.md` |
 | Busca v3 | Madura: PVS, aspiration, LMR, NMP, RFP, futility, LMP, SEE, singular extension, IIR, correction history de peões, Lazy SMP | `docs/search.md`, `zchezz_v331/search.c` |
-| Treino da rede v5 grande | 2,4M posições | ledger v5 |
+| Treino da rede v5 grande | 2,4M posições | `docs/v5-status.md` |
 | Arena nativa, SPRT e `ga_tune` | Só no host NNU4 (v507). A linha v3 só compara via UCI | `engine/build/Makefile`, `docs/regression-testing.md` |
 
 Conclusões para o plano:
@@ -54,9 +53,7 @@ Conclusões para o plano:
    ao runner de torneio UCI ou portar o cálculo de `tests/run_arena.py`. Bounds padrão:
    `elo0=0, elo1=5` (mudanças pequenas) e `elo0=0, elo1=10` (mudanças de rede).
 
-**Gate:** rating do v3.31 publicado em `docs/experiments/` com IC, pool, TC, número de jogos
-e SHAs. Esse número substitui o "~2900" do README. A distância real até 3100 define o
-orçamento das fases seguintes.
+**Gate:** rating do v3.31 publicado com IC, pool, TC, número de jogos e SHAs. Esse número substitui o "~2900" do README. A distância real até 3100 define o orçamento das fases seguintes.
 
 ### Fase 1 — Dados em escala para a rede v3 (maior ganho esperado)
 
@@ -134,7 +131,7 @@ linha "ponto de partida" por um número real e reajusta o resto.
 
 ## 5. Regras
 
-Valem as regras do ledger v5 (`docs/experiments/v507-status-2026-09-15.md`), mais:
+Valem as regras do ledger v5 (`docs/v5-status.md`), mais:
 
 1. Uma causa por experimento: nunca mudar arquitetura, professor, busca e objetivo ao mesmo
    tempo.

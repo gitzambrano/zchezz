@@ -4,19 +4,19 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Supported engine profiles
 
-- Treat `v328` as the repository default and released working line.
-- Keep `v327` available as a frozen NNU3 regression/comparison baseline; do not retarget it with current-release changes.
+- Treat `v331` as the repository default and released working line.
+- Keep `v328` and `v327` available as frozen NNU3 regression/comparison baselines; do not retarget them with current-release changes.
 - Treat `v507` as a supported secondary experimental line.
 - Keep `engine/ACTIVE_ENGINE` equal to `v331` unless the user explicitly requests a promotion.
 - Do not create or restore `engine/c/zchezz_v4xx` directories.
 - Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
 - Keep NNU3 and NNU4 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
-- Treat `v314` through `v327` and version-named migration utilities as historical snapshots; `v327` may remain selectable only for explicit regression and comparison work.
+- Treat `v314` through `v327` and version-named migration utilities as historical snapshots; `v328` and `v327` may remain selectable only for explicit regression and comparison work.
 
 ## Bare-run contract
 
 - Every public operational script must run with no command-line arguments.
-- A bare run must select `v328` unless the script is a family-specific implementation module whose profile is explicit in its file name.
+- A bare run must select `v331` unless the script is a family-specific implementation module whose profile is explicit in its file name.
 - Optional CLI arguments may override defaults; they must not be required for normal execution.
 - `--show-config` or an equivalent non-destructive inspection mode must not build engines, start games, train, delete files, or change repository state.
 - Missing optional external prerequisites must produce a clear diagnostic. Scripts intended for inspection or orchestration must not fail merely because Stockfish, CUDA, tablebases, or an opening corpus is absent.
@@ -49,8 +49,8 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Builds and tests
 
-- Bare native builds use `ENGINE=v328`.
-- `ENGINE=v327` remains available for frozen regression comparisons.
+- Bare native builds use `ENGINE=v331`.
+- `ENGINE=v328` and `ENGINE=v327` remain available for frozen regression comparisons.
 - `ENGINE=v507` must build independently without changing the default marker.
 - Run deterministic local tests before considering a change complete.
 - Test `v331` and `v507` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
