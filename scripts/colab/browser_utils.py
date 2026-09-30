@@ -38,9 +38,27 @@ def is_profile_in_use(profile_dir: str) -> Tuple[bool, Optional[int]]:
 
 
 def dismiss_modals(page: Any) -> bool:
-    """Detect and click common Colab warning and authorization confirmation dialogs."""
+    """Detect and click common Colab warning, OAuth authorization, and confirmation dialogs."""
+    dismissed = False
     try:
-        return page.evaluate("""() => {
+        # Check other open pages in the same browser context (e.g. OAuth consent popups)
+        if hasattr(page, "context") and page.context:
+            for extra_page in page.context.pages:
+                if extra_page != page:
+                    try:
+                        p_url = extra_page.url or ""
+                        if "consent" in p_url or "oauth" in p_url:
+                            approve_btn = extra_page.locator("#submit_approve_access")
+                            if approve_btn.count() > 0:
+                                approve_btn.first.click()
+                                dismissed = True
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    try:
+        page_dismissed = page.evaluate("""() => {
             const buttons = Array.from(document.querySelectorAll(
                 'button, md-text-button, paper-button, .colab-dialog-button, colab-dialog button'
             ));
@@ -66,8 +84,9 @@ def dismiss_modals(page: Any) -> bool:
             }
             return false;
         }""")
+        return dismissed or bool(page_dismissed)
     except Exception:
-        return False
+        return dismissed
 
 
 def connect_runtime_if_needed(page: Any) -> bool:
@@ -158,8 +177,21 @@ def get_notebook_dom_state(page: Any, target_keywords: Optional[List[str]] = Non
             'colab-run-button[title*="Interromper"], colab-run-button[aria-label*="Interromper"], colab-run-button.running'
         ));
 
+        // Penetrate shadow root for running indicator
+        let shadowRunning = false;
+        const allRunBtns = Array.from(document.querySelectorAll('colab-run-button'));
+        for (const b of allRunBtns) {
+            if (b.shadowRoot) {
+                const act = b.shadowRoot.querySelector('.cell-execution.running, md-circular-progress, [indeterminate], #stop-symbol');
+                if (act) {
+                    shadowRunning = true;
+                    break;
+                }
+            }
+        }
+
         const nb = typeof colab !== 'undefined' && colab.global ? colab.global.notebook : null;
-        let running = isRunningBtn.length > 0;
+        let running = isRunningBtn.length > 0 || shadowRunning;
         if (nb && typeof nb.isExecuting === 'function') {
             running = running || nb.isExecuting();
         }
@@ -170,10 +202,10 @@ def get_notebook_dom_state(page: Any, target_keywords: Optional[List[str]] = Non
             running = running || (targetCell.isRunning ? targetCell.isRunning() : false);
             pending = targetCell.isPending ? targetCell.isPending() : false;
             const dom = targetCell.getElement ? targetCell.getElement() : (targetCell.element_ || targetCell.dom_);
-            const outDiv = dom ? dom.querySelector('.output, colab-output, .output-stream, .output_text') : null;
+            const outDiv = dom ? dom.querySelector('.output, colab-output, .output-stream, .output_text, .output-content') : null;
             outText = outDiv ? outDiv.innerText.slice(-1200) : '';
         } else {
-            const streams = Array.from(document.querySelectorAll('.output-stream, .output_text, colab-output'));
+            const streams = Array.from(document.querySelectorAll('.output-stream, .output_text, colab-output, .output-content'));
             if (streams.length > 0) {
                 outText = streams[streams.length - 1].innerText.slice(-1200);
             }
@@ -262,29 +294,28 @@ def trigger_cell_execution(
             }
 
             const elem = targetCell.getElement ? targetCell.getElement() : (targetCell.element_ || targetCell.dom_);
-            if (elem && elem.scrollIntoView) elem.scrollIntoView();
+            if (elem) {
+                if (elem.scrollIntoView) elem.scrollIntoView();
+                if (elem.focus) elem.focus();
+                const ed = elem.querySelector('.monaco-editor, textarea, .view-lines');
+                if (ed && ed.focus) ed.focus();
+            }
 
             if (elem) {
                 const btn = elem.querySelector('colab-run-button');
                 if (btn) {
                     if (btn.shadowRoot) {
                         const inner = btn.shadowRoot.querySelector('button, [role="button"]');
-                        if (inner) {
-                            inner.click();
-                            return { success: true, method: 'colab-run-button-shadow' };
-                        }
+                        if (inner) inner.click();
+                    } else {
+                        btn.click();
                     }
-                    btn.click();
-                    return { success: true, method: 'colab-run-button' };
                 }
             }
-
-            if (typeof targetCell.manualExecute === 'function') {
-                targetCell.manualExecute();
-                return { success: true, method: 'manualExecute' };
-            }
-            return { success: false, reason: 'no_run_method' };
+            return { success: true };
         }""", {"newCode": new_code, "keywords": target_keywords})
+        time.sleep(1)
+        page.keyboard.press("Control+Enter")
         time.sleep(3)
         dismiss_modals(page)
         return res.get("success", False) if isinstance(res, dict) else False
