@@ -19,7 +19,8 @@ CFLAGS      = -O3 -ffast-math -D_GNU_SOURCE -std=c11 $(ARCH_FLAGS) -I$(EDIR)
 TOOLS_VERSION = $(patsubst v%,%,$(TOOLS_ENGINE))
 TOOL_CFLAGS = -O3 -ffast-math -D_GNU_SOURCE -std=c11 $(ARCH_FLAGS) -I$(TEDIR) -DSAMPLE_ENGINE_VERSION=$(TOOLS_VERSION)
 WARNS   = -Wno-unused-variable -Wno-unused-but-set-variable -Wno-maybe-uninitialized \
-          -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses
+          -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses \
+          -Wno-format-truncation -Wno-format-overflow
 EMWARNS = -Wno-unused-variable -Wno-unused-but-set-variable -Wno-uninitialized \
           -Wno-misleading-indentation -Wno-sign-compare -Wno-unused-function -Wno-parentheses
 LDFLAGS = $(STATIC_FLAG) -lm -pthread

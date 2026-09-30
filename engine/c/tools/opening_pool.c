@@ -186,7 +186,7 @@ static int walk_recursive(const char *dir, OpeningFileCB cb, void *ud) {
     }
 
     for (int i = 0; i < n; i++) {
-        char path[1024];
+        char path[4096];
         snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
         if (is_directory(path)) {
             count += walk_recursive(path, cb, ud);

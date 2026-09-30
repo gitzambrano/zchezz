@@ -75,12 +75,16 @@ def connect_runtime_if_needed(page: Any) -> bool:
     try:
         return page.evaluate("""() => {
             const btn = document.querySelector('colab-connect-button');
-            if (btn && btn.shadowRoot) {
-                const conn = btn.shadowRoot.querySelector('#connect');
-                if (conn && (conn.innerText.includes('Conectar') || conn.innerText.includes('Reconectar') || conn.innerText.includes('Connect'))) {
-                    conn.click();
-                    return true;
+            if (btn) {
+                if (btn.shadowRoot) {
+                    const conn = btn.shadowRoot.querySelector('#connect, #connect-button, button');
+                    if (conn) {
+                        conn.click();
+                        return true;
+                    }
                 }
+                btn.click();
+                return true;
             }
             return false;
         }""")
@@ -260,21 +264,24 @@ def trigger_cell_execution(
             const elem = targetCell.getElement ? targetCell.getElement() : (targetCell.element_ || targetCell.dom_);
             if (elem && elem.scrollIntoView) elem.scrollIntoView();
 
-            if (typeof targetCell.manualExecute === 'function') {
-                targetCell.manualExecute();
-                return { success: true, method: 'manualExecute' };
-            } else if (elem) {
+            if (elem) {
                 const btn = elem.querySelector('colab-run-button');
                 if (btn) {
                     if (btn.shadowRoot) {
                         const inner = btn.shadowRoot.querySelector('button, [role="button"]');
-                        if (inner) inner.click();
-                        else btn.click();
-                    } else {
-                        btn.click();
+                        if (inner) {
+                            inner.click();
+                            return { success: true, method: 'colab-run-button-shadow' };
+                        }
                     }
+                    btn.click();
                     return { success: true, method: 'colab-run-button' };
                 }
+            }
+
+            if (typeof targetCell.manualExecute === 'function') {
+                targetCell.manualExecute();
+                return { success: true, method: 'manualExecute' };
             }
             return { success: false, reason: 'no_run_method' };
         }""", {"newCode": new_code, "keywords": target_keywords})

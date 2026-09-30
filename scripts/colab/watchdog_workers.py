@@ -182,8 +182,9 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
 
                         # 3. Auto-reconnect if VM disconnected and not running
                         if cfg["auto_reconnect"] and not state["running"] and not state["pending"]:
-                            if "Conectar" in state["statusText"] and "Conectando" not in state["statusText"]:
-                                print(f"[{w['name']}] [DISCONNECTED] Connecting VM...")
+                            conn_needed = any(k in state["statusText"] for k in ["Conectar", "Reconectar", "Connect", "Reconnect"])
+                            if conn_needed and "Conectando" not in state["statusText"] and "Connecting" not in state["statusText"]:
+                                print(f"[{w['name']}] [DISCONNECTED] Connecting VM ({state['statusText']})...")
                                 sess["reconnect_count"] += 1
                                 connect_runtime_if_needed(page)
                                 time.sleep(12)
@@ -196,7 +197,7 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
                                 print(f"[{w['name']}] Trigger attempt complete (will re-verify next cycle).")
 
                         # 4. Periodically capture status screenshot and sidecar JSON
-                        if cycle % cfg["screenshot_interval_cycles"] == 0:
+                        if cycle == 1 or cycle % cfg["screenshot_interval_cycles"] == 0:
                             ss_path = artifacts_path / f"{wid}_watchdog.png"
                             page.screenshot(path=str(ss_path))
 

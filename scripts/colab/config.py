@@ -17,7 +17,7 @@ WORKERS: Dict[str, Dict[str, Any]] = {
         "profile_dir": r"C:\Projetos\TikTok\profiles\zchezzproject",
         "notebook_url": "https://colab.research.google.com/drive/1j8-gG7qApv--t2DBM8tf1gmgKjuUXiLC",
         "cdp_port": 9331,
-        "target_keywords": ["Remessa 2", "sp_v331_r2", "v331", "run_colab_arena", "zchezz"],
+        "target_keywords": ["Remessa 2", "sp_v331_r2"],
         "target_shard_prefix": "sp_v331_r2",
     },
     "v507": {
@@ -29,7 +29,7 @@ WORKERS: Dict[str, Dict[str, Any]] = {
         "profile_dir": r"C:\Projetos\TikTok\profiles\zbrainproject",
         "notebook_url": "https://colab.research.google.com/drive/1WaoYFjPIl70cECrs9CGZEwEoMxVzBEp8",
         "cdp_port": 9507,
-        "target_keywords": ["Remessa 2", "sp_v507_r2", "v507", "zchezz"],
+        "target_keywords": ["Remessa 2", "sp_v507_r2"],
         "target_shard_prefix": "sp_v507_r2",
     },
 }
