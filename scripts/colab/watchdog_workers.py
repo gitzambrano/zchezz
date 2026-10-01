@@ -63,7 +63,19 @@ def init_worker_session(p: Any, worker: Dict[str, Any], headless: bool, timeout_
 
     if in_use and not cdp_active:
         print(f"  [WARN] Profile for {name} is locked by external process PID {proc_pid}.")
-        return None
+        if proc_pid:
+            try:
+                import psutil
+                proc = psutil.Process(proc_pid)
+                proc.terminate()
+                proc.wait(timeout=3)
+                print(f"  Terminated stale process PID {proc_pid} locking profile for {name}.")
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                time.sleep(1)
 
     try:
         if cdp_active:
