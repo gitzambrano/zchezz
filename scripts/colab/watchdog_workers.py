@@ -65,17 +65,17 @@ def init_worker_session(p: Any, worker: Dict[str, Any], headless: bool, timeout_
         print(f"  [WARN] Profile for {name} is locked by external process PID {proc_pid}.")
         if proc_pid:
             try:
-                import psutil
-                proc = psutil.Process(proc_pid)
-                proc.terminate()
-                proc.wait(timeout=3)
-                print(f"  Terminated stale process PID {proc_pid} locking profile for {name}.")
-            except Exception:
-                try:
-                    proc.kill()
-                except Exception:
-                    pass
-                time.sleep(1)
+                import subprocess
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc_pid)], capture_output=True, check=False)
+                print(f"  Killed process tree for PID {proc_pid} locking profile for {name}.")
+            except Exception as e:
+                print(f"  Failed to kill PID {proc_pid}: {e}")
+        # Wait for OS to release all file locks on the profile directory
+        for _ in range(10):
+            time.sleep(1)
+            still_in_use, _ = is_profile_in_use(profile)
+            if not still_in_use:
+                break
 
     try:
         if cdp_active:
