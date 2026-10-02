@@ -155,8 +155,17 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
                     w = WORKERS[wid]
                     sess = sessions.get(wid)
 
-                    # Auto-recover dead or closed browser sessions
-                    if sess is None or sess.get("page") is None or sess["page"].is_closed():
+                    # Auto-recover dead or closed browser sessions safely
+                    page_dead = False
+                    if sess is None or sess.get("page") is None:
+                        page_dead = True
+                    else:
+                        try:
+                            page_dead = sess["page"].is_closed()
+                        except Exception:
+                            page_dead = True
+
+                    if page_dead:
                         print(f"[{w['name']}] Session missing or closed. Recovering...")
                         try:
                             if sess and not sess.get("is_cdp") and sess.get("ctx"):
@@ -165,7 +174,7 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
                             pass
                         sess = init_worker_session(p, w, cfg["headless"], cfg["page_timeout_ms"])
                         sessions[wid] = sess
-                        if not sess:
+                        if not sess or not sess.get("page"):
                             continue
 
                     page = sess["page"]
@@ -287,7 +296,18 @@ def main() -> None:
             print(f"  {k}: {v}")
         return
 
-    run_watchdog(effective_cfg)
+    while True:
+        try:
+            run_watchdog(effective_cfg)
+            break
+        except KeyboardInterrupt:
+            print("\n[WATCHDOG] Stopped by user.")
+            break
+        except Exception as exc:
+            import traceback
+            print(f"\n[WATCHDOG ERROR] {exc}. Auto-recovering watchdog in 10s...")
+            traceback.print_exc()
+            time.sleep(10)
 
 
 if __name__ == "__main__":
