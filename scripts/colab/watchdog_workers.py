@@ -16,6 +16,27 @@ from typing import Dict, Any, List, Optional
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
+import atexit
+import traceback
+
+def _log_debug(msg: str) -> None:
+    try:
+        debug_file = REPO_ROOT / "artifacts" / "colab" / "watchdog_debug.txt"
+        debug_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(debug_file, "a", encoding="utf-8") as f:
+            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+    except Exception:
+        pass
+
+atexit.register(lambda: _log_debug("Watchdog process exited (atexit)"))
+
+def _uncaught_handler(exctype, value, tb):
+    err = "".join(traceback.format_exception(exctype, value, tb))
+    _log_debug(f"FATAL UNCAUGHT EXCEPTION:\n{err}")
+    sys.__excepthook__(exctype, value, tb)
+
+sys.excepthook = _uncaught_handler
+
 # Ensure scripts root is in path
 CURRENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CURRENT_DIR.parent.parent
@@ -148,114 +169,121 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
         # 2. Continuous monitoring and keep-alive loop
         try:
             while True:
-                cycle += 1
-                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                print(f"\n--- [Cycle {cycle:04d}] {now_str} ---")
+                try:
+                    cycle += 1
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"\n--- [Cycle {cycle:04d}] {now_str} ---")
 
-                for wid in worker_ids:
-                    w = WORKERS[wid]
-                    sess = sessions.get(wid)
+                    for wid in worker_ids:
+                        w = WORKERS[wid]
+                        sess = sessions.get(wid)
 
-                    # Auto-recover dead or closed browser sessions safely
-                    page_dead = False
-                    if sess is None or sess.get("page") is None:
-                        page_dead = True
-                    else:
-                        try:
-                            page_dead = sess["page"].is_closed()
-                        except Exception:
+                        # Auto-recover dead or closed browser sessions safely
+                        page_dead = False
+                        if sess is None or sess.get("page") is None:
                             page_dead = True
+                        else:
+                            try:
+                                page_dead = sess["page"].is_closed()
+                            except Exception:
+                                page_dead = True
 
-                    if page_dead:
-                        print(f"[{w['name']}] Session missing or closed. Recovering...")
-                        try:
-                            if sess and not sess.get("is_cdp") and sess.get("ctx"):
-                                sess["ctx"].close()
-                        except Exception:
-                            pass
-                        sess = init_worker_session(p, w, cfg["headless"], cfg["page_timeout_ms"])
-                        sessions[wid] = sess
-                        if not sess or not sess.get("page"):
-                            continue
-
-                    page = sess["page"]
-                    keywords = w.get("target_keywords", ["Remessa 2", wid, "selfplay"])
-
-                    try:
-                        dismiss_modals(page)
-
-                        # Extract state from Colab DOM
-                        state = get_notebook_dom_state(page, keywords)
-
-                        # Extract clean progress line
-                        lines = [line.strip() for line in state["outText"].splitlines() if line.strip()]
-                        progress_lines = [
-                            l for l in lines
-                            if any(k in l for k in ["Iniciando Shard:", "Progresso:", "validado:", "posicoes", "games", "ok:", "MATCH:"])
-                        ]
-                        current_progress = progress_lines[-1] if progress_lines else (lines[-1] if lines else "No output yet")
-                        sess["last_progress"] = current_progress
-
-                        # Keep-alive micro-interaction: subtle mouse movement prevents idle timeout
-                        page.mouse.move(60 + (cycle % 40), 60 + (cycle % 40))
-
-                        run_tag = "[RUNNING]" if state["running"] else ("[PENDING]" if state["pending"] else "[IDLE]")
-                        print(f"[{w['name']}] {run_tag} (VM: {state['statusText']}) -> {current_progress[:90]}")
-
-                        # 3. Auto-reconnect if VM disconnected and not running
-                        if cfg["auto_reconnect"] and not state["running"] and not state["pending"]:
-                            conn_needed = any(k in state["statusText"] for k in ["Conectar", "Reconectar", "Connect", "Reconnect"])
-                            if conn_needed and "Conectando" not in state["statusText"] and "Connecting" not in state["statusText"]:
-                                print(f"[{w['name']}] [DISCONNECTED] Connecting VM ({state['statusText']})...")
-                                sess["reconnect_count"] += 1
-                                connect_runtime_if_needed(page)
-                                time.sleep(12)
-
-                            print(f"[{w['name']}] [IDLE] Triggering target cell...")
-                            ok = trigger_cell_execution(page, w, bootloader_template=None, target_keywords=keywords)
-                            if ok:
-                                print(f"[{w['name']}] Triggered execution successfully.")
-                            else:
-                                print(f"[{w['name']}] Trigger attempt complete (will re-verify next cycle).")
-
-                        # 4. Periodically capture status screenshot and sidecar JSON
-                        if cycle == 1 or cycle % cfg["screenshot_interval_cycles"] == 0:
-                            ss_path = artifacts_path / f"{wid}_watchdog.png"
-                            page.screenshot(path=str(ss_path))
-
-                            status_data = {
-                                "worker_id": wid,
-                                "name": w["name"],
-                                "account": w["account"],
-                                "cycle": cycle,
-                                "timestamp": now_str,
-                                "running": state["running"],
-                                "pending": state["pending"],
-                                "status_text": state["statusText"],
-                                "progress": current_progress,
-                                "reconnect_count": sess["reconnect_count"],
-                                "screenshot": str(ss_path),
-                            }
-                            json_path = artifacts_path / f"{wid}_status.json"
-                            with open(json_path, "w", encoding="utf-8") as f:
-                                json.dump(status_data, f, indent=2)
-
-                            print(f"[{w['name']}] Saved snapshot to {ss_path.name}")
-
-                    except Exception as err:
-                        print(f"[{w['name']}] [ERROR in cycle {cycle}]: {err}")
-                        err_str = str(err).lower()
-                        if any(k in err_str for k in ["closed", "target", "connection closed", "session"]):
-                            print(f"[{w['name']}] Connection lost. Resetting session for next cycle recovery...")
+                        if page_dead:
+                            print(f"[{w['name']}] Session missing or closed. Recovering...")
                             try:
                                 if sess and not sess.get("is_cdp") and sess.get("ctx"):
                                     sess["ctx"].close()
                             except Exception:
                                 pass
-                            sessions[wid] = None
+                            sess = init_worker_session(p, w, cfg["headless"], cfg["page_timeout_ms"])
+                            sessions[wid] = sess
+                            if not sess or not sess.get("page"):
+                                continue
 
-                sys.stdout.flush()
-                time.sleep(cfg["check_interval_seconds"])
+                        page = sess["page"]
+                        keywords = w.get("target_keywords", ["Remessa 2", wid, "selfplay"])
+
+                        try:
+                            dismiss_modals(page)
+
+                            # Extract state from Colab DOM
+                            state = get_notebook_dom_state(page, keywords)
+
+                            # Extract clean progress line
+                            lines = [line.strip() for line in state["outText"].splitlines() if line.strip()]
+                            progress_lines = [
+                                l for l in lines
+                                if any(k in l for k in ["Iniciando Shard:", "Progresso:", "validado:", "posicoes", "games", "ok:", "MATCH:"])
+                            ]
+                            current_progress = progress_lines[-1] if progress_lines else (lines[-1] if lines else "No output yet")
+                            sess["last_progress"] = current_progress
+
+                            # Keep-alive micro-interaction: subtle mouse movement prevents idle timeout
+                            page.mouse.move(60 + (cycle % 40), 60 + (cycle % 40))
+
+                            run_tag = "[RUNNING]" if state["running"] else ("[PENDING]" if state["pending"] else "[IDLE]")
+                            print(f"[{w['name']}] {run_tag} (VM: {state['statusText']}) -> {current_progress[:90]}")
+
+                            # 3. Auto-reconnect if VM disconnected and not running
+                            if cfg["auto_reconnect"] and not state["running"] and not state["pending"]:
+                                conn_needed = any(k in state["statusText"] for k in ["Conectar", "Reconectar", "Connect", "Reconnect"])
+                                if conn_needed and "Conectando" not in state["statusText"] and "Connecting" not in state["statusText"]:
+                                    print(f"[{w['name']}] [DISCONNECTED] Connecting VM ({state['statusText']})...")
+                                    sess["reconnect_count"] += 1
+                                    connect_runtime_if_needed(page)
+                                    time.sleep(12)
+
+                                print(f"[{w['name']}] [IDLE] Triggering target cell...")
+                                ok = trigger_cell_execution(page, w, bootloader_template=None, target_keywords=keywords)
+                                if ok:
+                                    print(f"[{w['name']}] Triggered execution successfully.")
+                                else:
+                                    print(f"[{w['name']}] Trigger attempt complete (will re-verify next cycle).")
+
+                            # 4. Periodically capture status screenshot and sidecar JSON
+                            if cycle == 1 or cycle % cfg["screenshot_interval_cycles"] == 0:
+                                ss_path = artifacts_path / f"{wid}_watchdog.png"
+                                page.screenshot(path=str(ss_path))
+
+                                status_data = {
+                                    "worker_id": wid,
+                                    "name": w["name"],
+                                    "account": w["account"],
+                                    "cycle": cycle,
+                                    "timestamp": now_str,
+                                    "running": state["running"],
+                                    "pending": state["pending"],
+                                    "status_text": state["statusText"],
+                                    "progress": current_progress,
+                                    "reconnect_count": sess["reconnect_count"],
+                                    "screenshot": str(ss_path),
+                                }
+                                json_path = artifacts_path / f"{wid}_status.json"
+                                with open(json_path, "w", encoding="utf-8") as f:
+                                    json.dump(status_data, f, indent=2)
+
+                                print(f"[{w['name']}] Saved snapshot to {ss_path.name}")
+
+                        except Exception as err:
+                            print(f"[{w['name']}] [ERROR in cycle {cycle}]: {err}")
+                            err_str = str(err).lower()
+                            if any(k in err_str for k in ["closed", "target", "connection closed", "session"]):
+                                print(f"[{w['name']}] Connection lost. Resetting session for next cycle recovery...")
+                                try:
+                                    if sess and not sess.get("is_cdp") and sess.get("ctx"):
+                                        sess["ctx"].close()
+                                except Exception:
+                                    pass
+                                sessions[wid] = None
+
+                    sys.stdout.flush()
+                    time.sleep(cfg["check_interval_seconds"])
+                except KeyboardInterrupt:
+                    raise
+                except Exception as loop_err:
+                    print(f"[WATCHDOG LOOP ERROR in cycle {cycle}]: {loop_err}")
+                    _log_debug(f"Loop error in cycle {cycle}: {loop_err}\n{traceback.format_exc()}")
+                    time.sleep(10)
 
         except KeyboardInterrupt:
             print("\n[WATCHDOG] Stopped by user (KeyboardInterrupt).")
