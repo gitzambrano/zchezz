@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 # Ensure scripts root is in path
 CURRENT_DIR = Path(__file__).resolve().parent
