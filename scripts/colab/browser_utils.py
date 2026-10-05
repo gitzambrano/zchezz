@@ -118,15 +118,21 @@ def is_cdp_reachable(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -
 
 def is_profile_in_use(profile_dir: str) -> Tuple[bool, Optional[int]]:
     """Check if any running chrome.exe process is currently using the specified user data directory."""
-    target_name = os.path.basename(os.path.normpath(profile_dir)).lower()
+    norm_target = os.path.normcase(os.path.abspath(profile_dir))
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
             p_name = proc.info.get("name") or ""
             if "chrome" in p_name.lower():
                 cmdline = proc.info.get("cmdline") or []
-                cmd_str = " ".join(cmdline).lower()
-                if target_name in cmd_str and ("user-data-dir" in cmd_str or "profile" in cmd_str):
+                cmd_str = " ".join(cmdline)
+                norm_cmd = os.path.normcase(cmd_str)
+                if norm_target in norm_cmd:
                     return True, proc.info.get("pid")
+                for arg in cmdline:
+                    if arg.startswith("--user-data-dir="):
+                        val = os.path.normcase(os.path.abspath(arg.split("=", 1)[1].strip('"\'')))
+                        if val == norm_target:
+                            return True, proc.info.get("pid")
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
     return False, None
