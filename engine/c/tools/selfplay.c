@@ -453,6 +453,7 @@ static void rng_seed_for_game(Rng *r, uint64_t global_seed, uint64_t game_idx) {
 #define SP_DEFAULT_TEMP_SCALE        100.0         /* centipawns per softmax unit before applying T */
 #define SP_DEFAULT_TEMP_PLIES          24          /* search plies using T0 before switching to --temp-final */
 #define SP_DEFAULT_TEMP_FINAL        0.05          /* softmax T1 after --temp-plies (near-argmax, not exactly) */
+#define SP_DEFAULT_TEMP_DECAY        "step"        /* "step" | "linear" | "exp" schedule towards T1 */
 #define SP_DEFAULT_TEMP_ARGMAX_EPS    0.0          /* T <= this is EXACT argmax -> that ply searches multipv=1 (no MultiPV
                                                      * cost at all).  0.0 = only a literal T of 0 takes the fast path, so
                                                      * the shipped schedule above is bit-for-bit unchanged.  Raise it to
@@ -490,6 +491,23 @@ static int open_mode_from_str(const char *s, OpenMode *out) {
     return 0;
 }
 
+typedef enum { TEMP_DECAY_STEP = 0, TEMP_DECAY_LINEAR = 1, TEMP_DECAY_EXP = 2 } TempDecayMode;
+
+static int temp_decay_from_str(const char *s, TempDecayMode *out) {
+    if (!strcmp(s, "step"))   { *out = TEMP_DECAY_STEP;   return 1; }
+    if (!strcmp(s, "linear")) { *out = TEMP_DECAY_LINEAR; return 1; }
+    if (!strcmp(s, "exp") || !strcmp(s, "exponential")) { *out = TEMP_DECAY_EXP; return 1; }
+    return 0;
+}
+
+static const char *temp_decay_to_str(TempDecayMode mode) {
+    switch (mode) {
+        case TEMP_DECAY_LINEAR: return "linear";
+        case TEMP_DECAY_EXP:    return "exp";
+        default:                return "step";
+    }
+}
+
 typedef struct {
     int      games;
     int      threads;
@@ -499,8 +517,9 @@ typedef struct {
     int      multipv;         /* MultiPV candidates to sample among */
     double   temperature;     /* T0 */
     double   temp_scale;      /* cp scale divisor before softmax/T   */
-    int      temp_plies;      /* plies using T0 before switching to T1 */
+    int      temp_plies;      /* plies using T0 before switching to T1 (or decay horizon) */
     double   temp_final;      /* T1 */
+    TempDecayMode temp_decay; /* step | linear | exp */
     double   temp_argmax_eps; /* T <= this => exact argmax => multipv forced to 1 for that ply */
     int      max_plies;       /* hard game-length cap -> draw */
     uint64_t seed;
@@ -531,6 +550,7 @@ static void config_defaults(Config *c) {
     c->temp_scale           = SP_DEFAULT_TEMP_SCALE;
     c->temp_plies           = SP_DEFAULT_TEMP_PLIES;
     c->temp_final           = SP_DEFAULT_TEMP_FINAL;
+    temp_decay_from_str(SP_DEFAULT_TEMP_DECAY, &c->temp_decay);
     c->temp_argmax_eps      = SP_DEFAULT_TEMP_ARGMAX_EPS;
     c->max_plies            = SP_DEFAULT_MAX_PLIES;
     c->seed                 = SP_DEFAULT_SEED;
@@ -560,6 +580,7 @@ static void print_usage(const char *argv0) {
         "  --multipv N          root candidates to sample among (default " SP_XSTR(SP_DEFAULT_MULTIPV) ")\n"
         "  --temperature T0     softmax temperature for the first --temp-plies SEARCH plies (default " SP_XSTR(SP_DEFAULT_TEMPERATURE) ")\n"
         "  --temp-scale CP      centipawns per softmax unit before applying T (default " SP_XSTR(SP_DEFAULT_TEMP_SCALE) ")\n"
+        "  --temp-decay MODE    temperature decay schedule: step | linear | exp (default " SP_DEFAULT_TEMP_DECAY ")\n"
         "  --temp-plies N       plies using T0 before switching to --temp-final (default " SP_XSTR(SP_DEFAULT_TEMP_PLIES) ")\n"
         "  --temp-final T1      softmax temperature after --temp-plies (default " SP_XSTR(SP_DEFAULT_TEMP_FINAL) ", ~argmax)\n"
         "  --temp-argmax-eps E  T <= E means exact argmax: that ply searches multipv=1 and skips\n"
@@ -606,6 +627,14 @@ static int parse_args(int argc, char **argv, Config *cfg) {
         else if (!strcmp(a, "--multipv"))     { NEED_ARG(); cfg->multipv = NEXT_INT(); }
         else if (!strcmp(a, "--temperature")) { NEED_ARG(); cfg->temperature = NEXT_DOUBLE(); }
         else if (!strcmp(a, "--temp-scale"))  { NEED_ARG(); cfg->temp_scale = NEXT_DOUBLE(); }
+        else if (!strcmp(a, "--temp-decay"))  {
+            NEED_ARG();
+            const char *v = NEXT_STR();
+            if (!temp_decay_from_str(v, &cfg->temp_decay)) {
+                fprintf(stderr, "error: --temp-decay must be step|linear|exp, got '%s'\n", v);
+                return -1;
+            }
+        }
         else if (!strcmp(a, "--temp-plies"))  { NEED_ARG(); cfg->temp_plies = NEXT_INT(); }
         else if (!strcmp(a, "--temp-final"))  { NEED_ARG(); cfg->temp_final = NEXT_DOUBLE(); }
         else if (!strcmp(a, "--temp-argmax-eps")) { NEED_ARG(); cfg->temp_argmax_eps = NEXT_DOUBLE(); }
@@ -989,6 +1018,22 @@ static int select_by_temperature(const int *stm_scores_cp, int n, double T,
  * plies only, i.e. `ply - oc.n_forced` once forced plies are behind
  * us — the opening phase itself has no engine "decision" to temper.
  * ═══════════════════════════════════════════════════════════════════ */
+static double compute_effective_temperature(int search_ply, const Config *cfg) {
+    if (cfg->temp_plies <= 0) return cfg->temp_final;
+    if (search_ply >= cfg->temp_plies) return cfg->temp_final;
+
+    if (cfg->temp_decay == TEMP_DECAY_LINEAR) {
+        double progress = (double)search_ply / (double)cfg->temp_plies;
+        return cfg->temperature - progress * (cfg->temperature - cfg->temp_final);
+    } else if (cfg->temp_decay == TEMP_DECAY_EXP) {
+        double progress = (double)search_ply / (double)cfg->temp_plies;
+        return cfg->temp_final + (cfg->temperature - cfg->temp_final) * exp(-3.0 * progress);
+    } else {
+        /* TEMP_DECAY_STEP */
+        return cfg->temperature;
+    }
+}
+
 typedef enum { RES_DRAW = 0, RES_WHITE_WINS = 1, RES_BLACK_WINS = 2 } GameOutcome;
 
 static size_t play_one_game(WorkerCtx *w, uint64_t game_idx, GameOutcome *outcome,
@@ -1044,7 +1089,7 @@ static size_t play_one_game(WorkerCtx *w, uint64_t game_idx, GameOutcome *outcom
         if (is_forced) {
             mv = oc.forced[ply];
         } else {
-            double T = ((ply - oc.n_forced) < cfg->temp_plies) ? cfg->temperature : cfg->temp_final;
+            double T = compute_effective_temperature(ply - oc.n_forced, cfg);
 
             /* ARGMAX FAST PATH: at T <= temp_argmax_eps the softmax below
              * collapses to "pick the best root move", so the extra MultiPV
@@ -1386,11 +1431,11 @@ int main(int argc, char **argv) {
     size_t tt_entries = tt_entries_for_mb(cfg.tt_mb);
     fprintf(stderr,
         "[selfplay] games=%d threads=%d movetime=%dms nodes=%ld multipv=%d "
-        "temp=%.3g->%.3g@%dplies scale=%.0fcp argmax_eps=%.3g max_plies=%d seed=%llu "
+        "temp=%.3g->%.3g@%dplies(%s) scale=%.0fcp argmax_eps=%.3g max_plies=%d seed=%llu "
         "tt=%s(%zu entries/table, ~%.1fMB) nnue=%s out=%s pgn=%s epd=%s\n",
         cfg.games, cfg.threads, cfg.movetime_ms, cfg.nodes, cfg.multipv,
-        cfg.temperature, cfg.temp_final, cfg.temp_plies, cfg.temp_scale,
-        cfg.temp_argmax_eps, cfg.max_plies,
+        cfg.temperature, cfg.temp_final, cfg.temp_plies, temp_decay_to_str(cfg.temp_decay),
+        cfg.temp_scale, cfg.temp_argmax_eps, cfg.max_plies,
         (unsigned long long)cfg.seed,
         cfg.separate_tt ? "separate" : "shared", tt_entries,
         (tt_entries * 26.0) / (1024.0 * 1024.0),

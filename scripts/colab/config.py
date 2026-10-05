@@ -38,6 +38,22 @@ if not os.path.exists('/content/Zchezz'):
 !PROFILE={profile} ACCOUNT_ID={account_id} TARGET_POSITIONS=20000000 NODES=5000 MOVETIME=50 bash colab/run_selfplay_colab.sh
 """
 
+V507_BOOTLOADER_TEMPLATE = """from google.colab import drive
+import os
+
+if not os.path.exists('/content/drive/MyDrive'):
+    drive.mount('/content/drive')
+
+if not os.path.exists('/content/Zchezz'):
+    !git clone https://github.com/gitzambrano/zchezz.git /content/Zchezz
+
+%cd /content/Zchezz
+!git pull origin main
+!pip -q install python-chess numpy
+!make -C /content/Zchezz/engine/build TOOLS_ENGINE=v507 ENGINE=v507 STATIC_FLAG="" selfplay native
+!PROFILE=v507 ACCOUNT_ID=1 TARGET_POSITIONS=40000000 NODES=5000 MOVETIME=50 TEMPERATURE=1.2 TEMP_DECAY=linear TEMP_PLIES=60 TEMP_FINAL=0.02 RANDOM_PLIES=0 bash colab/run_selfplay_colab.sh
+"""
+
 # Worker configurations for distributed Google Colab self-play generation in Zchezz & Zquoridor.
 WORKERS: Dict[int, Dict[str, Any]] = {
     1: {
@@ -131,7 +147,7 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "cdp_port": 9507,
         "target_keywords": ["Remessa 2", "sp_v507_r2", "zchezz", "run_selfplay_colab.sh"],
         "target_shard_prefix": "sp_v507_r2",
-        "bootloader_template": BOOTLOADER_TEMPLATE,
+        "bootloader_template": V507_BOOTLOADER_TEMPLATE,
     },
 }
 

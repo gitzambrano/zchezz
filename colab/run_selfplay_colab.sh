@@ -17,8 +17,12 @@ GAMES_PER_SHARD="${GAMES_PER_SHARD:-3000}"        # Jogos por shard (par: v331 j
 NODES="${NODES:-0}"                                # Nós por lance, v507 (obrigatório > 0)
 MOVETIME="${MOVETIME:-50}"                        # ms por lance, v331 (o runner UCI não expõe nós fixos)
 THREADS="${THREADS:-0}"                            # 0 = nproc
-MULTIPV="${MULTIPV:-4}"                            # v507: candidatos MultiPV na fase com temperatura
-TEMP_PLIES="${TEMP_PLIES:-24}"                     # v507: lances com temperatura T0
+MULTIPV="${MULTIPV:-4}"                            # Candidatos MultiPV na fase com temperatura
+TEMPERATURE="${TEMPERATURE:-1.0}"                  # Temperatura T0 inicial
+TEMP_SCALE="${TEMP_SCALE:-100.0}"                  # Escala cp do softmax
+TEMP_DECAY="${TEMP_DECAY:-step}"                   # step | linear | exp
+TEMP_PLIES="${TEMP_PLIES:-24}"                     # Plies com temperatura T0 ou horizonte de decaimento
+TEMP_FINAL="${TEMP_FINAL:-0.0}"                    # Temperatura final
 RANDOM_PLIES="${RANDOM_PLIES:-8}"                  # Lances aleatórios de abertura
 OPENINGS="${OPENINGS:-}"                           # v507: livro opcional (.pgn/.epd ou diretório)
 LOCAL_DIR="${LOCAL_DIR:-/content/zchezz_shards}"
@@ -53,7 +57,7 @@ echo " Nós por Lance:    ${NODES}"
 else
 echo " Movetime:         ${MOVETIME} ms"
 fi
-echo " MultiPV / Temp:   ${MULTIPV} / ${TEMP_PLIES} plies, T_final 0"
+echo " MultiPV / Temp:   ${MULTIPV} / T0=${TEMPERATURE} -> ${TEMP_FINAL} (${TEMP_DECAY} em ${TEMP_PLIES} plies)"
 echo " Threads:          ${ACTUAL_THREADS} (config: ${THREADS})"
 echo " Random Plies:     ${RANDOM_PLIES}"
 echo " Diretório Local:  ${LOCAL_DIR}"
@@ -170,9 +174,11 @@ PYEOF
             --movetime 0
             --nodes "${NODES}"
             --multipv "${MULTIPV}"
-            --temperature 1.0
+            --temperature "${TEMPERATURE}"
+            --temp-scale "${TEMP_SCALE}"
+            --temp-decay "${TEMP_DECAY}"
             --temp-plies "${TEMP_PLIES}"
-            --temp-final 0
+            --temp-final "${TEMP_FINAL}"
             --no-same-opening-twice
             --opening-mode random
             --random-plies "${RANDOM_PLIES}"
@@ -202,9 +208,11 @@ PYEOF
             --concurrency "${ACTUAL_THREADS}" \
             --movetime "${MOVETIME}" \
             --multipv "${MULTIPV}" \
-            --temperature 1.0 \
+            --temperature "${TEMPERATURE}" \
+            --temp-scale "${TEMP_SCALE}" \
+            --temp-decay "${TEMP_DECAY}" \
             --temp-plies "${TEMP_PLIES}" \
-            --temp-final 0 \
+            --temp-final "${TEMP_FINAL}" \
             --seed "${SEED}" \
             --results-dir "${RUNNER_DIR}"
 
@@ -252,6 +260,7 @@ PYEOF
     SHARD_NAME="${SHARD_NAME}" PROFILE="${PROFILE}" ACCOUNT_ID="${ACCOUNT_ID}" SEED="${SEED}" \
     GAMES_PER_SHARD="${GAMES_PER_SHARD}" NODES="${NODES}" MOVETIME="${MOVETIME}" \
     THREADS="${ACTUAL_THREADS}" MULTIPV="${MULTIPV}" TEMP_PLIES="${TEMP_PLIES}" \
+    TEMPERATURE="${TEMPERATURE}" TEMP_SCALE="${TEMP_SCALE}" TEMP_DECAY="${TEMP_DECAY}" TEMP_FINAL="${TEMP_FINAL}" \
     RANDOM_PLIES="${RANDOM_PLIES}" OPENINGS="${OPENINGS}" GIT_COMMIT="${GIT_COMMIT}" \
     SHARD_SAMPLES="${SHARD_SAMPLES}" DURATION="${DURATION}" CPU_MODEL="${CPU_MODEL}" \
     LOCAL_BIN="${LOCAL_BIN}" REPO_ROOT="${REPO_ROOT}" \
@@ -272,8 +281,11 @@ print(json.dumps({
     "time_control": {"nodes": int(e["NODES"])} if native else {"movetime_ms": int(e["MOVETIME"])},
     "threads": int(e["THREADS"]),
     "multipv": int(e["MULTIPV"]),
+    "temperature": float(e["TEMPERATURE"]),
+    "temp_scale": float(e["TEMP_SCALE"]),
+    "temp_decay": e["TEMP_DECAY"],
     "temp_plies": int(e["TEMP_PLIES"]),
-    "temp_final": 0.0,
+    "temp_final": float(e["TEMP_FINAL"]),
     "opening_mode": "all" if (native and e["OPENINGS"]) else "random",
     "random_plies": int(e["RANDOM_PLIES"]),
     "openings": e["OPENINGS"],
