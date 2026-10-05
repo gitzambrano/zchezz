@@ -446,6 +446,9 @@ static void rng_seed_for_game(Rng *r, uint64_t global_seed, uint64_t game_idx) {
 #define SP_DEFAULT_GAMES              100          /* number of self-play games */
 #define SP_DEFAULT_THREADS              0          /* worker threads; 0 = autodetect logical cores */
 #define SP_DEFAULT_MOVETIME_MS        100          /* per-move time budget, ms; 0 = use --nodes/--depth instead */
+#define SP_DEFAULT_MOVETIME_FINAL       0          /* per-move target time budget, ms; 0 = no decay (keep movetime_ms) */
+#define SP_DEFAULT_MOVETIME_PLIES      60          /* search plies horizon for movetime decay */
+#define SP_DEFAULT_MOVETIME_DECAY "linear"         /* "linear" | "step" | "exp" schedule towards movetime_final */
 #define SP_DEFAULT_NODES                0          /* per-move node budget; used only when movetime==0 and depth==0 */
 #define SP_DEFAULT_DEPTH                0          /* per-move depth budget, plies; 0 = use movetime/nodes instead (parity gap fix: matches run_selfplay.py's tc_mode="depth") */
 #define SP_DEFAULT_MULTIPV              4          /* root candidates sampled for temperature move choice */
@@ -512,6 +515,9 @@ typedef struct {
     int      games;
     int      threads;
     int      movetime_ms;     /* 0 = use nodes/depth instead */
+    int      movetime_final;  /* 0 = no decay (keep movetime_ms) */
+    int      movetime_plies;  /* plies horizon for movetime decay */
+    TempDecayMode movetime_decay; /* step | linear | exp */
     long     nodes;           /* 0 = unlimited (only meaningful if movetime_ms==0 and depth==0) */
     int      depth;           /* 0 = use movetime/nodes instead */
     int      multipv;         /* MultiPV candidates to sample among */
@@ -543,6 +549,9 @@ static void config_defaults(Config *c) {
     c->games               = SP_DEFAULT_GAMES;
     c->threads             = SP_DEFAULT_THREADS > 0 ? SP_DEFAULT_THREADS : detect_cpus();
     c->movetime_ms         = SP_DEFAULT_MOVETIME_MS;
+    c->movetime_final      = SP_DEFAULT_MOVETIME_FINAL;
+    c->movetime_plies      = SP_DEFAULT_MOVETIME_PLIES;
+    temp_decay_from_str(SP_DEFAULT_MOVETIME_DECAY, &c->movetime_decay);
     c->nodes                = SP_DEFAULT_NODES;
     c->depth                = SP_DEFAULT_DEPTH;
     c->multipv              = SP_DEFAULT_MULTIPV;
@@ -575,6 +584,9 @@ static void print_usage(const char *argv0) {
         "  --games N            number of self-play games (default " SP_XSTR(SP_DEFAULT_GAMES) ")\n"
         "  --threads N          worker threads (default = logical cores)\n"
         "  --movetime MS        per-move time budget in ms (default " SP_XSTR(SP_DEFAULT_MOVETIME_MS) "; 0 = use --nodes/--depth)\n"
+        "  --movetime-final MS  per-move final time budget in ms for decay (default " SP_XSTR(SP_DEFAULT_MOVETIME_FINAL) "; 0 = no decay)\n"
+        "  --movetime-plies N   plies to decay movetime down to --movetime-final (default " SP_XSTR(SP_DEFAULT_MOVETIME_PLIES) ")\n"
+        "  --movetime-decay MODE movetime decay schedule: step | linear | exp (default " SP_DEFAULT_MOVETIME_DECAY ")\n"
         "  --nodes N            per-move node budget (used when --movetime 0 and --depth 0)\n"
         "  --depth N            per-move depth budget, plies (default off; overrides --movetime/--nodes when > 0)\n"
         "  --multipv N          root candidates to sample among (default " SP_XSTR(SP_DEFAULT_MULTIPV) ")\n"
@@ -622,6 +634,16 @@ static int parse_args(int argc, char **argv, Config *cfg) {
         if (!strcmp(a, "--games"))            { NEED_ARG(); cfg->games = NEXT_INT(); }
         else if (!strcmp(a, "--threads"))     { NEED_ARG(); cfg->threads = NEXT_INT(); }
         else if (!strcmp(a, "--movetime"))    { NEED_ARG(); cfg->movetime_ms = NEXT_INT(); }
+        else if (!strcmp(a, "--movetime-final")) { NEED_ARG(); cfg->movetime_final = NEXT_INT(); }
+        else if (!strcmp(a, "--movetime-plies")) { NEED_ARG(); cfg->movetime_plies = NEXT_INT(); }
+        else if (!strcmp(a, "--movetime-decay")) {
+            NEED_ARG();
+            const char *v = NEXT_STR();
+            if (!temp_decay_from_str(v, &cfg->movetime_decay)) {
+                fprintf(stderr, "error: --movetime-decay must be step|linear|exp, got '%s'\n", v);
+                return -1;
+            }
+        }
         else if (!strcmp(a, "--nodes"))       { NEED_ARG(); cfg->nodes = NEXT_LONG(); }
         else if (!strcmp(a, "--depth"))       { NEED_ARG(); cfg->depth = NEXT_INT(); }
         else if (!strcmp(a, "--multipv"))     { NEED_ARG(); cfg->multipv = NEXT_INT(); }
@@ -677,6 +699,9 @@ static int parse_args(int argc, char **argv, Config *cfg) {
      * passes "--threads 0" through.  Clamping to 1 here would silently
      * run the whole generator single-threaded. */
     if (cfg->threads <= 0) cfg->threads = detect_cpus();
+    if (cfg->movetime_ms < 0) cfg->movetime_ms = 0;
+    if (cfg->movetime_final < 0) cfg->movetime_final = 0;
+    if (cfg->movetime_plies < 0) cfg->movetime_plies = 0;
     if (cfg->multipv < 1)  cfg->multipv = 1;
     if (cfg->multipv > MAX_MULTI_PV) cfg->multipv = MAX_MULTI_PV;
     if (cfg->max_plies < 1) cfg->max_plies = 1;
@@ -1034,6 +1059,28 @@ static double compute_effective_temperature(int search_ply, const Config *cfg) {
     }
 }
 
+static int compute_effective_movetime(int search_ply, const Config *cfg) {
+    if (cfg->movetime_ms <= 0) return 0;
+    if (cfg->movetime_final <= 0 || cfg->movetime_final == cfg->movetime_ms) return cfg->movetime_ms;
+    if (cfg->movetime_plies <= 0 || search_ply >= cfg->movetime_plies) return cfg->movetime_final;
+    if (search_ply <= 0) return cfg->movetime_ms;
+
+    if (cfg->movetime_decay == TEMP_DECAY_LINEAR) {
+        double progress = (double)search_ply / (double)cfg->movetime_plies;
+        double t = (double)cfg->movetime_ms - progress * (double)(cfg->movetime_ms - cfg->movetime_final);
+        int mt = (int)(t + 0.5);
+        return mt < 1 ? 1 : mt;
+    } else if (cfg->movetime_decay == TEMP_DECAY_EXP) {
+        double progress = (double)search_ply / (double)cfg->movetime_plies;
+        double t = (double)cfg->movetime_final + (double)(cfg->movetime_ms - cfg->movetime_final) * exp(-3.0 * progress);
+        int mt = (int)(t + 0.5);
+        return mt < 1 ? 1 : mt;
+    } else {
+        /* TEMP_DECAY_STEP */
+        return cfg->movetime_ms;
+    }
+}
+
 typedef enum { RES_DRAW = 0, RES_WHITE_WINS = 1, RES_BLACK_WINS = 2 } GameOutcome;
 
 static size_t play_one_game(WorkerCtx *w, uint64_t game_idx, GameOutcome *outcome,
@@ -1118,8 +1165,9 @@ static size_t play_one_game(WorkerCtx *w, uint64_t game_idx, GameOutcome *outcom
                 sp.node_limit    = 0;
             } else {
                 sp.max_depth     = MAX_PLY - 1;   /* same cap main.c uses for movetime/nodes-only "go" */
-                sp.time_limit_ms = cfg->movetime_ms;
-                sp.node_limit    = cfg->nodes;
+                int eff_movetime = compute_effective_movetime(ply - oc.n_forced, cfg);
+                sp.time_limit_ms = eff_movetime;
+                sp.node_limit    = (eff_movetime > 0) ? 0 : cfg->nodes;
             }
             sp.multi_pv      = want_multipv;
             sp.threads       = 1;             /* CRITICAL: no nested Lazy SMP — this worker
@@ -1429,19 +1477,36 @@ int main(int argc, char **argv) {
     }
 
     size_t tt_entries = tt_entries_for_mb(cfg.tt_mb);
-    fprintf(stderr,
-        "[selfplay] games=%d threads=%d movetime=%dms nodes=%ld multipv=%d "
-        "temp=%.3g->%.3g@%dplies(%s) scale=%.0fcp argmax_eps=%.3g max_plies=%d seed=%llu "
-        "tt=%s(%zu entries/table, ~%.1fMB) nnue=%s out=%s pgn=%s epd=%s\n",
-        cfg.games, cfg.threads, cfg.movetime_ms, cfg.nodes, cfg.multipv,
-        cfg.temperature, cfg.temp_final, cfg.temp_plies, temp_decay_to_str(cfg.temp_decay),
-        cfg.temp_scale, cfg.temp_argmax_eps, cfg.max_plies,
-        (unsigned long long)cfg.seed,
-        cfg.separate_tt ? "separate" : "shared", tt_entries,
-        (tt_entries * 26.0) / (1024.0 * 1024.0),
-        cfg.nnue_path, cfg.out_path,
-        cfg.pgn_path[0] ? cfg.pgn_path : "(none)",
-        cfg.epd_path[0] ? cfg.epd_path : "(none)");
+    if (cfg.movetime_final > 0 && cfg.movetime_final != cfg.movetime_ms) {
+        fprintf(stderr,
+            "[selfplay] games=%d threads=%d movetime=%d->%dms@%dplies(%s) nodes=%ld multipv=%d "
+            "temp=%.3g->%.3g@%dplies(%s) scale=%.0fcp argmax_eps=%.3g max_plies=%d seed=%llu "
+            "tt=%s(%zu entries/table, ~%.1fMB) nnue=%s out=%s pgn=%s epd=%s\n",
+            cfg.games, cfg.threads, cfg.movetime_ms, cfg.movetime_final, cfg.movetime_plies, temp_decay_to_str(cfg.movetime_decay),
+            cfg.nodes, cfg.multipv,
+            cfg.temperature, cfg.temp_final, cfg.temp_plies, temp_decay_to_str(cfg.temp_decay),
+            cfg.temp_scale, cfg.temp_argmax_eps, cfg.max_plies,
+            (unsigned long long)cfg.seed,
+            cfg.separate_tt ? "separate" : "shared", tt_entries,
+            (tt_entries * 26.0) / (1024.0 * 1024.0),
+            cfg.nnue_path, cfg.out_path,
+            cfg.pgn_path[0] ? cfg.pgn_path : "(none)",
+            cfg.epd_path[0] ? cfg.epd_path : "(none)");
+    } else {
+        fprintf(stderr,
+            "[selfplay] games=%d threads=%d movetime=%dms nodes=%ld multipv=%d "
+            "temp=%.3g->%.3g@%dplies(%s) scale=%.0fcp argmax_eps=%.3g max_plies=%d seed=%llu "
+            "tt=%s(%zu entries/table, ~%.1fMB) nnue=%s out=%s pgn=%s epd=%s\n",
+            cfg.games, cfg.threads, cfg.movetime_ms, cfg.nodes, cfg.multipv,
+            cfg.temperature, cfg.temp_final, cfg.temp_plies, temp_decay_to_str(cfg.temp_decay),
+            cfg.temp_scale, cfg.temp_argmax_eps, cfg.max_plies,
+            (unsigned long long)cfg.seed,
+            cfg.separate_tt ? "separate" : "shared", tt_entries,
+            (tt_entries * 26.0) / (1024.0 * 1024.0),
+            cfg.nnue_path, cfg.out_path,
+            cfg.pgn_path[0] ? cfg.pgn_path : "(none)",
+            cfg.epd_path[0] ? cfg.epd_path : "(none)");
+    }
 
     atomic_init(&g_next_game, 0);
     atomic_init(&g_games_done, 0);

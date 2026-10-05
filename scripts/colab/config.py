@@ -51,7 +51,7 @@ if not os.path.exists('/content/Zchezz'):
 !git pull origin main
 !pip -q install python-chess numpy
 !make -C /content/Zchezz/engine/build TOOLS_ENGINE=v507 ENGINE=v507 STATIC_FLAG="" selfplay native
-!PROFILE=v507 ACCOUNT_ID=1 TARGET_POSITIONS=40000000 NODES=5000 MOVETIME=50 TEMPERATURE=1.2 TEMP_DECAY=linear TEMP_PLIES=60 TEMP_FINAL=0.02 RANDOM_PLIES=0 bash colab/run_selfplay_colab.sh
+!PROFILE=v507 ACCOUNT_ID=1 TARGET_POSITIONS=40000000 MOVETIME=200 MOVETIME_FINAL=50 MOVETIME_PLIES=60 MOVETIME_DECAY=linear NODES=0 TEMPERATURE=1.2 TEMP_DECAY=linear TEMP_PLIES=60 TEMP_FINAL=0.02 RANDOM_PLIES=0 bash colab/run_selfplay_colab.sh
 """
 
 # Worker configurations for distributed Google Colab self-play generation in Zchezz & Zquoridor.

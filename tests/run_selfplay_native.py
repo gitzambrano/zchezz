@@ -179,13 +179,17 @@ DEFAULT_EPD_PATH             = ""       # explicit EPD override path (if empty a
 GAMES                        = 100      # number of self-play games
 CONCURRENCY                  = 0        # worker threads (concurrent games, not threads per game); 0 = selfplay.exe autodetects logical cores
 MOVETIME_MS                  = 100      # per-move time budget, ms; 0 = use --nodes/--depth instead
+DEFAULT_MOVETIME_FINAL       = 0        # per-move final time budget, ms; 0 = no decay
+DEFAULT_MOVETIME_PLIES       = 60       # plies horizon for movetime decay
+DEFAULT_MOVETIME_DECAY       = "linear" # movetime decay schedule: step | linear | exp
 NODES                        = 0        # per-move node budget; used only when movetime==0 and depth==0
 DEFAULT_DEPTH                = 0        # per-move depth budget, plies; 0 = use movetime/nodes instead
-DEFAULT_MULTIPV               = 4        # root candidates sampled for temperature move choice
+DEFAULT_MULTIPV              = 4        # root candidates sampled for temperature move choice
 DEFAULT_TEMPERATURE          = 1.0      # softmax T0 for the first --temp-plies SEARCH plies
 DEFAULT_TEMP_SCALE           = 100.0    # centipawns per softmax unit before applying T
 DEFAULT_TEMP_PLIES           = 24       # search plies using T0 before switching to --temp-final
 DEFAULT_TEMP_FINAL           = 0.05     # softmax T1 after --temp-plies (near-argmax, not exactly)
+DEFAULT_TEMP_DECAY           = "step"   # temperature decay schedule: step | linear | exp
 DEFAULT_TEMP_ARGMAX_EPS      = 0.0      # T <= this is EXACT argmax: that ply searches multipv=1 and skips the
                                         # softmax. 0.0 = only a literal T of 0 takes the fast path. Set
                                         # TEMPERATURE=0 and TEMP_FINAL=0 for the deterministic generator at
@@ -219,8 +223,9 @@ DEFAULT_SAVE_OPENING_SAMPLES = False    # False = exclude forced opening-phase p
 # separately below (it's required, not defaulted). Anything the CLI
 # passes through argparse ends up here; nothing is re-parsed.
 FORWARD_VALUE_FLAGS = {
-    "--games", "--threads", "--movetime", "--nodes", "--depth", "--multipv",
-    "--temperature", "--temp-scale", "--temp-plies", "--temp-final",
+    "--games", "--threads", "--movetime", "--movetime-final", "--movetime-plies",
+    "--movetime-decay", "--nodes", "--depth", "--multipv",
+    "--temperature", "--temp-scale", "--temp-decay", "--temp-plies", "--temp-final",
     "--temp-argmax-eps",
     "--max-plies", "--seed", "--tt-mb", "--nnue", "--pgn", "--epd", "--openings",
     "--opening-mode", "--random-plies", "--book-portion",
@@ -286,11 +291,15 @@ def main():
     ap.add_argument("--games", type=int, default=GAMES)
     ap.add_argument("--threads", type=int, default=CONCURRENCY)
     ap.add_argument("--movetime", type=int, default=MOVETIME_MS)
+    ap.add_argument("--movetime-final", type=int, default=DEFAULT_MOVETIME_FINAL)
+    ap.add_argument("--movetime-plies", type=int, default=DEFAULT_MOVETIME_PLIES)
+    ap.add_argument("--movetime-decay", choices=("step", "linear", "exp"), default=DEFAULT_MOVETIME_DECAY)
     ap.add_argument("--nodes", type=int, default=NODES)
     ap.add_argument("--depth", type=int, default=DEFAULT_DEPTH)
     ap.add_argument("--multipv", type=int, default=DEFAULT_MULTIPV)
     ap.add_argument("--temperature", type=float, default=DEFAULT_TEMPERATURE)
     ap.add_argument("--temp-scale", type=float, default=DEFAULT_TEMP_SCALE)
+    ap.add_argument("--temp-decay", choices=("step", "linear", "exp"), default=DEFAULT_TEMP_DECAY)
     ap.add_argument("--temp-plies", type=int, default=DEFAULT_TEMP_PLIES)
     ap.add_argument("--temp-final", type=float, default=DEFAULT_TEMP_FINAL)
     ap.add_argument("--temp-argmax-eps", type=float, default=DEFAULT_TEMP_ARGMAX_EPS)

@@ -14,8 +14,11 @@ PROFILE="${PROFILE:-v507}"                        # v507 (NNU4 nativo) ou v331 (
 ACCOUNT_ID="${ACCOUNT_ID:-1}"                      # 1 ou 2 (faixa de seeds e nome do shard)
 TARGET_POSITIONS="${TARGET_POSITIONS:-5000000}"    # Meta de posições desta conta
 GAMES_PER_SHARD="${GAMES_PER_SHARD:-3000}"        # Jogos por shard (par: v331 joga cada abertura nas duas cores)
-NODES="${NODES:-0}"                                # Nós por lance, v507 (obrigatório > 0)
-MOVETIME="${MOVETIME:-50}"                        # ms por lance, v331 (o runner UCI não expõe nós fixos)
+NODES="${NODES:-0}"                                # Nós por lance, v507 (usado quando MOVETIME=0)
+MOVETIME="${MOVETIME:-50}"                        # ms por lance inicial (v331 e v507)
+MOVETIME_FINAL="${MOVETIME_FINAL:-0}"              # ms por lance final para decaimento (0 = sem decaimento)
+MOVETIME_PLIES="${MOVETIME_PLIES:-60}"             # Plies horizonte para decaimento de tempo
+MOVETIME_DECAY="${MOVETIME_DECAY:-linear}"         # linear | step | exp
 THREADS="${THREADS:-0}"                            # 0 = nproc
 MULTIPV="${MULTIPV:-4}"                            # Candidatos MultiPV na fase com temperatura
 TEMPERATURE="${TEMPERATURE:-1.0}"                  # Temperatura T0 inicial
@@ -52,10 +55,15 @@ echo " Perfil:           ${PROFILE}"
 echo " Conta ID:         ${ACCOUNT_ID}"
 echo " Meta Posições:    ${TARGET_POSITIONS}"
 echo " Jogos por Shard:  ${GAMES_PER_SHARD}"
-if [[ "${PROFILE}" == "v507" ]]; then
-echo " Nós por Lance:    ${NODES}"
-else
-echo " Movetime:         ${MOVETIME} ms"
+if [[ "${MOVETIME}" -gt 0 ]]; then
+    if [[ "${MOVETIME_FINAL}" -gt 0 && "${MOVETIME_FINAL}" -ne "${MOVETIME}" ]]; then
+        echo " Movetime:         ${MOVETIME} -> ${MOVETIME_FINAL} ms (${MOVETIME_DECAY} em ${MOVETIME_PLIES} plies)"
+    else
+        echo " Movetime:         ${MOVETIME} ms (fixo)"
+    fi
+fi
+if [[ "${NODES}" -gt 0 ]]; then
+    echo " Nós por Lance:    ${NODES}"
 fi
 echo " MultiPV / Temp:   ${MULTIPV} / T0=${TEMPERATURE} -> ${TEMP_FINAL} (${TEMP_DECAY} em ${TEMP_PLIES} plies)"
 echo " Threads:          ${ACTUAL_THREADS} (config: ${THREADS})"
@@ -73,9 +81,8 @@ if [[ "${DRY_RUN}" == "1" ]]; then
 fi
 
 # Validação de pré-requisitos
-if [[ "${PROFILE}" == "v507" && "${NODES}" -le 0 ]]; then
-    echo "ERRO: Para o perfil v507, NODES deve ser maior que 0." >&2
-    echo "Execute a calibração primeiro (Fase 1) para determinar a quantidade de nós por lance." >&2
+if [[ "${PROFILE}" == "v507" && "${NODES}" -le 0 && "${MOVETIME}" -le 0 ]]; then
+    echo "ERRO: Para o perfil v507, defina NODES > 0 ou MOVETIME > 0." >&2
     exit 1
 fi
 if [[ "${PROFILE}" == "v331" && $((GAMES_PER_SHARD % 2)) -ne 0 ]]; then
@@ -171,8 +178,6 @@ PYEOF
             --nnue "${WEIGHTS_PATH}"
             --games "${GAMES_PER_SHARD}"
             --threads "${ACTUAL_THREADS}"
-            --movetime 0
-            --nodes "${NODES}"
             --multipv "${MULTIPV}"
             --temperature "${TEMPERATURE}"
             --temp-scale "${TEMP_SCALE}"
@@ -184,6 +189,20 @@ PYEOF
             --random-plies "${RANDOM_PLIES}"
             --seed "${SEED}"
         )
+        if [[ "${MOVETIME}" -gt 0 ]]; then
+            CMD+=(
+                --movetime "${MOVETIME}"
+                --movetime-final "${MOVETIME_FINAL}"
+                --movetime-plies "${MOVETIME_PLIES}"
+                --movetime-decay "${MOVETIME_DECAY}"
+                --nodes 0
+            )
+        else
+            CMD+=(
+                --movetime 0
+                --nodes "${NODES}"
+            )
+        fi
         if [[ -n "${OPENINGS}" && -e "${OPENINGS}" ]]; then
             CMD+=(--openings "${OPENINGS}" --opening-mode all)
         fi
@@ -195,26 +214,36 @@ PYEOF
         rm -rf "${RUNNER_DIR}"
         mkdir -p "${RUNNER_DIR}"
 
-        python3 "${REPO_ROOT}/tests/run_selfplay.py" \
-            --profile v331 \
-            --bin \
-            --no-epd \
-            --no-pgn \
-            --no-opening-in-bin \
-            --no-same-opening-twice \
-            --opening-mode random \
-            --random-plies "${RANDOM_PLIES}" \
-            --games "$((GAMES_PER_SHARD / 2))" \
-            --concurrency "${ACTUAL_THREADS}" \
-            --movetime "${MOVETIME}" \
-            --multipv "${MULTIPV}" \
-            --temperature "${TEMPERATURE}" \
-            --temp-scale "${TEMP_SCALE}" \
-            --temp-decay "${TEMP_DECAY}" \
-            --temp-plies "${TEMP_PLIES}" \
-            --temp-final "${TEMP_FINAL}" \
-            --seed "${SEED}" \
+        CMD_V331=(
+            python3 "${REPO_ROOT}/tests/run_selfplay.py"
+            --profile v331
+            --bin
+            --no-epd
+            --no-pgn
+            --no-opening-in-bin
+            --no-same-opening-twice
+            --opening-mode random
+            --random-plies "${RANDOM_PLIES}"
+            --games "$((GAMES_PER_SHARD / 2))"
+            --concurrency "${ACTUAL_THREADS}"
+            --movetime "${MOVETIME}"
+            --multipv "${MULTIPV}"
+            --temperature "${TEMPERATURE}"
+            --temp-scale "${TEMP_SCALE}"
+            --temp-decay "${TEMP_DECAY}"
+            --temp-plies "${TEMP_PLIES}"
+            --temp-final "${TEMP_FINAL}"
+            --seed "${SEED}"
             --results-dir "${RUNNER_DIR}"
+        )
+        if [[ "${MOVETIME_FINAL}" -gt 0 ]]; then
+            CMD_V331+=(
+                --movetime-final "${MOVETIME_FINAL}"
+                --movetime-plies "${MOVETIME_PLIES}"
+                --movetime-decay "${MOVETIME_DECAY}"
+            )
+        fi
+        "${CMD_V331[@]}"
 
         PRODUCED_BIN=$(find "${RUNNER_DIR}" -name "selfplay_*.bin" | head -n 1)
         if [[ -z "${PRODUCED_BIN}" || ! -f "${PRODUCED_BIN}" ]]; then
@@ -259,6 +288,7 @@ PYEOF
     # Sidecar JSON de metadados (json.dumps faz o escape das strings).
     SHARD_NAME="${SHARD_NAME}" PROFILE="${PROFILE}" ACCOUNT_ID="${ACCOUNT_ID}" SEED="${SEED}" \
     GAMES_PER_SHARD="${GAMES_PER_SHARD}" NODES="${NODES}" MOVETIME="${MOVETIME}" \
+    MOVETIME_FINAL="${MOVETIME_FINAL}" MOVETIME_PLIES="${MOVETIME_PLIES}" MOVETIME_DECAY="${MOVETIME_DECAY}" \
     THREADS="${ACTUAL_THREADS}" MULTIPV="${MULTIPV}" TEMP_PLIES="${TEMP_PLIES}" \
     TEMPERATURE="${TEMPERATURE}" TEMP_SCALE="${TEMP_SCALE}" TEMP_DECAY="${TEMP_DECAY}" TEMP_FINAL="${TEMP_FINAL}" \
     RANDOM_PLIES="${RANDOM_PLIES}" OPENINGS="${OPENINGS}" GIT_COMMIT="${GIT_COMMIT}" \
@@ -271,6 +301,17 @@ sys.path.insert(0, os.path.join(e["REPO_ROOT"], "train"))
 import dataset
 _, prov = dataset.read_bin_header(e["LOCAL_BIN"])
 native = e["PROFILE"] == "v507"
+
+tc_info = {}
+if int(e.get("MOVETIME", 0)) > 0:
+    tc_info["movetime_ms"] = int(e["MOVETIME"])
+    if int(e.get("MOVETIME_FINAL", 0)) > 0:
+        tc_info["movetime_final_ms"] = int(e["MOVETIME_FINAL"])
+        tc_info["movetime_plies"] = int(e.get("MOVETIME_PLIES", 60))
+        tc_info["movetime_decay"] = e.get("MOVETIME_DECAY", "linear")
+if int(e.get("NODES", 0)) > 0:
+    tc_info["nodes"] = int(e["NODES"])
+
 print(json.dumps({
     "shard_name": e["SHARD_NAME"],
     "profile": e["PROFILE"],
@@ -278,7 +319,7 @@ print(json.dumps({
     "account_id": int(e["ACCOUNT_ID"]),
     "seed": int(e["SEED"]),
     "games": int(e["GAMES_PER_SHARD"]),
-    "time_control": {"nodes": int(e["NODES"])} if native else {"movetime_ms": int(e["MOVETIME"])},
+    "time_control": tc_info,
     "threads": int(e["THREADS"]),
     "multipv": int(e["MULTIPV"]),
     "temperature": float(e["TEMPERATURE"]),

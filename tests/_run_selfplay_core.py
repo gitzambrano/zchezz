@@ -226,6 +226,9 @@ TEMP_ARGMAX_EPS     = 0.0     # T <= TEMP_ARGMAX_EPS uses exact argmax (multipv=
 ENGINE_PATH   = ""    # "" = keep each ENGINES_CFG entry's own path; else set ALL of them
 ENGINE_LABEL  = ""    # "" = keep each entry's own label
 MOVETIME_MS   = 0     # 0 = keep each entry's tc_mode/tc_value; >0 = force movetime on all
+MOVETIME_FINAL = 0     # 0 = keep MOVETIME_MS constant; >0 = decay down to this
+MOVETIME_PLIES = 60    # search plies horizon for movetime decay
+MOVETIME_DECAY = "linear" # movetime decay schedule: step | linear | exp
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  COMMAND LINE — every constant above is also a flag (CLAUDE.md rule 8)
@@ -271,6 +274,10 @@ CLI = [
     ("ENGINE_PATH",         "--engine",          str,   "override the path of EVERY ENGINES_CFG entry"),
     ("ENGINE_LABEL",        "--engine-label",    str,   "override the label of EVERY ENGINES_CFG entry"),
     ("MOVETIME_MS",         "--movetime",        int,   "force movetime (ms) on every engine; 0 = keep configured TC"),
+    ("MOVETIME_FINAL",      "--movetime-final",  int,   "final movetime (ms) after --movetime-plies decay (default 0 = no decay)"),
+    ("MOVETIME_PLIES",      "--movetime-plies",  int,   "plies to decay movetime down to --movetime-final (default 60)"),
+    ("MOVETIME_DECAY",      "--movetime-decay",  str,   "movetime decay schedule: step | linear | exp (default linear)",
+     ("step", "linear", "exp")),
 ]
 
 if __name__ == "__main__":
@@ -319,6 +326,31 @@ def compute_effective_temperature(search_ply, t_start=None, t_final=None, t_plie
         return t_final + (t_start - t_final) * math.exp(-3.0 * progress)
     else:  # "step"
         return t_start
+
+def compute_effective_movetime(search_ply, mt_start=None, mt_final=None, mt_plies=None, decay_mode=None):
+    """Compute effective movetime (ms) at a given search ply according to the decay schedule."""
+    if mt_start is None: mt_start = MOVETIME_MS
+    if mt_final is None: mt_final = MOVETIME_FINAL
+    if mt_plies is None: mt_plies = MOVETIME_PLIES
+    if decay_mode is None: decay_mode = MOVETIME_DECAY
+
+    if mt_start <= 0:
+        return 0
+    if mt_final <= 0 or mt_final == mt_start:
+        return mt_start
+    if mt_plies <= 0 or search_ply >= mt_plies:
+        return mt_final
+
+    if decay_mode == "linear":
+        progress = float(search_ply) / float(max(1, mt_plies))
+        val = int(round(mt_start - progress * (mt_start - mt_final)))
+        return max(1, val)
+    elif decay_mode in ("exp", "exponential"):
+        progress = float(search_ply) / float(max(1, mt_plies))
+        val = int(round(mt_final + (mt_start - mt_final) * math.exp(-3.0 * progress)))
+        return max(1, val)
+    else:  # "step"
+        return mt_start
 
 def select_by_temperature(candidates, T, temp_scale=100.0, rng=None):
     """Sample a move among MultiPV candidate lines using softmax with temperature T.
@@ -480,7 +512,8 @@ class EngineInstance:
         if self.tc_mode == "depth":
             tc_cmd = f"go depth {self.tc_value}"
         elif self.tc_mode == "movetime":
-            tc_cmd = f"go movetime {self.tc_value}"
+            eff_mt = compute_effective_movetime(search_ply, mt_start=self.tc_value)
+            tc_cmd = f"go movetime {eff_mt}"
         elif self.tc_mode == "nodes":
             tc_cmd = f"go nodes {self.tc_value}"
         else:
