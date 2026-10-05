@@ -217,6 +217,7 @@ TEMPERATURE         = 0.0     # softmax temperature for first TEMP_PLIES search 
 TEMP_SCALE          = 100.0   # centipawns per softmax unit before applying temperature
 TEMP_PLIES          = 24      # search plies using TEMPERATURE before switching to TEMP_FINAL
 TEMP_FINAL          = 0.0     # softmax temperature after TEMP_PLIES (0.0 = argmax)
+TEMP_DECAY          = "step"  # temperature decay schedule: step | linear | exp
 TEMP_ARGMAX_EPS     = 0.0     # T <= TEMP_ARGMAX_EPS uses exact argmax (multipv=1)
 
 # ── Engine overrides (change the players without editing ENGINES_CFG) ────────
@@ -262,6 +263,8 @@ CLI = [
     ("MULTIPV",             "--multipv",         int,   "root candidates to sample among (default 1)"),
     ("TEMPERATURE",         "--temperature",     float, "softmax temperature for first --temp-plies (default 0.0)"),
     ("TEMP_SCALE",          "--temp-scale",      float, "centipawns per softmax unit before applying T (default 100.0)"),
+    ("TEMP_DECAY",          "--temp-decay",      str,   "temperature decay schedule: step | linear | exp (default step)",
+     ("step", "linear", "exp")),
     ("TEMP_PLIES",          "--temp-plies",      int,   "plies using TEMPERATURE before switching to --temp-final (default 24)"),
     ("TEMP_FINAL",          "--temp-final",      float, "softmax temperature after --temp-plies (default 0.0)"),
     ("TEMP_ARGMAX_EPS",     "--temp-argmax-eps", float, "T <= eps uses exact argmax (default 0.0)"),
@@ -298,6 +301,24 @@ def log(*args):
         print(msg, flush=True)
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(msg + "\n")
+
+def compute_effective_temperature(search_ply, t_start=None, t_final=None, t_plies=None, decay_mode=None):
+    """Compute effective temperature at a given search ply according to the decay schedule."""
+    if t_start is None: t_start = TEMPERATURE
+    if t_final is None: t_final = TEMP_FINAL
+    if t_plies is None: t_plies = TEMP_PLIES
+    if decay_mode is None: decay_mode = TEMP_DECAY
+
+    if t_plies <= 0 or search_ply >= t_plies:
+        return t_final
+    if decay_mode == "linear":
+        progress = float(search_ply) / float(max(1, t_plies))
+        return t_start - progress * (t_start - t_final)
+    elif decay_mode in ("exp", "exponential"):
+        progress = float(search_ply) / float(max(1, t_plies))
+        return t_final + (t_start - t_final) * math.exp(-3.0 * progress)
+    else:  # "step"
+        return t_start
 
 def select_by_temperature(candidates, T, temp_scale=100.0, rng=None):
     """Sample a move among MultiPV candidate lines using softmax with temperature T.
@@ -442,10 +463,7 @@ class EngineInstance:
             except Empty: break
 
         # Temperature schedule and MultiPV configuration
-        if search_ply < TEMP_PLIES:
-            t_eff = TEMPERATURE
-        else:
-            t_eff = TEMP_FINAL
+        t_eff = compute_effective_temperature(search_ply)
 
         want_multipv = 1 if (t_eff <= TEMP_ARGMAX_EPS) else max(1, MULTIPV)
         if self.current_multipv != want_multipv:
