@@ -1,4 +1,4 @@
-"""Continuous watchdog and keep-alive monitor for Google Colab self-play workers in Zquoridor.
+"""Continuous watchdog and keep-alive monitor for Google Colab self-play workers in Zchezz.
 
 Maintains active persistent browser sessions with periodic micro-interactions to
 prevent Colab idle disconnects. Detects session disconnects, automatically reconnects,
@@ -13,9 +13,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
-# Ensure scripts root is in path
+# Ensure colab root is in path
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parent.parent
+REPO_ROOT = CURRENT_DIR.parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
@@ -40,7 +40,7 @@ CONFIG: Dict[str, Any] = {
     "auto_reconnect": True,
     "headless": True,
     "page_timeout_ms": 60000,
-    "artifacts_dir": str(REPO_ROOT / "artifacts" / "colab"),
+    "artifacts_dir": str(CURRENT_DIR / "artifacts"),
 }
 
 
@@ -119,17 +119,14 @@ def init_worker_session(p: Any, worker: Dict[str, Any], headless: bool, timeout_
         return None
 
 
-def run_watchdog(cfg: Dict[str, Any]) -> None:
+def run_watchdog_inner(cfg: Dict[str, Any], artifacts_path: Path, worker_ids: List[int]) -> bool:
     from playwright.sync_api import sync_playwright
-
-    artifacts_path = create_artifacts_dir(cfg["artifacts_dir"])
-    worker_ids = [wid for wid in cfg["worker_ids"] if wid in WORKERS]
     if not worker_ids:
         print("[WATCHDOG] No valid worker IDs configured.")
         return
 
     print("=" * 70)
-    print("ZQUORIDOR COLAB ACTIVE WATCHDOG & KEEP-ALIVE")
+    print("ZCHEZZ COLAB ACTIVE WATCHDOG & KEEP-ALIVE")
     print("=" * 70)
     print(f"Monitoring workers: {worker_ids}")
     print(f"Interval: {cfg['check_interval_seconds']}s | Auto-reconnect: {cfg['auto_reconnect']}")
@@ -296,8 +293,10 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
 
         except KeyboardInterrupt:
             print("\n[WATCHDOG] Interrupted by user. Closing sessions cleanly...")
+            return False
         except Exception as loop_err:
             print(f"\n[WATCHDOG LOOP EXCEPTION]: {loop_err}", flush=True)
+            return True
         finally:
             for wid, sess in sessions.items():
                 try:
@@ -310,11 +309,33 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
                         print(f"Closed session for Worker #{wid}.")
                 except Exception:
                     pass
-            print("[WATCHDOG] All sessions closed.")
+            print("[WATCHDOG] Sessions released.")
+
+    return True
+
+
+def run_watchdog(cfg: Dict[str, Any]) -> None:
+    artifacts_path = create_artifacts_dir(cfg["artifacts_dir"])
+    worker_ids = [wid for wid in cfg["worker_ids"] if wid in WORKERS]
+    if not worker_ids:
+        print("[WATCHDOG] No valid worker IDs configured.")
+        return
+
+    while True:
+        try:
+            should_retry = run_watchdog_inner(cfg, artifacts_path, worker_ids)
+            if not should_retry:
+                break
+        except KeyboardInterrupt:
+            print("\n[WATCHDOG] Terminated by user.")
+            break
+        except Exception as outer_err:
+            print(f"\n[WATCHDOG DRIVER EXCEPTION]: {outer_err}. Re-initializing in 15 seconds...", flush=True)
+        time.sleep(15)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Zquoridor Colab active watchdog and keep-alive monitor.")
+    parser = argparse.ArgumentParser(description="Zchezz Colab active watchdog and keep-alive monitor.")
     parser.add_argument("--worker-ids", type=int, nargs="+", default=CONFIG["worker_ids"], help="Worker IDs (e.g. 3 4 5).")
     parser.add_argument("--interval", type=int, default=CONFIG["check_interval_seconds"], help="Seconds between checks.")
     parser.add_argument("--no-auto-reconnect", action="store_true", help="Disable automatic VM reconnection.")

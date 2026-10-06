@@ -1,4 +1,4 @@
-"""Interactive login helper for Google Colab worker profiles in Zquoridor.
+"""Interactive login helper for Google Colab worker profiles in Zchezz.
 
 Opens a native Google Chrome browser window with the worker's persistent profile,
 allows the user to complete Google authentication and two-factor verification without
@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, Any
 
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parent.parent
+REPO_ROOT = CURRENT_DIR.parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 

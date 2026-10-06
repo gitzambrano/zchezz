@@ -10,9 +10,9 @@ import time
 from pathlib import Path
 from typing import Dict, Any
 
-# Ensure scripts root is in path
+# Ensure colab root is in path
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parent.parent
+REPO_ROOT = CURRENT_DIR.parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 

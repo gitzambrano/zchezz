@@ -1,75 +1,97 @@
-# Zchezz — Geração de Self-Play (~10M Posições) no Google Colab Pro + Treino na GPU
+# Zchezz — Automação e Geração de Self-Play no Google Colab
 
-Este diretório contém a automação completa para gerar cerca de 10 milhões de posições avaliadas em shards atômicos no **Google Colab Pro** distribuídas entre duas contas independentes, com persistência direta no Google Drive e suporte a treinamento na GPU.
+Este diretório consolida **toda a infraestrutura do Google Colab** do repositório Zchezz em um único local:
+- **Scripts de orquestração local (Playwright/CDP):** Disparo, watchdog keep-alive, relatórios, gerenciamento de runtime e autenticação.
+- **Scripts de execução remota:** `run_selfplay_colab.sh` e o notebook `zchezz_selfplay_colab.ipynb`.
+- **Sessões e credenciais:** `cookies/` (backups de cookies de autenticação persistentes).
+- **Evidências e métricas ao vivo:** `artifacts/` (screenshots de watchdog, relatórios Markdown e status JSON).
 
 ---
 
-## 1. Divisão por Conta e Perfis
+## 1. Estrutura Unificada do Diretório `colab/`
 
-Cada conta Colab executa um pipeline autônomo de ponta a ponta:
+```text
+colab/
+├── config.py                 # Registro central de contas, portas CDP e bootloaders
+├── browser_utils.py          # Primitivas Playwright, stealth e gerenciamento de cookies
+├── human_actions.py          # Simulação de micro-interações humanas para keep-alive
+├── launch_workers.py         # Bootstrapper remoto e disparador de células
+├── watchdog_workers.py       # Watchdog contínuo resiliente e monitor keep-alive
+├── report_workers.py         # Inspetor de métricas, auditor e gerador de relatórios
+├── manage_runtime.py         # Gerenciamento de aceleradores (CPU/GPU) e sessões
+├── login_worker.py           # Auxiliar para login interativo e salvamento de cookies
+├── inspect_workers.py        # Inspeção rápida de status de conexão e saída
+├── run_selfplay_colab.sh     # Script bash de geração com tolerância a falhas na VM
+├── zchezz_selfplay_colab.ipynb # Notebook executado no Google Colab
+├── cookies/                  # Espelho local de cookies de sessão (gitignored)
+└── artifacts/                # Screenshots periódicos, report.md e status JSON (gitignored)
+```
 
-| Parâmetro | Conta 1 | Conta 2 |
-|---|---|---|
-| **Perfil** | `v507` (NNU4) | `v331` (NNU3) |
-| **Gerador** | `selfplay` nativo (C, threads in-process) | `tests/run_selfplay.py --profile v331` (UCI, processos persistentes) |
-| **Compilação** | `make -C engine/build TOOLS_ENGINE=v507 selfplay` | `make -C engine/build ENGINE=v331 native` |
-| **Shards no Drive** | `zchezz_data/selfplay_v507/` | `zchezz_data/selfplay_v331/` |
-| **Checkpoints no Drive** | `zchezz_data/checkpoints/v507/` | `zchezz_data/checkpoints/v331/` |
-| **Seed Base** | `1000000` | `2000000` |
-| **Variável no Notebook** | `PROFILE = "v507"`, `ACCOUNT_ID = 1` | `PROFILE = "v331"`, `ACCOUNT_ID = 2` |
+---
+
+## 2. Registro de Workers Zchezz
+
+| Worker ID | Identificador | Perfil | Conta Google | Porta CDP | Notebook Colab | Shard Prefix |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **6** | `v331` | `v331` (NNU3) | `zchezzproject@gmail.com` | `9331` | [Notebook v331](https://colab.research.google.com/drive/1j8-gG7qApv--t2DBM8tf1gmgKjuUXiLC) | `sp_v331_r2` |
+| **7** | `v507` | `v507` (NNU4) | `zbrainproject@gmail.com` | `9507` | [Notebook v507](https://colab.research.google.com/drive/1WaoYFjPIl70cECrs9CGZEwEoMxVzBEp8) | `sp_v507_r2` |
 
 > [!NOTE]
-> **Plano B para o v331:** Como o backend UCI do v331 opera via processos separados e protocolo de texto, sua vazão em posições/segundo é naturalmente menor que o gerador in-process do v507. A etapa de calibração medirá essa diferença. Caso o v331 fique excessivamente lento, é possível treinar a rede `v331` na GPU utilizando diretamente os shards gerados pelo `v507` (os dados de tabuleiro são arquiteturalmente neutros, e o cabeçalho registra a proveniência).
+> Por padrão, todos os utilitários de orquestração atuam estritamente sobre os workers **6** (`v331`) e **7** (`v507`) do Zchezz.
 
 ---
 
-## 2. Configuração de Runtime no Colab Pro
+## 3. Comandos de Orquestração
 
-1. Abra [`zchezz_selfplay_colab.ipynb`](file:///colab/zchezz_selfplay_colab.ipynb) em cada conta do Google Colab.
-2. Defina `PROFILE` e `ACCOUNT_ID` na célula de configuração no topo.
-3. No menu **Ambiente de execução (Runtime) -> Alterar tipo de ambiente de execução (Change runtime type)**:
-   - **Fase 1 e 2 (Calibração e Geração):**
-     - Acelerador: **Nenhum** (CPU).
-     - Perfil de hardware: **High-RAM / High-CPU** (8 a 12 vCPUs).
-   - **Fase 3 (Treinamento PyTorch):**
-     - Acelerador: **GPU (T4 ou A100)**.
-     - Perfil de hardware: **High-RAM**.
-4. Habilite a opção **Execução em segundo plano (Background execution)** se disponível na assinatura.
+### A. Monitorar (Watchdog Contínuo)
+Mantém as sessões ativas com micro-interações para evitar desconexão por inatividade, detecta quedas, reconecta automaticamente e atualiza métricas em `colab/artifacts/`:
+```bash
+python colab/watchdog_workers.py
+```
+
+### B. Relatório de Status e Métricas
+Audita o status de execução, coleta os shards gerados, posições/s e captura prints em `colab/artifacts/`:
+```bash
+python colab/report_workers.py
+```
+
+### C. Disparar Células de Self-Play
+Dispara a execução de novas rodadas ou reconecta workers ociosos (ignora workers que já estejam gerando ativamente):
+```bash
+python colab/launch_workers.py
+```
+
+### D. Gerenciar Runtimes e Quotas
+```bash
+# Alternar de GPU para CPU padrão (limpa bloqueios de cota)
+python colab/manage_runtime.py --action switch-cpu
+
+# Terminar sessões travadas
+python colab/manage_runtime.py --action terminate-active
+
+# Reiniciar ambiente da VM
+python colab/manage_runtime.py --action reset
+```
 
 ---
 
-## 3. Protocolo de Shards e Persistência Atômica
+## 4. Protocolo de Shards e Persistência Atômica
 
 Para garantir total tolerância a falhas e desconexões:
 1. **Geração Local:** Cada shard (2.000 a 3.000 jogos) é gerado localmente em `/content/zchezz_shards/` com seed única (`ACCOUNT_ID * 1000000 + shard_idx`).
-2. **Validação Rigorosa:** O shard é inspecionado com `train/dataset.py:MultiShardSelfplay` para garantir que o tamanho do registro bate exatamente com os 75 bytes por amostra após o cabeçalho de 184 bytes.
-3. **Metadados Sidecar:** É gerado um arquivo JSON ao lado (`.json`) contendo seed, nodes, movetime, threads, commit git, tempo decorrido, taxa de posições/s e modelo da CPU.
+2. **Validação Rigorosa:** O shard é inspecionado com `train/dataset.py:MultiShardSelfplay` para garantir integridade estrutural (cabeçalho de 184 bytes seguido por 75 bytes por posição).
+3. **Metadados Sidecar:** É gerado um arquivo JSON sidecar contendo seed, nodes, movetime, threads, commit git, tempo decorrido, taxa de posições/s e modelo da CPU.
 4. **Cópia Atômica:** O arquivo é copiado para o Google Drive como `.tmp` e renomeado via `mv`.
-5. **Retomada Idempotente:** Se a sessão cair, ao reiniciar a célula, o script detecta os shards já consolidados no Drive e pula automaticamente.
+5. **Retomada Idempotente:** Ao reiniciar a célula, o script detecta os shards já consolidados no Drive e pula automaticamente.
 
 ---
 
-## 4. Fases de Execução
+## 5. Treinamento na GPU no Google Colab
 
-### Fase 1: Calibração
-- Execute a célula de calibração no notebook (200 jogos para v507, 50 para v331).
-- Anote: posições/s, amostras por partida (lances forçados de abertura são excluídos da contagem) e ETA.
-- Defina `CALIBRATED_NODES` para o v507 com base no seu orçamento de horas.
-
-### Fase 2: Geração em Larga Escala
-- Inicie a geração na célula 5. O progresso é reportado a cada shard com posições acumuladas e ETA restante.
-
-### Fase 3: Treinamento na GPU
-- Altere o runtime para GPU High-RAM.
-- Os shards são copiados para `/content/shards/` (leitura local rápida).
-- O diretório `checkpoints/<PROFILE>` é linkado simbolicamente ao Google Drive para que o `latest.pt` seja salvo com segurança.
-- O treinamento oficial é disparado via:
-  ```bash
-  python3 train/run.py --profile <PROFILE> --source kind=bin,path=/content/shards/*.bin,k=0.75 --epochs <N> --workers $(nproc)
-  ```
-
----
-
-## 5. Avaliação Final (Local)
-Ao término do treino, copie a rede treinada para a máquina local e rode o benchmark canônico do repositório:
-`movetime=200 ms`, `Threads=1`, aberturas pareadas com cores invertidas, sem tablebases, contra a rede atual do mesmo perfil. Tempos do Colab não servem como evidência de promoção.
+1. Altere o runtime para **GPU (T4 ou A100)** High-RAM.
+2. Copie os shards consolidados do Google Drive para o disco local `/content/shards/` para leitura com alta vazão.
+3. Crie link simbólico de `checkpoints/<PROFILE>` para o Google Drive para persistência atômica de `latest.pt`.
+4. Dispare o treino oficial:
+   ```bash
+   python3 train/run.py --profile <PROFILE> --source kind=bin,path=/content/shards/*.bin,k=0.75 --epochs <N> --workers $(nproc)
+   ```
