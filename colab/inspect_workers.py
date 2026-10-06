@@ -10,9 +10,9 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List
 
-# Ensure scripts root is in path
+# Ensure colab root is in path
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parent.parent
+REPO_ROOT = CURRENT_DIR.parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
@@ -26,7 +26,7 @@ from browser_utils import (
 )
 
 CONFIG: Dict[str, Any] = {
-    "worker_ids": [1, 2, 3, 4, 5, 6, 7],
+    "worker_ids": [6, 7],
     "headless": True,
     "page_timeout_ms": 45000,
     "load_delay_seconds": 8,
@@ -104,7 +104,7 @@ def inspect_worker(worker: Dict[str, Any], headless: bool, timeout_ms: int, dela
 
 def run_inspect(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     print("=" * 70)
-    print("ZQUORIDOR COLAB WORKER INSPECTION")
+    print("ZCHEZZ COLAB WORKER INSPECTION")
     print("=" * 70)
 
     results = []

@@ -118,7 +118,8 @@ zchezz_devtools.egg-info/
 zchezz_devtools.egg/
 .pytest_cache/
 scratch/
-# Colab automation profiles and session cookies
-scripts/colab/profiles/
-scripts/colab/cookies/
+# Colab automation profiles, session cookies, and live artifacts
+colab/profiles/
+colab/cookies/
+colab/artifacts/
 **/cookies.json

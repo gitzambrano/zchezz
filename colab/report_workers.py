@@ -1,7 +1,7 @@
 """Comprehensive status inspection, metric parser, and reporting tool for Colab workers.
 
 Connects headlessly via Playwright, gathers live runtime and cell execution metrics,
-captures screenshots into artifacts/colab/, and outputs both terminal and markdown reports.
+captures screenshots into colab/artifacts/, and outputs both terminal and markdown reports.
 """
 
 import argparse
@@ -11,9 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List
 
-# Ensure scripts root is in path
+# Ensure colab root is in path
 CURRENT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = CURRENT_DIR.parent.parent
+REPO_ROOT = CURRENT_DIR.parent
 if str(CURRENT_DIR) not in sys.path:
     sys.path.insert(0, str(CURRENT_DIR))
 
@@ -21,11 +21,11 @@ from config import WORKERS
 from browser_utils import is_cdp_reachable, is_profile_in_use, get_notebook_dom_state, dismiss_modals
 
 CONFIG: Dict[str, Any] = {
-    "worker_ids": [1, 2, 3, 4, 5, 6, 7],
+    "worker_ids": [6, 7],
     "headless": True,
     "page_timeout_ms": 60000,
     "load_delay_seconds": 8,
-    "artifacts_dir": str(REPO_ROOT / "artifacts" / "colab"),
+    "artifacts_dir": str(CURRENT_DIR / "artifacts"),
 }
 
 
@@ -237,7 +237,7 @@ def generate_markdown_report(records: List[Dict[str, Any]], artifacts_dir: Path)
 def run_report(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     artifacts_path = create_artifacts_dir(cfg["artifacts_dir"])
     print("=" * 70)
-    print("ZQUORIDOR COLAB WORKER AUDIT & REPORT")
+    print("ZCHEZZ COLAB WORKER AUDIT & REPORT")
     print("=" * 70)
 
     records = []
