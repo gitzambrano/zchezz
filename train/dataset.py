@@ -309,6 +309,45 @@ def wl_target(eval_cp: np.ndarray, game_result: np.ndarray, k: float) -> np.ndar
     return (k * result_prob + (1.0 - k) * ev_prob).astype(np.float32)
 
 
+def dense_lookahead_target(eval_cp: np.ndarray,
+                           game_result: np.ndarray,
+                           k_res: float = 0.1,
+                           weights: tuple[tuple[int, float], ...] = ((0, 0.50), (4, 0.25), (8, 0.15), (12, 0.10)),
+                           cp_scale: float = CP_TO_PROB_TEMPERATURE) -> np.ndarray:
+    """TD(lambda)-inspired dense lookahead target blending search scores along trajectories.
+
+        Target = k_res * result_prob + (1 - k_res) * sum_m(w_m * v_m)
+
+    where v_m is the evaluation m plies ahead (or terminal game outcome if game finishes).
+    """
+    eval_cp = eval_cp.astype(np.float32)
+    game_result = game_result.astype(np.float32)
+    res_prob = (game_result + 1.0) / 2.0
+    ev_prob = 1.0 / (1.0 + np.exp(-eval_cp / cp_scale))
+
+    total_w = sum(w for _, w in weights)
+    if total_w <= 0:
+        total_w = 1.0
+    v_blend = np.zeros_like(ev_prob)
+    n = len(eval_cp)
+
+    for m, w in weights:
+        norm_w = w / total_w
+        if m == 0:
+            v_m = ev_prob
+        elif m < n:
+            v_m = np.empty_like(ev_prob)
+            shift = ev_prob[m:] if (m % 2 == 0) else (1.0 - ev_prob[m:])
+            v_m[:-m] = shift
+            v_m[-m:] = res_prob[-m:]
+        else:
+            v_m = res_prob
+        v_blend += norm_w * v_m
+
+    k_res = np.float32(k_res)
+    return (k_res * res_prob + (1.0 - k_res) * v_blend).astype(np.float32)
+
+
 @dataclass
 class _ShardInfo:
     path: str
@@ -410,25 +449,8 @@ class MultiShardSelfplay:
         return [(s.path, s.provenance) for s in self._shards]
 
 
-def records_to_fens_and_targets(records: np.ndarray, k: float) -> tuple[list[str], np.ndarray]:
-    """Convert a batch of raw SAMPLE_DTYPE records into (fens, wl_targets).
-
-    This is the glue train_nnue.py's `.bin`-backed data path uses: encoding.py
-    only knows how to encode a `chess.Board`/FEN, not Zchezz's raw mailbox
-    board array directly, so records are converted to a minimal FEN string
-    here (piece placement + side to move only — castling/ep are NOT
-    round-tripped into the FEN because encoding.py's HalfKP features never
-    look at them; only piece placement, king squares, and side-to-move
-    matter for the feature encoding itself).
-
-    Zchezz mailbox convention: zsq 0=a8 .. 63=h1, piece codes WP=9..BK=22
-    (COL_W=8 + type 1..6, COL_B=16 + type 1..6; see CLAUDE.md "Piece
-    encoding"). python-chess FEN ranks run 8..1 top to bottom, files a..h
-    left to right, which is precisely Zchezz's zsq row-major order — no
-    coordinate flip is needed to build the placement string, only the
-    piece-code -> FEN-letter mapping below.
-    """
-    # Zchezz piece code -> (python-chess-style) FEN letter.
+def records_to_fens_and_targets(records: np.ndarray, k: float, use_lookahead: bool = True) -> tuple[list[str], np.ndarray]:
+    """Convert a batch of raw SAMPLE_DTYPE records into (fens, targets)."""
     _TYPE_LETTER = {1: "p", 2: "n", 3: "b", 4: "r", 5: "q", 6: "k"}
 
     fens: list[str] = []
@@ -456,11 +478,12 @@ def records_to_fens_and_targets(records: np.ndarray, k: float) -> tuple[list[str
             rows.append("".join(fen_row))
         placement = "/".join(rows)   # zsq row-major == FEN rank8..rank1 order
         stm_char = "w" if int(rec["stm"]) == 0 else "b"
-        # Castling/ep/halfmove/fullmove are not needed by encoding.py's
-        # HalfKP features; emit FEN-legal placeholders.
         fens.append(f"{placement} {stm_char} - - 0 1")
 
-    targets = wl_target(records["eval_cp"], records["game_result"], k)
+    if use_lookahead and k < 1.0:
+        targets = dense_lookahead_target(records["eval_cp"], records["game_result"], k_res=k)
+    else:
+        targets = wl_target(records["eval_cp"], records["game_result"], k)
     return fens, targets
 
 

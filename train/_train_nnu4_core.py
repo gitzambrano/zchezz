@@ -959,11 +959,10 @@ def iter_bin_rows(source: SourceSpec, chunk_rows: int, split: Literal["train", "
     for start in range(0, len(idx), chunk_rows):
         chunk_idx = idx[start:start + chunk_rows]
         records = ds.get_batch(chunk_idx)
-        # wl_target() is the only part of records_to_fens_and_targets()
-        # this path needs — it operates on eval_cp/game_result directly,
-        # no FEN involved. The board/stm arrays are handed to the caller
-        # as-is for encode_mailbox_batch().
-        y = dataset.wl_target(records["eval_cp"], records["game_result"], k=source.k)
+        if source.k < 1.0:
+            y = dataset.dense_lookahead_target(records["eval_cp"], records["game_result"], k_res=source.k)
+        else:
+            y = dataset.wl_target(records["eval_cp"], records["game_result"], k=source.k)
         yield records["board"], records["stm"], y
 
 
