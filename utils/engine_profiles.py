@@ -24,6 +24,7 @@ PROFILES={
  "v505":EngineProfile("v505","NNU4",ROOT/"engine/c/zchezz_v505",ROOT/"checkpoints/v505",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
  "v506":EngineProfile("v506","NNU4",ROOT/"engine/c/zchezz_v506",ROOT/"checkpoints/v506",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
  "v507":EngineProfile("v507","NNU4",ROOT/"engine/c/zchezz_v507",ROOT/"checkpoints/v507",ROOT/"train/_train_nnu4_core.py",ROOT/"train/export_nnu4.py",ROOT/"train/import_nnu4.py"),
+ "v600":EngineProfile("v600","NNU5",ROOT/"engine/c/zchezz_v600",ROOT/"checkpoints/v600",ROOT/"train/_train_nnu5_core.py",ROOT/"train/export_nnu5.py",ROOT/"train/import_nnu5.py"),
 }
 def normalize_profile(value:str|None=None)->str:
     token=(value or os.environ.get("ZCHEZZ_ENGINE") or DEFAULT_PROFILE).strip().lower()

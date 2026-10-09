@@ -115,8 +115,8 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from encoding import encode_positions, encode_mailbox_batch, LEGAL_MAX_ACTIVE_FEATURES
-from model import NNUE, clamp_weights_, QA, QB
+from encoding_nnu5 import encode_positions, encode_mailbox_batch, LEGAL_MAX_ACTIVE_FEATURES
+from model_nnu5 import NNUE, clamp_weights_, QA, QB
 import dataset
 
 
@@ -125,23 +125,22 @@ import dataset
 #  never a literal (CLAUDE.md rule 8). Edit here to change the defaults
 #  used when a flag is not passed on the command line.
 # ════════════════════════════════════════════════════════════════════════
-CKPT_DIR = "checkpoints/v506"     # where the per-epoch .pt checkpoints are written
+CKPT_DIR = "checkpoints/v600"     # where the per-epoch .pt checkpoints are written
 CHECKPOINT_SOURCE = "auto"        # checkpoint to resume or transfer from:
                                    #   'auto'         -> check CKPT_DIR first; if empty, find the newest .pt
                                    #                     in any subfolder under checkpoints/ for weight transfer
                                    #   'new' / '' / False -> start fresh from random init (no checkpoint)
                                    #   'path/to/dir'  -> pick the newest checkpoint inside that folder
                                    #   'path/to/file.pt' -> load this exact checkpoint
-DATASET_NAME = "halfkp4b_v506_48x20"  # tag stored in the checkpoint; resume only continues if this matches
+DATASET_NAME = "halfka_v2_hm_32b_v600_64x16"  # tag stored in the checkpoint; resume only continues if this matches
 EPOCHS = 100                      # number of training epochs. This also sets the LR
                                    # schedule: CosineAnnealingLR(T_max=EPOCHS), so a small
                                    # EPOCHS anneals the learning rate to eta_min quickly.
 BATCH_SIZE = 65536                 # minibatch size (positions per optimizer step)
 MAX_POSITIONS_CHUNK = 1_100_000   # positions buffered before a chunk is handed to the DataLoader
-LR = 1e-3                         # fresh-start learning rate. ~1e-3 suits random weights;
-                                   # ~1e-5 suits refining an already-trained net.
-TRANSFER_LR = 3e-5                # learning rate when resuming onto a different --dataset-name
-                                   # (weight transfer / refinement of an already-trained net)
+LR = 1e-5                         # fine-tuning learning rate (1e-5 falling to 1e-7)
+TRANSFER_LR = 1e-5                # learning rate when resuming onto a different --dataset-name
+ETA_MIN = 1e-7                    # minimum learning rate for cosine schedule
 WEIGHT_DECAY = 1e-4                # Adam weight decay
 WORKERS = os.cpu_count() or 4     # multiprocessing.Pool size for FEN -> HalfKP encoding
 DEVICE = "auto"                   # "auto" | "cuda" | "cpu"
@@ -959,10 +958,8 @@ def iter_bin_rows(source: SourceSpec, chunk_rows: int, split: Literal["train", "
     for start in range(0, len(idx), chunk_rows):
         chunk_idx = idx[start:start + chunk_rows]
         records = ds.get_batch(chunk_idx)
-        if source.k < 1.0:
-            y = dataset.dense_lookahead_target(records["eval_cp"], records["game_result"], k_res=source.k)
-        else:
-            y = dataset.wl_target(records["eval_cp"], records["game_result"], k=source.k)
+        # Dense lookahead target (or classical wl_target if disabled)
+        y = dataset.dense_lookahead_target(records["eval_cp"], records["game_result"], k_res=source.k)
         yield records["board"], records["stm"], y
 
 
@@ -1195,11 +1192,11 @@ def stream_split(sources: list[SourceSpec], split: Literal["train", "val"],
 # ════════════════════════════════════════════════════════════════════════
 
 ARCH_DICT = {
-    "input": 2560,
-    "h1": 48,
-    "concat": 96,
-    "h2": 20,
-    "encoding": "halfkp_4bucket",
+    "input": 22528,
+    "h1": 64,
+    "concat": 128,
+    "h2": 16,
+    "encoding": "halfka_v2_hm_32b",
 }
 
 
@@ -1377,7 +1374,7 @@ def train(args: argparse.Namespace) -> None:
         for group in optimizer.param_groups:
             group.setdefault("initial_lr", resume_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, args.epochs), eta_min=1e-6,
+        optimizer, T_max=max(1, args.epochs), eta_min=ETA_MIN,
         last_epoch=start_epoch - 1 if start_epoch > 0 else -1,
     )
     loss_fn = nn.BCELoss()
