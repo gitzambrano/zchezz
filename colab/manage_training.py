@@ -132,13 +132,11 @@ if not os.path.exists('/content/Zchezz'):
         }
 
         if (typeof monaco !== 'undefined') {
-            for (const m of monaco.editor.getModels()) {
+            const models = monaco.editor.getModels();
+            for (const m of models) {
                 const val = m.getValue ? m.getValue() : '';
-                for (const kw of keywords) {
-                    if (val.includes(kw)) {
-                        m.setValue(code);
-                        break;
-                    }
+                if (val.includes('drive.mount') || val.includes('zchezz') || val.includes('run_') || val.includes('Remessa')) {
+                    m.setValue(code);
                 }
             }
         }
@@ -202,10 +200,29 @@ def main():
             dismiss_modals(page)
 
         if args.action in ["start", "full-setup"]:
+            print("Ensuring runtime is connected before triggering execution...")
+            for attempt in range(15):
+                dismiss_modals(page)
+                dom = inspect_worker(page, ["run_train_colab.sh", "EPOCH", profile])
+                if "RAM" in dom["statusText"] or dom.get("kConnected"):
+                    print(f"Runtime connected: {dom['statusText']}")
+                    break
+                print(f"Waiting for runtime connection ({dom['statusText']})... attempt {attempt+1}/15")
+                page.evaluate("""() => {
+                    const btn = document.querySelector('colab-connect-button');
+                    if (btn && btn.shadowRoot) {
+                        const conn = btn.shadowRoot.querySelector('#connect, #connect-button, button');
+                        if (conn) conn.click();
+                    } else if (btn) {
+                        btn.click();
+                    }
+                }""")
+                time.sleep(5)
+
             print(f"Injecting training bootloader for profile {profile} and executing...")
             res = set_and_run_training(page, profile)
             print("Execution trigger result:", res)
-            time.sleep(10)
+            time.sleep(12)
             dismiss_modals(page)
 
         dom = inspect_worker(page, ["run_train_colab.sh", "EPOCH", profile])
