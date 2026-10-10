@@ -19,6 +19,7 @@ BATCH_SIZE="${BATCH_SIZE:-0}"                      # 0 = auto por arquitetura (1
 DEVICE="${DEVICE:-auto}"                           # auto | cuda | cpu
 SHARDS_DIR="${SHARDS_DIR:-/content/shards}"        # Cache local de alta vazão NVMe
 DRIVE_DIR="${DRIVE_DIR:-/content/drive/MyDrive/zchezz_data}"
+DRY_RUN="${DRY_RUN:-0}"
 # Suporte a flags CLI opcionais
 while [[ $# -gt 0 ]]; do
     case "$1" in
