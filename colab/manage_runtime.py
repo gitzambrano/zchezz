@@ -90,6 +90,22 @@ def manage_worker(worker: Dict[str, Any], action: str, headless: bool, timeout_m
                 result["success"] = True
                 result["details"] = "Hardware accelerator switched to CPU (Standard)."
 
+            elif action == "switch-gpu":
+                page.locator('div[id="runtime-menu-button"]').click()
+                time.sleep(1)
+                page.locator('text="Alterar o tipo de ambiente de execução"').click()
+                time.sleep(2)
+
+                gpu_target = page.locator('text="T4 GPU", text="GPU"').first
+                if gpu_target.count() > 0:
+                    gpu_target.click()
+                time.sleep(1)
+
+                page.locator('md-text-button').filter(has_text="Salvar").click()
+                time.sleep(5)
+                result["success"] = True
+                result["details"] = "Hardware accelerator switched to GPU."
+
             elif action == "reset":
                 page.locator('div[id="runtime-menu-button"]').click()
                 time.sleep(1)
@@ -140,7 +156,7 @@ def manage_worker(worker: Dict[str, Any], action: str, headless: bool, timeout_m
 def main() -> None:
     parser = argparse.ArgumentParser(description="Administrative management of Zchezz Colab runtimes.")
     parser.add_argument("--worker-ids", nargs="+", default=CONFIG["worker_ids"], help="Worker identifiers (e.g. v331 v507 1 2).")
-    parser.add_argument("--action", choices=["switch-cpu", "reset", "terminate-active"], default=CONFIG["action"], help="Administrative action.")
+    parser.add_argument("--action", choices=["switch-cpu", "switch-gpu", "reset", "terminate-active"], default=CONFIG["action"], help="Administrative action.")
     parser.add_argument("--headed", action="store_true", help="Run browser in visible headed mode.")
     parser.add_argument("--show-config", action="store_true", help="Display effective configuration and exit.")
     args = parser.parse_args()
