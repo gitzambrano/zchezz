@@ -105,6 +105,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--parquet-chunk-rows", type=int, default=PARQUET_CHUNK_ROWS)
     p.add_argument("--lr", type=float, default=LR)
     p.add_argument("--transfer-lr", type=float, default=TRANSFER_LR)
+    p.add_argument("--eta-min", type=float, default=1e-7,
+                   help="Minimum learning rate for CosineAnnealingLR.")
     p.add_argument("--weight-decay", type=float, default=WEIGHT_DECAY)
     p.add_argument("--workers", type=int, default=WORKERS)
     p.add_argument("--device", choices=("auto", "cuda", "cpu"), default=DEVICE)
@@ -444,7 +446,7 @@ def main() -> None:
         optimizer.load_state_dict(optimizer_state)
     loss_fn = nn.BCELoss(reduction="mean")
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, args.epochs), eta_min=min(1e-6, lr * 0.1)
+        optimizer, T_max=max(1, args.epochs), eta_min=args.eta_min
     )
 
     for epoch0 in range(start_epoch, start_epoch + args.epochs):

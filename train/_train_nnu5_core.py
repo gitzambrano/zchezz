@@ -388,6 +388,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--transfer-lr", type=float, default=TRANSFER_LR,
                     help="LR used when resuming onto a different --dataset-name "
                          "(weight transfer instead of a same-dataset resume).")
+    p.add_argument("--eta-min", type=float, default=ETA_MIN,
+                    help="Minimum learning rate for CosineAnnealingLR.")
     p.add_argument("--weight-decay", type=float, default=WEIGHT_DECAY)
     p.add_argument("--workers", type=int, default=WORKERS,
                     help="multiprocessing.Pool size used for FEN -> HalfKP encoding.")
@@ -1374,7 +1376,7 @@ def train(args: argparse.Namespace) -> None:
         for group in optimizer.param_groups:
             group.setdefault("initial_lr", resume_lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=max(1, args.epochs), eta_min=ETA_MIN,
+        optimizer, T_max=max(1, args.epochs), eta_min=args.eta_min,
         last_epoch=start_epoch - 1 if start_epoch > 0 else -1,
     )
     loss_fn = nn.BCELoss()
