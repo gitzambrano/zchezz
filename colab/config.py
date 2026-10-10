@@ -64,7 +64,8 @@ if not os.path.exists('/content/Zchezz'):
     !git clone https://github.com/gitzambrano/zchezz.git /content/Zchezz
 
 %cd /content/Zchezz
-!git pull origin main
+!git fetch origin main
+!git reset --hard origin/main
 !pip -q install python-chess numpy torch
 !PROFILE={profile} EPOCHS=100 LR=1e-5 ETA_MIN=1e-7 K=0.1 bash colab/run_train_colab.sh
 """

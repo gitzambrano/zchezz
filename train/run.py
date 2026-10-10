@@ -7,7 +7,10 @@ ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT/'utils'))
 from engine_profiles import DEFAULT_PROFILE, profile
 PROFILE=DEFAULT_PROFILE
 def _bootstrap(p):
-    if not p.latest_checkpoint.is_file(): subprocess.run([sys.executable,str(p.importer)],cwd=ROOT,check=True)
+    if not p.latest_checkpoint.is_file():
+        cmd=[sys.executable,str(p.importer)]
+        if p.weights.is_file(): cmd.extend(['--src',str(p.weights),'--dst',str(p.latest_checkpoint)])
+        subprocess.run(cmd,cwd=ROOT,check=False)
 def _refresh_latest(p):
     pts=[x for x in p.checkpoint_dir.glob('*.pt') if x.name!='latest.pt']
     if not pts: return
