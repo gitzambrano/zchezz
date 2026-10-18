@@ -16,7 +16,7 @@ def main() -> int:
     for name in required:
         if not (ROOT/name).exists(): error(f"missing required path: {name}")
     if (ROOT/"engine/ACTIVE_ENGINE").read_text(encoding="utf-8").strip()!=DEFAULT_PROFILE: error(f"ACTIVE_ENGINE must be {DEFAULT_PROFILE}")
-    if set(PROFILES)!={"v325","v326","v327","v328","v329","v330","v331","v500","v505","v506","v507"}: error(f"supported profiles drifted: {sorted(PROFILES)}")
+    if set(PROFILES)!={"v325","v326","v327","v328","v329","v330","v331","v500","v505","v506","v507","v601"}: error(f"supported profiles drifted: {sorted(PROFILES)}")
     for p in PROFILES.values():
         if not p.engine_dir.is_dir(): error(f"missing engine profile: {p.engine_dir.relative_to(ROOT)}")
         if not p.weights.is_file(): error(f"missing NNUE weights: {p.weights.relative_to(ROOT)}")
