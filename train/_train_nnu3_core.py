@@ -205,8 +205,11 @@ def iter_parquet_source(source: infra.SourceSpec, split: str, epoch: int,
             if not fens:
                 continue
             y_white = infra.blend_target(df, source).astype(np.float32)
+            del df
             x, is_black = encode_positions(fens, workers=args.workers)
+            del fens
             y = stm_targets(y_white, is_black)
+            del y_white, is_black
             yield x, y
 
 
@@ -463,6 +466,7 @@ def main() -> None:
             mae_sum += m
             seen += n
             chunks += 1
+            del x_np, y_np
             if chunks % 20 == 0:
                 print(f"epoch {epoch:03d}  chunks={chunks:4d}  rows={seen:,}  "
                       f"loss={loss_sum/max(1,seen):.6f}  source={source_name}")

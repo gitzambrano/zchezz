@@ -175,3 +175,11 @@ For contributor and developer documentation see the [`docs/`](docs/) directory.
 ## Author
 
 **Gustavo José Zambrano**
+
+## Repository organization and Colab operations
+
+See [repository layout](docs/repository-layout.md) for source roles and
+[Colab operations](colab/README.md) for the CLI and browser transports.
+All seven accounts use private local identity configuration. Source organization
+and privacy checks are available through `tools/audit_repository.py` and
+`python -m colab.privacy_check`.

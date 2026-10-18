@@ -5,8 +5,8 @@ Architecture:
     L1        : 22528 -> 64, SHARED between both perspectives
     Act L1    : SCReLU — c = clamp(x, 0, 1); out = c*c
     Concat    : [L1(stm) 64 | L1(opp) 64] = 128 (STM ALWAYS FIRST)
-    L2        : 128 -> 16, ClippedReLU [0, 1]
-    L3        : 16 -> 1, sigmoid -> WDL probability, STM-relative
+    L2        : 128 -> 64, ClippedReLU [0, 1]
+    L3        : 64 -> 1, sigmoid -> WDL probability, STM-relative
 """
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ QA_EFF = (QA * QA) >> NN_SHIFT   # = 254
 assert QA_EFF == 254
 
 INPUT_DIM = 22528   # 32 buckets * 704 features
-HIDDEN1 = 64        # L1 output width per perspective
-CONCAT_DIM = HIDDEN1 * 2   # 128
-HIDDEN2 = 16        # L2 output width
+HIDDEN1 = 256       # L1 output width per perspective
+CONCAT_DIM = HIDDEN1 * 2   # 512
+HIDDEN2 = 64        # L2 output width
 HIDDEN3 = 1         # Scalar output
 
 

@@ -1,0 +1,2 @@
+# Keep Colab shell entry points executable after Windows checkouts.
+colab/**/*.sh text eol=lf

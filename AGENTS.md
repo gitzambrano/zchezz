@@ -4,13 +4,15 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Supported engine profiles
 
-- Treat `v331` as the repository default and released working line.
+- Treat `v331` as the repository default and released working line (NNU3).
 - Keep `v328` and `v327` available as frozen NNU3 regression/comparison baselines; do not retarget them with current-release changes.
-- Treat `v507` as a supported secondary experimental line.
+- Treat `v507` as a supported secondary line (NNU4).
+- Treat `v601` as the supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket).
 - Keep `engine/ACTIVE_ENGINE` equal to `v331` unless the user explicitly requests a promotion.
+- Maintain the three active lineages (3xx, 5xx, and 601) documented and accessible via their profile definitions.
 - Do not create or restore `engine/c/zchezz_v4xx` directories.
 - Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
-- Keep NNU3 and NNU4 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
+- Keep NNU3, NNU4, and NNU5 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
 - Treat `v314` through `v327` and version-named migration utilities as historical snapshots; `v328` and `v327` may remain selectable only for explicit regression and comparison work.
 
 ## Bare-run contract
@@ -27,7 +29,9 @@ These instructions are repository contracts. Follow them for every change.
 - Keep raw training data architecture-neutral. Store positions, side to move, game result, evaluation, move, and provenance; encode NNUE features only inside the selected trainer.
 - Use UCI process boundaries for cross-family matches and generic engine-vs-engine tooling.
 - Do not make a generic runner depend on NNU3 or NNU4 binary layout.
-- Do not duplicate runners for individual versions or experimental rounds.
+- Do not duplicate runners for individual versions or experimental rounds. Never create ad-hoc, version-specific, match-specific, or round-specific Python runner scripts (e.g., `run_vXXX_vs_vYYY.py` or temporary tournament scripts).
+- Keep operational and test runners general and parameter-driven. All tournament formats, time controls (e.g. `--movetime`, `--depth`, `--nodes`), concurrency levels, engine binaries, and profile pairings must be configurable via CLI arguments or top-of-file constants in existing canonical scripts (`tests/run_tournament.py`, `tests/run_tournament_quick.py`, `train/run_selfplay.py`).
+- Implement any new search effort, evaluation mode, or tournament feature as an option within the canonical runners, never as an isolated one-off script.
 
 ## Stockfish
 
@@ -52,8 +56,9 @@ These instructions are repository contracts. Follow them for every change.
 - Bare native builds use `ENGINE=v331`.
 - `ENGINE=v328` and `ENGINE=v327` remain available for frozen regression comparisons.
 - `ENGINE=v507` must build independently without changing the default marker.
+- `ENGINE=v601` must build independently without changing the default marker.
 - Run deterministic local tests before considering a change complete.
-- Test `v331` and `v507` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
+- Test `v331`, `v507`, and `v601` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
 - Run perft, UCI smoke, NNUE artifact validation, C invariants, and Python contract tests when their dependencies are available.
 - Treat skipped tests as missing evidence, not as passes.
 - Keep generated test evidence under `artifacts/`; do not overwrite source files as a test side effect.
@@ -91,3 +96,11 @@ These instructions are repository contracts. Follow them for every change.
 - Never silently reinterpret NNU3 data as NNU4 weights or vice versa.
 - Fail before games or training begin when a required artifact has the wrong magic, dimensions, size, or profile.
 - Keep deterministic seeds, paired openings, and test parameters in output metadata for reproducibility.
+
+## Cloud operations and repository organization
+
+- Keep current Colab implementations under `colab/` according to `colab/layout.json`.
+- Read `colab/AGENTS.md` and `colab/README.md` before cloud operations.
+- Use `docs/repository-layout.md` for source roles and compatibility rules.
+- Keep generated reports and environments under ignored `artifacts/` directories.
+- Preserve frozen snapshots and active experiments during source cleanup.

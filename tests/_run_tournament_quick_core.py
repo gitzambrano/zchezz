@@ -97,6 +97,7 @@ _BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ── Time Control ──────────────────────────────────────────────────────────────
 MOVETIME_MS             = 100    # ms per move
+NODES                   = 0      # fixed nodes per move (0 = use movetime)
 
 # ── v3.24 candidate vs v3.14 stable baseline ───────────────────────────────
 MY_ENGINES = [
@@ -198,6 +199,7 @@ CLI = [
     ("ENGINE_B_PATH",        "--engine-b",        str,   "override MY_ENGINES[1] path"),
     ("ENGINE_B_LABEL",       "--label-b",         str,   "override MY_ENGINES[1] label"),
     ("THREADS",              "--threads",         int,   "set the Threads UCI option on BOTH engines (0 = leave as configured)"),
+    ("NODES",                "--nodes",           int,   "fixed nodes per move (overrides movetime)"),
 ]
 
 if __name__ == "__main__":
@@ -210,8 +212,11 @@ if __name__ == "__main__":
         if THREADS:
             _eng.setdefault("options", {})["Threads"] = str(THREADS)
         # tc_value was copied from MOVETIME_MS when the list was defined, so
-        # it has to follow a --movetime override.
-        if _eng.get("tc_mode") == "movetime":
+        # it has to follow a --movetime or --nodes override.
+        if NODES > 0:
+            _eng["tc_mode"] = "nodes"
+            _eng["tc_value"] = NODES
+        elif _eng.get("tc_mode") == "movetime":
             _eng["tc_value"] = MOVETIME_MS
 
 # ═══════════════════════════════════════════════════════════════════════════════

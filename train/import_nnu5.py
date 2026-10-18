@@ -19,7 +19,7 @@ def read_nnu5(path: Path):
     off = 4
     epoch = struct.unpack_from('<I', data, off)[0]; off += 4
     l1_in, l1_out, l2_in, l2_out, l3_in = struct.unpack_from('<5I', data, off); off += 20
-    if l1_in != 22528 or l1_out != 64 or l2_in != 128 or l2_out != 16 or l3_in != 16:
+    if l1_in != 22528 or (l1_out != 256 and l1_out != 64) or (l2_in != 512 and l2_in != 128) or l2_out != 64 or l3_in != 64:
         raise ValueError(f'invalid NNU5 architecture dims: {l1_in}, {l1_out}, {l2_in}, {l2_out}, {l3_in}')
 
     qa, qb, shift, out = struct.unpack_from('<4f', data, off); off += 16

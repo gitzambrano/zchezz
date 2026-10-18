@@ -4,6 +4,7 @@ This module defines worker profiles, notebook URLs, CDP ports, and the resilient
 bootloader template executed on Google Colab virtual machines.
 """
 
+from pathlib import Path
 from typing import Dict, Any, List
 
 # Resilient Python bootloaders executed inside the Colab cell when needed.
@@ -76,9 +77,9 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "name": "Colab 1 (Zquoridor)",
         "worker_id": 1,
         "project": "zquoridor",
-        "account": "worker-1@example.invalid",
-        "profile_dir": r"COLAB_PRIVATE_PROFILE_1",
-        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_1",
+        "account": 'worker-1@example.invalid',
+        "profile_dir": str(Path.home() / ".config/colab-cli/browser-profiles/worker-1"),
+        "notebook_url": 'https://colab.research.google.com/drive/NOTEBOOK_ID_1',
         "cdp_port": 9001,
         "target_keywords": ["run_colab_worker.py", "selfplay_central", "zquoridor"],
         "target_shard_prefix": "c1_",
@@ -90,9 +91,9 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "name": "Colab 2 (Zquoridor)",
         "worker_id": 2,
         "project": "zquoridor",
-        "account": "worker-2@example.invalid",
-        "profile_dir": r"COLAB_PRIVATE_PROFILE_2",
-        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_2",
+        "account": 'worker-2@example.invalid',
+        "profile_dir": str(Path.home() / ".config/colab-cli/browser-profiles/worker-2"),
+        "notebook_url": 'https://colab.research.google.com/drive/NOTEBOOK_ID_2',
         "cdp_port": 9002,
         "target_keywords": ["run_colab_worker.py", "selfplay_irregular", "zquoridor"],
         "target_shard_prefix": "c2_",
@@ -105,9 +106,9 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "worker_id": 3,
         "profile": "v507",
         "account_id": 3,
-        "account": "worker-3@example.invalid",
-        "profile_dir": r"COLAB_PRIVATE_PROFILE_3",
-        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_3",
+        "account": 'worker-3@example.invalid',
+        "profile_dir": str(Path.home() / ".config/colab-cli/browser-profiles/worker-3"),
+        "notebook_url": 'https://colab.research.google.com/drive/NOTEBOOK_ID_3',
         "cdp_port": 9003,
         "target_keywords": ["Remessa 2", "sp_v507", "zchezz", "run_selfplay_colab.sh", "run_colab_worker.py"],
         "target_shard_prefix": "sp_v507_a3_",
@@ -118,9 +119,9 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "worker_id": 4,
         "profile": "v507",
         "account_id": 4,
-        "account": "worker-4@example.invalid",
-        "profile_dir": r"COLAB_PRIVATE_PROFILE_4",
-        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_4",
+        "account": 'worker-4@example.invalid',
+        "profile_dir": str(Path.home() / ".config/colab-cli/browser-profiles/worker-4"),
+        "notebook_url": 'https://colab.research.google.com/drive/NOTEBOOK_ID_4',
         "cdp_port": 9004,
         "target_keywords": ["Remessa 2", "sp_v507", "zchezz", "run_selfplay_colab.sh", "run_colab_worker.py"],
         "target_shard_prefix": "sp_v507_a4_",
@@ -131,9 +132,9 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "worker_id": 5,
         "profile": "v507",
         "account_id": 5,
-        "account": "worker-5@example.invalid",
-        "profile_dir": r"COLAB_PRIVATE_PROFILE_5",
-        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_5",
+        "account": 'worker-5@example.invalid',
+        "profile_dir": str(Path.home() / ".config/colab-cli/browser-profiles/worker-5"),
+        "notebook_url": 'https://colab.research.google.com/drive/NOTEBOOK_ID_5',
         "cdp_port": 9005,
         "target_keywords": ["Remessa 2", "sp_v507", "zchezz", "run_selfplay_colab.sh", "run_colab_worker.py"],
         "target_shard_prefix": "sp_v507_a5_",
@@ -144,9 +145,9 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "worker_id": 6,
         "profile": "v331",
         "account_id": 2,
-        "account": "worker-6@example.invalid",
-        "profile_dir": r"COLAB_PRIVATE_PROFILE_6",
-        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_6",
+        "account": 'worker-6@example.invalid',
+        "profile_dir": str(Path.home() / ".config/colab-cli/browser-profiles/worker-6"),
+        "notebook_url": 'https://colab.research.google.com/drive/NOTEBOOK_ID_6',
         "cdp_port": 9331,
         "target_keywords": ["Remessa 2", "sp_v331_r2", "zchezz", "run_selfplay_colab.sh"],
         "target_shard_prefix": "sp_v331_r2",
@@ -157,9 +158,9 @@ WORKERS: Dict[int, Dict[str, Any]] = {
         "worker_id": 7,
         "profile": "v507",
         "account_id": 1,
-        "account": "worker-7@example.invalid",
-        "profile_dir": r"COLAB_PRIVATE_PROFILE_7",
-        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_7",
+        "account": 'worker-7@example.invalid',
+        "profile_dir": str(Path.home() / ".config/colab-cli/browser-profiles/worker-7"),
+        "notebook_url": 'https://colab.research.google.com/drive/NOTEBOOK_ID_7',
         "cdp_port": 9507,
         "target_keywords": ["Remessa 2", "sp_v507_r2", "zchezz", "run_selfplay_colab.sh"],
         "target_shard_prefix": "sp_v507_r2",
@@ -195,14 +196,14 @@ WORKER_ALIASES: Dict[Any, int] = {
     "colab6": 6,
     "v331": 6,
     "zchezz": 6,
-    "worker-6": 6,
+    'worker-6': 6,
     7: 7,
     "7": 7,
     "c7": 7,
     "colab7": 7,
     "v507": 7,
     "zbrain": 7,
-    "worker-7": 7,
+    'worker-7': 7,
 }
 
 
@@ -226,3 +227,7 @@ def get_all_worker_keys() -> List[int]:
     """Return all canonical worker IDs."""
     return list(WORKERS.keys())
 
+
+
+from colab.private import apply_accounts
+apply_accounts(WORKERS, 'zchezz')

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "source_root": "colab",
+  "directories": {
+    "cli": "Official terminal transport and artifact monitor",
+    "playwright": "Browser transport and reusable controllers",
+    "playwright/diagnostics": "Historical diagnostics and targeted repair utilities",
+    "remote": "Code that executes inside a runtime",
+    "notebooks": "Notebook entry points"
+  },
+  "compatibility_entry_points": {
+    "colab/run_selfplay_colab.sh": "colab/remote/run_selfplay_colab.sh",
+    "colab/run_train_colab.sh": "colab/remote/run_train_colab.sh"
+  },
+  "legacy_import_roots": [
+    "colab",
+    "colab.playwright"
+  ],
+  "private_configuration": "COLAB_ACCOUNTS_FILE",
+  "generated_outputs": "artifacts/colab",
+  "preserved_history": [
+    "experimental",
+    "engine/old",
+    "engine/c/zchezz_v3xx"
+  ]
+}

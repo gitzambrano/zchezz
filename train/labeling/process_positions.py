@@ -191,7 +191,7 @@ import pandas as pd
 # duplicate can silently drift from dataset.py's dtype and reinterpret
 # every .bin read as garbage (see dataset.py's own docstring warning).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from dataset import SAMPLE_DTYPE  # noqa: E402
+from dataset import SAMPLE_DTYPE, read_bin_header  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  CONFIGURATION  (CLAUDE.md rule 8)
@@ -814,12 +814,14 @@ def iter_pgn_file(path: str, skip_plies: int, max_plies: int,
 def iter_bin_file(path: str) -> Iterator[Dict[str, Any]]:
     """SAMPLE_DTYPE records -> record dicts (STM-relative -> WHITE-relative)."""
     fsize = os.path.getsize(path)
-    if fsize % SAMPLE_DTYPE.itemsize != 0:
-        print(f"  [Warning] {path}: size is not a multiple of the record size, skipping")
-        return
     if fsize == 0:
         return
-    arr = np.memmap(path, dtype=SAMPLE_DTYPE, mode='r')
+    hdr_offset, _ = read_bin_header(path)
+    data_size = fsize - hdr_offset
+    if data_size % SAMPLE_DTYPE.itemsize != 0:
+        print(f"  [Warning] {path}: size is not a multiple of the record size, skipping")
+        return
+    arr = np.memmap(path, dtype=SAMPLE_DTYPE, mode='r', offset=hdr_offset)
     try:
         for i in range(len(arr)):
             raw = arr[i]
@@ -893,7 +895,8 @@ def estimate_source_size(files: List[Tuple[str, str]]) -> Optional[int]:
                 import pyarrow.parquet as pq
                 total += pq.ParquetFile(path).metadata.num_rows; known = True
             elif fmt == 'bin':
-                total += os.path.getsize(path) // SAMPLE_DTYPE.itemsize; known = True
+                hdr_offset, _ = read_bin_header(path)
+                total += max(0, os.path.getsize(path) - hdr_offset) // SAMPLE_DTYPE.itemsize; known = True
             elif fmt == 'epd':
                 size = os.path.getsize(path)
                 sampled_bytes = sampled_lines = 0

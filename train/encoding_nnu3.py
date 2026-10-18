@@ -9,7 +9,7 @@ returned ``is_black`` mask.
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 import os
 
 import chess
@@ -104,9 +104,18 @@ def encode_chunk(fens: list[str]) -> tuple[np.ndarray, np.ndarray]:
     return out, is_black
 
 
-def encode_positions(fens: list[str], workers: int | None = None
-                     ) -> tuple[np.ndarray, np.ndarray]:
-    """Parallel wrapper with the same deterministic row order as input."""
+_ENCODE_POOL: ProcessPoolExecutor | None = None
+
+
+def get_encode_pool(workers: int) -> ProcessPoolExecutor:
+    global _ENCODE_POOL
+    if _ENCODE_POOL is None:
+        _ENCODE_POOL = ProcessPoolExecutor(max_workers=workers)
+    return _ENCODE_POOL
+
+
+def encode_positions(fens: list[str], workers: int = 1) -> tuple[np.ndarray, np.ndarray]:
+    """Encode FENs in parallel using a persistent process pool."""
     if not fens:
         return (
             np.zeros((0, INPUT_DIM), dtype=np.float32),
@@ -119,8 +128,8 @@ def encode_positions(fens: list[str], workers: int | None = None
 
     size = (len(fens) + workers - 1) // workers
     chunks = [fens[i:i + size] for i in range(0, len(fens), size)]
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(encode_chunk, chunks))
+    pool = get_encode_pool(workers)
+    results = list(pool.map(encode_chunk, chunks))
     return (
         np.concatenate([x for x, _ in results], axis=0),
         np.concatenate([m for _, m in results], axis=0),

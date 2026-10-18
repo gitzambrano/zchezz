@@ -1,0 +1,49 @@
+{
+  "projects": {
+    "zchezz": {
+      "1": {
+        "account": "worker-1@example.invalid",
+        "profile_dir": "/private/browser-profiles/worker-1",
+        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_1",
+        "cdp_port": 9001
+      },
+      "2": {
+        "account": "worker-2@example.invalid",
+        "profile_dir": "/private/browser-profiles/worker-2",
+        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_2",
+        "cdp_port": 9002
+      },
+      "3": {
+        "account": "worker-3@example.invalid",
+        "profile_dir": "/private/browser-profiles/worker-3",
+        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_3",
+        "cdp_port": 9003
+      },
+      "4": {
+        "account": "worker-4@example.invalid",
+        "profile_dir": "/private/browser-profiles/worker-4",
+        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_4",
+        "cdp_port": 9004
+      },
+      "5": {
+        "account": "worker-5@example.invalid",
+        "profile_dir": "/private/browser-profiles/worker-5",
+        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_5",
+        "cdp_port": 9005
+      },
+      "6": {
+        "account": "worker-6@example.invalid",
+        "profile_dir": "/private/browser-profiles/worker-6",
+        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_6",
+        "cdp_port": 9006
+      },
+      "7": {
+        "account": "worker-7@example.invalid",
+        "profile_dir": "/private/browser-profiles/worker-7",
+        "notebook_url": "https://colab.research.google.com/drive/NOTEBOOK_ID_7",
+        "cdp_port": 9007
+      }
+    }
+  },
+  "resources": {}
+}

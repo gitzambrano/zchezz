@@ -353,9 +353,11 @@ def _source_from_string(spec: str) -> SourceSpec:
         path=path,
         target_col=kv.get("target_col", "wdl"),
         k=float(kv.get("k", 1.0)),
+        lam=float(kv.get("lam", 0.0)),
         train_pct=float(kv.get("train_pct", 1.0)),
         val_frac=float(kv.get("val_frac", 0.02)),
         name=kv.get("name", ""),
+        pct_mode=kv.get("pct_mode", kv.get("mode", "sample-rows")),
     )
 
 
@@ -656,8 +658,8 @@ def report_blend_stats() -> None:
 # try/except around torch.load — never a hard crash.
 def _encoded_cache_path(fpath: str, suffix: str) -> str:
     if suffix and fpath.endswith(suffix):
-        return fpath[: -len(suffix)] + "_encoded.pt"
-    return fpath + "_encoded.pt"
+        return fpath[: -len(suffix)] + "_encoded_nnu4.pt"
+    return fpath + "_encoded_nnu4.pt"
 
 
 _ENCODED_CACHE_KEYS = ("stm_idx", "stm_off", "opp_idx", "opp_off", "is_black",
@@ -749,6 +751,9 @@ def _load_or_build_parquet_file_cache(fpath: str, source: SourceSpec, chunk_rows
                 raise ValueError(
                     f"source parquet changed since this cache was written "
                     f"(stamp {tuple(stamp)} != {_source_stamp(fpath)})")
+            if len(data.get("stm_idx", [])) > 0:
+                if data["stm_idx"].max() >= 2560 or data["opp_idx"].max() >= 2560:
+                    raise ValueError(f"cache max feature index {data['stm_idx'].max()} exceeds NNU4 limit 2560")
             return data
         except Exception as e:
             print(f"  [encode_cache] WARNING: stale/incompatible cache at {cache_path} "

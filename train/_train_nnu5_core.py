@@ -104,6 +104,7 @@ import glob
 import json
 import multiprocessing as mp
 import os
+import shutil
 import time
 import zlib
 from dataclasses import dataclass, field
@@ -112,6 +113,13 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
+import sys
+from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+
 import torch
 import torch.nn as nn
 
@@ -149,9 +157,18 @@ VAL_EVERY = 1                     # run a validation pass every N epochs
 PARQUET_CHUNK_ROWS = 200_000      # row batch size when streaming a parquet source
 RESAMPLE_EACH_EPOCH = True        # draw a fresh row subsample every epoch (sources with pct < 1.0)
 ENCODE_CACHE = True               # cache each parquet file's encoded tensors next to it as
-                                   # "*_encoded.pt", so later runs skip re-encoding the same FENs
-HEARTBEAT_EVERY_BATCHES = 200     # print a mid-epoch loss/MAE/ETA line every N training batches
+                                   # "*_encoded_nnu5.pt", so later runs skip re-encoding the same FENs
+HEARTBEAT_EVERY_BATCHES = 10       # print a mid-epoch loss/MAE/ETA line every N training batches
+
+ARCH_DICT = {
+    "input": 22528,
+    "h1": 256,
+    "concat": 512,
+    "h2": 64,
+    "encoding": "halfka_v2_hm_32b",
+}
 # ════════════════════════════════════════════════════════════════════════
+
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -417,6 +434,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--show-config", action="store_true",
                     help="print the resolved configuration (including the DATASETS "
                          "mix) and exit without training")
+    p.add_argument("--lr-dense", type=float, default=None,
+                    help="Separate learning rate for dense layers L2 and L3.")
+    p.add_argument("--freeze-l1-epochs", type=int, default=0,
+                    help="Number of initial epochs to freeze L1 weights for dense head warmup.")
     p.add_argument("--heartbeat-every-batches", type=int, default=HEARTBEAT_EVERY_BATCHES,
                     help="Print a running loss/MAE/ETA heartbeat every N training batches.")
     return p
@@ -451,8 +472,10 @@ def encode_fens_parallel(fens: list[str], pool: "mp.pool.Pool", n_workers: int
     n_workers = max(1, min(n_workers, len(fens)))
     chunk_size = max(1, (len(fens) + n_workers - 1) // n_workers)
     chunks = [fens[i:i + chunk_size] for i in range(0, len(fens), chunk_size)]
-
-    results = pool.map(_encode_fen_chunk, chunks)
+    if pool is not None:
+        results = pool.map(_encode_fen_chunk, chunks)
+    else:
+        results = [_encode_fen_chunk(c) for c in chunks]
 
     stm_idx_parts, stm_off_parts, opp_idx_parts, opp_off_parts = [], [], [], []
     stm_running, opp_running = 0, 0
@@ -655,12 +678,12 @@ def report_blend_stats() -> None:
 # try/except around torch.load — never a hard crash.
 def _encoded_cache_path(fpath: str, suffix: str) -> str:
     if suffix and fpath.endswith(suffix):
-        return fpath[: -len(suffix)] + "_encoded.pt"
-    return fpath + "_encoded.pt"
+        return fpath[: -len(suffix)] + "_encoded_nnu5.pt"
+    return fpath + "_encoded_nnu5.pt"
 
 
 _ENCODED_CACHE_KEYS = ("stm_idx", "stm_off", "opp_idx", "opp_off", "is_black",
-                       "cp", "result_prob", "wdl", "n_rows", "n_dropped")
+                       "cp", "result_prob", "wdl", "n_rows", "n_dropped", "encoding")
 
 # Cache-invalidation stamp. The cache path is derived from the parquet's NAME
 # alone, so without this a rewritten parquet would silently keep serving the
@@ -729,6 +752,7 @@ def _build_parquet_file_cache(fpath: str, source: SourceSpec, chunk_rows: int,
         "stm_idx": stm_idx, "stm_off": stm_off, "opp_idx": opp_idx, "opp_off": opp_off,
         "is_black": is_black, "cp": cp_arr, "result_prob": result_arr, "wdl": wdl_arr,
         "n_rows": len(fens_kept), "n_dropped": n_dropped,
+        "encoding": ARCH_DICT.get("encoding", "halfka_v2_hm_32b"),
     }
 
 
@@ -748,10 +772,19 @@ def _load_or_build_parquet_file_cache(fpath: str, source: SourceSpec, chunk_rows
                 raise ValueError(
                     f"source parquet changed since this cache was written "
                     f"(stamp {tuple(stamp)} != {_source_stamp(fpath)})")
+            if data.get("encoding") != ARCH_DICT.get("encoding"):
+                raise ValueError(
+                    f"cache encoding {data.get('encoding')!r} != {ARCH_DICT.get('encoding')!r}")
+            if len(data.get("stm_idx", [])) > 0:
+                max_feat = int(data["stm_idx"].max())
+                if max_feat >= ARCH_DICT["input"]:
+                    raise ValueError(f"cache max feature index {max_feat} >= {ARCH_DICT['input']}")
+                if max_feat < 10000:
+                    raise ValueError(f"cache max feature index {max_feat} looks truncated (< 10000)")
             return data
         except Exception as e:
             print(f"  [encode_cache] WARNING: stale/incompatible cache at {cache_path} "
-                  f"({e!r}). Delete stale '_encoded.pt' files if this repeats. Re-encoding.")
+                  f"({e!r}). Re-encoding file.")
 
     data = _build_parquet_file_cache(fpath, source, chunk_rows, pool, n_workers)
     data[_CACHE_STAMP_KEY] = _source_stamp(fpath)
@@ -1190,16 +1223,9 @@ def stream_split(sources: list[SourceSpec], split: Literal["train", "val"],
 
 
 # ════════════════════════════════════════════════════════════════════════
-#  Checkpoint I/O
+# Checkpoint I/O
 # ════════════════════════════════════════════════════════════════════════
 
-ARCH_DICT = {
-    "input": 22528,
-    "h1": 64,
-    "concat": 128,
-    "h2": 16,
-    "encoding": "halfka_v2_hm_32b",
-}
 
 
 def find_checkpoint(source: str | bool | None = "auto",
@@ -1268,12 +1294,7 @@ def find_checkpoint(source: str | bool | None = "auto",
         if local_latest:
             return local_latest
 
-    # 2. Search root_checkpoints_dir recursively across all subfolders
-    if os.path.isdir(root_checkpoints_dir):
-        global_latest = _find_newest_in_tree(root_checkpoints_dir)
-        if global_latest:
-            return global_latest
-
+    # 2. For NNU5, do not cross-load incompatible NNU3/NNU4 checkpoints from other profile directories
     return None
 
 
@@ -1303,6 +1324,13 @@ def save_checkpoint(ckpt_dir: str, dataset_name: str, epoch: int, model: NNUE,
         "qb": QB,
         "weights": model.state_dict(),
     }, path)
+    try:
+        latest_pt = os.path.join(ckpt_dir, "latest.pt")
+        tmp_pt = latest_pt + ".tmp"
+        shutil.copy2(path, tmp_pt)
+        os.replace(tmp_pt, latest_pt)
+    except Exception as e:
+        print(f"  [warning] failed to refresh latest.pt: {e}")
     return path
 
 
@@ -1349,16 +1377,51 @@ def train(args: argparse.Namespace) -> None:
         # than crashing the whole training script.
         try:
             ckpt = torch.load(latest, map_location=device)
-            model.load_state_dict(ckpt["weights"])
-            if ckpt.get("dataset") == args.dataset_name:
-                start_epoch = ckpt["epoch"]
-                resume_lr = ckpt.get("lr", args.lr)
-                print(f"Resumed from {latest} (same dataset: {args.dataset_name!r}) at epoch {start_epoch}, lr={resume_lr:.2e}")
+            ckpt_w = ckpt.get("weights", ckpt)
+            m_state = model.state_dict()
+            all_match = all(k in ckpt_w and ckpt_w[k].shape == m_state[k].shape for k in m_state)
+            if all_match:
+                model.load_state_dict(ckpt_w)
+                if ckpt.get("dataset") == args.dataset_name:
+                    start_epoch = ckpt.get("epoch", 0)
+                    resume_lr = ckpt.get("lr", args.lr)
+                    print(f"Resumed from {latest} (same dataset: {args.dataset_name!r}) at epoch {start_epoch}, lr={resume_lr:.2e}")
+                else:
+                    start_epoch = 0
+                    resume_lr = args.transfer_lr
+                    print(f"Weight-transfer from {latest} (dataset {ckpt.get('dataset')!r} != "
+                          f"{args.dataset_name!r}); starting epoch 0 at lr={resume_lr:.2e}")
             else:
-                start_epoch = 0
-                resume_lr = args.transfer_lr
-                print(f"Weight-transfer from {latest} (dataset {ckpt.get('dataset')!r} != "
-                      f"{args.dataset_name!r}); starting epoch 0 at lr={resume_lr:.2e}")
+                # Shape mismatch: check if L1 is compatible for Net2Net expansion
+                if "l1.weight" in ckpt_w and ckpt_w["l1.weight"].shape == m_state["l1.weight"].shape:
+                    new_state = {}
+                    new_state["l1.weight"] = ckpt_w["l1.weight"].clone()
+                    new_state["l1_bias"] = ckpt_w["l1_bias"].clone()
+                    # L2 expansion
+                    old_l2w = ckpt_w["l2.weight"]
+                    old_l2b = ckpt_w["l2.bias"]
+                    old_h2 = old_l2w.shape[0]
+                    new_h2 = m_state["l2.weight"].shape[0]
+                    new_l2w = m_state["l2.weight"].clone()
+                    new_l2b = m_state["l2.bias"].clone()
+                    new_l2w[:old_h2, :] = old_l2w
+                    new_l2b[:old_h2] = old_l2b
+                    new_state["l2.weight"] = new_l2w
+                    new_state["l2.bias"] = new_l2b
+                    # L3 expansion (zero-init extra inputs for function-preserving Net2Net)
+                    old_l3w = ckpt_w["l3.weight"]
+                    new_l3w = torch.zeros_like(m_state["l3.weight"])
+                    new_l3w[:, :old_h2] = old_l3w
+                    new_state["l3.weight"] = new_l3w
+                    new_state["l3.bias"] = ckpt_w["l3.bias"].clone()
+                    model.load_state_dict(new_state)
+                    start_epoch = 0
+                    resume_lr = args.transfer_lr
+                    print(f"Net2Net expansion transfer from {latest}: L1 preserved (22528x64), "
+                          f"L2 expanded ({old_h2} -> {new_h2} neurons), L3 zero-initialized on new neurons; "
+                          f"starting epoch 0 at lr={resume_lr:.2e}")
+                else:
+                    raise ValueError(f"Incompatible L1 shape: ckpt has {ckpt_w.get('l1.weight', None)}")
         except Exception as e:
             start_epoch = 0
             resume_lr = args.lr
@@ -1367,14 +1430,15 @@ def train(args: argparse.Namespace) -> None:
     else:
         print("No checkpoint loaded — training from random init (fresh start).")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=resume_lr, weight_decay=args.weight_decay)
-    if start_epoch > 0:
-        # CosineAnnealingLR requires 'initial_lr' to already be present in
-        # each param_group whenever it's constructed with last_epoch != -1
-        # (it only sets that key itself on a fresh, last_epoch=-1 init) —
-        # without this, resuming raises KeyError('initial_lr').
-        for group in optimizer.param_groups:
-            group.setdefault("initial_lr", resume_lr)
+    dense_params = list(model.l2.parameters()) + list(model.l3.parameters())
+    l1_params = [model.l1.weight, model.l1_bias]
+    lr_dense = args.lr_dense if args.lr_dense is not None else resume_lr
+    optimizer = torch.optim.Adam([
+        {"params": l1_params, "lr": resume_lr, "weight_decay": args.weight_decay},
+        {"params": dense_params, "lr": lr_dense, "weight_decay": args.weight_decay},
+    ])
+    for group in optimizer.param_groups:
+        group.setdefault("initial_lr", group["lr"])
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=max(1, args.epochs), eta_min=args.eta_min,
         last_epoch=start_epoch - 1 if start_epoch > 0 else -1,
@@ -1390,7 +1454,15 @@ def train(args: argparse.Namespace) -> None:
     ctx = mp.get_context("spawn" if os.name == "nt" else "fork")
     with ctx.Pool(processes=args.workers) as pool:
         for epoch in range(start_epoch, args.epochs):
-            print(f"\n{'=' * 80}\nEPOCH {epoch + 1}/{args.epochs}  lr={optimizer.param_groups[0]['lr']:.2e}\n{'=' * 80}")
+            if epoch < args.freeze_l1_epochs:
+                model.l1.weight.requires_grad = False
+                model.l1_bias.requires_grad = False
+                freeze_msg = " [L1 FROZEN - Dense Warmup]"
+            else:
+                model.l1.weight.requires_grad = True
+                model.l1_bias.requires_grad = True
+                freeze_msg = ""
+            print(f"\n{'=' * 80}\nEPOCH {epoch + 1}/{args.epochs}  lr_l1={optimizer.param_groups[0]['lr']:.2e}  lr_dense={optimizer.param_groups[1]['lr']:.2e}{freeze_msg}\n{'=' * 80}")
 
             model.train()
             epoch_loss, epoch_mae, epoch_batches = 0.0, 0.0, 0
