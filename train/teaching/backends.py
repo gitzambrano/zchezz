@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,7 +31,7 @@ class UciBackend:
         self.path = str(path)
         self.static_fallback_nodes = max(1, int(static_fallback_nodes))
         self.p = subprocess.Popen(
-            [self.path], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            ([sys.executable, self.path] if self.path.endswith(".py") else [self.path]), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, bufsize=1,
             encoding="utf-8", errors="replace")
         self._send("uci")

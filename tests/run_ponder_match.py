@@ -153,7 +153,7 @@ def candidate_score(game: dict) -> float:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", required=True, choices=("v331", "v507"))
+    ap.add_argument("--profile", required=True, choices=("v331", "v332", "v507", "v508"))
     ap.add_argument("--opening-index", type=int, required=True)
     ap.add_argument("--base-seconds", type=float, default=180.0)
     ap.add_argument("--increment", type=float, default=2.0)

@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "utils"))
 from engine_profiles import profile
-FORMATS = {"NNU3": {"dims": (799,256,256,64,64), "size": 426_864}, "NNU4": {"dims": (2560,48,96,20,20), "size": 248_020}}
+FORMATS = {"NNU3": {"dims": (799,256,256,64,64), "size": 426_864}, "NNU4": {"dims": (2560,48,96,20,20), "size": 248_020}, "NNU5": {"dims": (22528,256,512,64,64), "size": 11_568_496}}
 
 def inspect(path: Path, expected_format: str | None = None) -> dict[str, object]:
     data=path.read_bytes()

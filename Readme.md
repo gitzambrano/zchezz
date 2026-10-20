@@ -133,7 +133,7 @@ Contempt         = 0
 
 ```bash
 make -C engine/build native
-# → engine/c/zchezz_v331/zchezz.exe
+# → engine/c/zchezz_v332/zchezz.exe
 ```
 
 ### Windows (MinGW)
@@ -145,7 +145,7 @@ mingw32-make -C engine/build native
 
 ### With Syzygy tablebase support
 
-Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v331/`. The build system detects them automatically — no flags required.
+Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v332/`. The build system detects them automatically — no flags required.
 
 ### WebAssembly
 
@@ -163,7 +163,9 @@ Zchezz maintains two engine families in parallel:
 
 | Family | Current | Evaluator | Status |
 | ------------- | ------- | ------------------------------------------------------------- | ------------------------------------- |
-| **3.x** | v3.31 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
+| **3.x** | v3.32 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
+| **5.x** | v508 (v5.08) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
+| **6.x** | v602 (v6.02) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Experimental development |
 | **5.x** | v507 (v5.07) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
 
 The **3.x family** is the released engine for play and tournaments. **v331 (v3.31)** adds validated UCI pondering with correct `ponderhit`/`stop` semantics; browser pondering is sliced in a Web Worker so the UI remains responsive. The previous released profile is **v330 (v3.30)**, while **v328 (v3.28)** remains a supported historical baseline. The **5.x family** uses profile **v507 (v5.07)** with the same validated pondering support and is an experimental line with a richer, bucket-based NNUE architecture under active development. Released binaries are always from the 3.x family unless explicitly labelled otherwise.

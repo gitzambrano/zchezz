@@ -4,12 +4,12 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Supported engine profiles
 
-- Treat `v331` as the repository default and released working line (NNU3).
-- Keep `v328` and `v327` available as frozen NNU3 regression/comparison baselines; do not retarget them with current-release changes.
-- Treat `v507` as a supported secondary line (NNU4).
-- Treat `v601` as the supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket).
-- Keep `engine/ACTIVE_ENGINE` equal to `v331` unless the user explicitly requests a promotion.
-- Maintain the three active lineages (3xx, 5xx, and 601) documented and accessible via their profile definitions.
+- Treat `v332` as the repository default and released working line (NNU3).
+- Keep `v331`, `v328` and `v327` available as frozen NNU3 regression/comparison baselines; do not retarget them with current-release changes.
+- Treat `v508` as a supported secondary line (NNU4); `v507` remains an available comparison baseline.
+- Treat `v602` as the supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket); `v601` remains an available comparison baseline.
+- Keep `engine/ACTIVE_ENGINE` equal to `v332` unless the user explicitly requests a promotion.
+- Maintain the three active lineages (3xx, 5xx, and 60x) documented and accessible via their profile definitions.
 - Do not create or restore `engine/c/zchezz_v4xx` directories.
 - Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
 - Keep NNU3, NNU4, and NNU5 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
@@ -18,7 +18,7 @@ These instructions are repository contracts. Follow them for every change.
 ## Bare-run contract
 
 - Every public operational script must run with no command-line arguments.
-- A bare run must select `v331` unless the script is a family-specific implementation module whose profile is explicit in its file name.
+- A bare run must select `v332` unless the script is a family-specific implementation module whose profile is explicit in its file name.
 - Optional CLI arguments may override defaults; they must not be required for normal execution.
 - `--show-config` or an equivalent non-destructive inspection mode must not build engines, start games, train, delete files, or change repository state.
 - Missing optional external prerequisites must produce a clear diagnostic. Scripts intended for inspection or orchestration must not fail merely because Stockfish, CUDA, tablebases, or an opening corpus is absent.
@@ -53,12 +53,12 @@ These instructions are repository contracts. Follow them for every change.
 
 ## Builds and tests
 
-- Bare native builds use `ENGINE=v331`.
+- Bare native builds use `ENGINE=v332`.
 - `ENGINE=v328` and `ENGINE=v327` remain available for frozen regression comparisons.
-- `ENGINE=v507` must build independently without changing the default marker.
-- `ENGINE=v601` must build independently without changing the default marker.
+- `ENGINE=v508` must build independently without changing the default marker.
+- `ENGINE=v602` must build independently without changing the default marker.
 - Run deterministic local tests before considering a change complete.
-- Test `v331`, `v507`, and `v601` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
+- Test `v332`, `v508`, and `v602` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
 - Run perft, UCI smoke, NNUE artifact validation, C invariants, and Python contract tests when their dependencies are available.
 - Treat skipped tests as missing evidence, not as passes.
 - Keep generated test evidence under `artifacts/`; do not overwrite source files as a test side effect.
@@ -83,7 +83,7 @@ These instructions are repository contracts. Follow them for every change.
 ## Source and documentation
 
 - Keep comments technical, current, and conditional. State what must be true and what a caller may rely on.
-- Historical source comments may retain the version they document; current `v331`/`v507` comments must not present an older family as the active implementation.
+- Historical source comments may retain the version they document; current `v332`/`v508` comments must not present an older family as the active implementation.
 - In `AGENTS.md`, do not include project history, migration narratives, or explanations of why a previous design changed.
 - Keep `CLAUDE.md` and `AGENTS.md` bodies identical; only the first title line may differ.
 - Update comments, tests, and docs when a public contract changes.

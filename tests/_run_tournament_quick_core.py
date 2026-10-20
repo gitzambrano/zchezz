@@ -163,6 +163,7 @@ ENGINE_A_PATH  = ""    # "" = keep MY_ENGINES[0]["path"]
 ENGINE_A_LABEL = ""    # "" = keep MY_ENGINES[0]["label"]
 ENGINE_B_PATH  = ""    # "" = keep MY_ENGINES[1]["path"]
 ENGINE_B_LABEL = ""    # "" = keep MY_ENGINES[1]["label"]
+ENGINE_B_OPTIONS = ""  # "" = keep MY_ENGINES[1]["options"] or comma-separated "K=V,K2=V2"
 THREADS        = 0     # 0 = keep each engine's own Threads option; >0 = set both
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -198,6 +199,7 @@ CLI = [
     ("ENGINE_A_LABEL",       "--label-a",         str,   "override MY_ENGINES[0] label"),
     ("ENGINE_B_PATH",        "--engine-b",        str,   "override MY_ENGINES[1] path"),
     ("ENGINE_B_LABEL",       "--label-b",         str,   "override MY_ENGINES[1] label"),
+    ("ENGINE_B_OPTIONS",     "--options-b",       str,   "comma-separated Key=Val options for Engine B"),
     ("THREADS",              "--threads",         int,   "set the Threads UCI option on BOTH engines (0 = leave as configured)"),
     ("NODES",                "--nodes",           int,   "fixed nodes per move (overrides movetime)"),
 ]
@@ -211,13 +213,16 @@ if __name__ == "__main__":
         if _l: _eng["label"] = _l
         if THREADS:
             _eng.setdefault("options", {})["Threads"] = str(THREADS)
-        # tc_value was copied from MOVETIME_MS when the list was defined, so
-        # it has to follow a --movetime or --nodes override.
         if NODES > 0:
             _eng["tc_mode"] = "nodes"
             _eng["tc_value"] = NODES
         elif _eng.get("tc_mode") == "movetime":
             _eng["tc_value"] = MOVETIME_MS
+    if ENGINE_B_OPTIONS and len(MY_ENGINES) > 1:
+        for _opt in ENGINE_B_OPTIONS.split(","):
+            if "=" in _opt:
+                _k, _v = _opt.split("=", 1)
+                MY_ENGINES[1].setdefault("options", {})[_k.strip()] = _v.strip()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  LOGGING — All output goes to both console and log file

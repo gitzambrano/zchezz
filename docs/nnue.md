@@ -2,9 +2,9 @@
 
 Zchezz deliberately supports two incompatible NNUE families. Profile selection must happen before encoding, checkpoint loading, export or engine startup.
 
-## v331 / v330 / v328 / v325 — NNU3
+## v332 / v331 / v330 / v328 / v325 — NNU3
 
-Released installed file: `engine/c/zchezz_v331/nnue_weights.bin`
+Released installed file: `engine/c/zchezz_v332/nnue_weights.bin`
 
 Frozen comparison file (pre-v3.29): `engine/c/zchezz_v328/nnue_weights.bin`
 
@@ -35,9 +35,9 @@ Each search thread has its own `NnueAccum`. The half-mirror contribution is main
 
 Weights are process-global read-only after load; mutable accumulator/search state is not shared between helpers.
 
-## v507 — NNU4 HalfKP-4-Bucket
+## v508 / v507 — NNU4 HalfKP-4-Bucket
 
-Installed file: `engine/c/zchezz_v507/nnue_weights.bin`
+Installed file: `engine/c/zchezz_v508/nnue_weights.bin`
 
 ```text
 magic       NNU4
