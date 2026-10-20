@@ -40,12 +40,12 @@ PROFILE="$("${PYTHON_BIN}" "${SCRIPT_DIR}/profile.py" "${PROFILE}")"
 CHECKPOINTS_DRIVE_DIR="${CHECKPOINTS_DRIVE_DIR:-/content/drive/MyDrive/zchezz_checkpoints/${PROFILE}}"
 
 case "${PROFILE}" in
-    v331|v507|v600) ;;
-    *) echo "ERRO: Perfil não suportado: ${PROFILE}. Escolha v331, v507 ou v600." >&2; exit 1 ;;
+    v3*|v5*|v6*) ;;
+    *) echo "ERRO: Perfil não suportado: ${PROFILE}." >&2; exit 1 ;;
 esac
 
 if [[ "${BATCH_SIZE}" -le 0 ]]; then
-    if [[ "${PROFILE}" == "v331" ]]; then
+    if [[ "${PROFILE}" == v3* ]]; then
         ACTUAL_BATCH_SIZE=16384
     else
         ACTUAL_BATCH_SIZE=65536
@@ -156,23 +156,7 @@ python3 "${REPO_ROOT}/train/run.py" \
 
 # 5. Exportação e empacotamento dos pesos finais
 echo "[4/4] Exportando pesos binários pós-treinamento..."
-case "${PROFILE}" in
-    v331)
-        python3 "${REPO_ROOT}/train/export_nnu3.py" \
-            --ckpt "${REPO_ROOT}/checkpoints/v331/latest.pt" \
-            --out "${REPO_ROOT}/engine/c/zchezz_v331/nnue_weights.bin"
-        ;;
-    v507)
-        python3 "${REPO_ROOT}/train/export_nnu4.py" \
-            --checkpoint "${REPO_ROOT}/checkpoints/v507/latest.pt" \
-            --output "${REPO_ROOT}/engine/c/zchezz_v507/nnue_weights.bin"
-        ;;
-    v600)
-        python3 "${REPO_ROOT}/train/export_nnu5.py" \
-            --checkpoint "${REPO_ROOT}/checkpoints/v600/latest.pt" \
-            --output "${REPO_ROOT}/engine/c/zchezz_v600/nnue_weights.bin"
-        ;;
-esac
+python3 "${REPO_ROOT}/train/export.py" --profile "${PROFILE}"
 
 # Se o Google Drive estiver montado, copia os pesos finais para o Drive
 if [[ -d "${CHECKPOINTS_DRIVE_DIR}" ]]; then

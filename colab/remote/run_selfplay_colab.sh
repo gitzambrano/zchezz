@@ -53,8 +53,8 @@ MAKE_CMD="${MAKE_CMD:-make}"                       # mingw32-make para teste loc
 # ======================================================================
 
 case "${PROFILE}" in
-    v507|v331) ;;
-    *) echo "ERRO: Perfil não suportado: ${PROFILE}. Escolha v507 ou v331." >&2; exit 1 ;;
+    v5*|v3*|v6*) ;;
+    *) echo "ERRO: Perfil não suportado: ${PROFILE}." >&2; exit 1 ;;
 esac
 
 if [[ "${THREADS}" -le 0 ]]; then
@@ -99,11 +99,11 @@ if [[ "${DRY_RUN}" == "1" ]]; then
 fi
 
 # Validação de pré-requisitos
-if [[ "${PROFILE}" == "v507" && "${NODES}" -le 0 && "${MOVETIME}" -le 0 ]]; then
+if [[ "${PROFILE}" == v5* && "${NODES}" -le 0 && "${MOVETIME}" -le 0 ]]; then
     echo "ERRO: Para o perfil v507, defina NODES > 0 ou MOVETIME > 0." >&2
     exit 1
 fi
-if [[ "${PROFILE}" == "v331" && $((GAMES_PER_SHARD % 2)) -ne 0 ]]; then
+if [[ "${PROFILE}" != v5* && $((GAMES_PER_SHARD % 2)) -ne 0 ]]; then
     echo "ERRO: GAMES_PER_SHARD deve ser par para v331 (cada abertura é jogada nas duas cores)." >&2
     exit 1
 fi
@@ -123,16 +123,16 @@ mkdir -p "${DRIVE_DIR}" "${LOCAL_DIR}"
 # O Makefile nomeia os binários com .exe também no Linux.
 BUILD_DIR="${REPO_ROOT}/engine/build"
 SELFPLAY_BIN="${BUILD_DIR}/selfplay.exe"
-V331_BIN="${REPO_ROOT}/engine/c/zchezz_v331/zchezz.exe"
+ENGINE_BIN="${REPO_ROOT}/engine/c/zchezz_${PROFILE}/zchezz.exe"
 
-if [[ "${PROFILE}" == "v507" ]]; then
-    echo "Compilando selfplay nativo (TOOLS_ENGINE=v507)..."
-    "${MAKE_CMD}" -C "${BUILD_DIR}" TOOLS_ENGINE=v507 STATIC_FLAG="" selfplay
+if [[ "${PROFILE}" == v5* ]]; then
+    echo "Compilando selfplay nativo (TOOLS_ENGINE=${PROFILE})..."
+    "${MAKE_CMD}" -C "${BUILD_DIR}" TOOLS_ENGINE="${PROFILE}" STATIC_FLAG="" selfplay
     [[ -x "${SELFPLAY_BIN}" ]] || { echo "ERRO: build não produziu ${SELFPLAY_BIN}" >&2; exit 1; }
 else
-    echo "Compilando motor v331 (ENGINE=v331 native)..."
-    "${MAKE_CMD}" -C "${BUILD_DIR}" ENGINE=v331 STATIC_FLAG="" native
-    [[ -x "${V331_BIN}" ]] || { echo "ERRO: build não produziu ${V331_BIN}" >&2; exit 1; }
+    echo "Compilando motor ${PROFILE} (ENGINE=${PROFILE} native)..."
+    "${MAKE_CMD}" -C "${BUILD_DIR}" ENGINE="${PROFILE}" STATIC_FLAG="" native
+    [[ -x "${ENGINE_BIN}" ]] || { echo "ERRO: build não produziu ${ENGINE_BIN}" >&2; exit 1; }
 fi
 
 # Soma as amostras dos shards desta conta já persistidos no Drive.
@@ -189,7 +189,7 @@ PYEOF
 
     START_TIME=$(date +%s)
 
-    if [[ "${PROFILE}" == "v507" ]]; then
+    if [[ "${PROFILE}" == v5* ]]; then
         CMD=(
             "${SELFPLAY_BIN}"
             --out "${LOCAL_BIN}"
@@ -234,7 +234,7 @@ PYEOF
 
         CMD_V331=(
             python3 "${REPO_ROOT}/tests/run_selfplay.py"
-            --profile v331
+            --profile "${PROFILE}"
             --bin
             --no-epd
             --no-pgn
@@ -318,7 +318,7 @@ e = os.environ
 sys.path.insert(0, os.path.join(e["REPO_ROOT"], "train"))
 import dataset
 _, prov = dataset.read_bin_header(e["LOCAL_BIN"])
-native = e["PROFILE"] == "v507"
+native = e["PROFILE"].startswith("v5")
 
 tc_info = {}
 if int(e.get("MOVETIME", 0)) > 0:
