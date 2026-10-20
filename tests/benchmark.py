@@ -12,9 +12,10 @@ def engine_exe(p):
         if x.is_file(): return x
     return p.engine_dir/'zchezz.exe'
 def main():
-    ap=argparse.ArgumentParser(description=__doc__); ap.add_argument('--profile',default=PROFILE); ap.add_argument('--show-config',action='store_true'); a,rest=ap.parse_known_args(); p=profile(a.profile); sf=stockfish_executable()
-    if a.show_config: print(f'profile={p.name}\nmovetime_ms={MOVETIME_MS}\nthreads={THREADS}\nconcurrency={CONCURRENCY}\nstockfish={sf or "not found"}'); return 0
+    ap=argparse.ArgumentParser(description=__doc__); ap.add_argument('--profile',default=PROFILE); ap.add_argument('--elo',type=int,default=None,help='Stockfish UCI_Elo limit (e.g. 2800, 2900)'); ap.add_argument('--show-config',action='store_true'); a,rest=ap.parse_known_args(); p=profile(a.profile); sf=stockfish_executable()
+    if a.show_config: print(f'profile={p.name}\nmovetime_ms={MOVETIME_MS}\nthreads={THREADS}\nconcurrency={CONCURRENCY}\nstockfish={sf or "not found"}\nstockfish_elo={a.elo or "unlimited"}'); return 0
     if sf is None: print('Stockfish not found. Set ZCHEZZ_STOCKFISH, install under engine/stockfish/, or put stockfish on PATH.'); return 2
-    cmd=[sys.executable,'tests/run_tournament_quick.py','--engine-a',str(engine_exe(p)),'--label-a',p.name,'--engine-b',str(sf),'--label-b','Stockfish','--threads','1','--movetime','200','--concurrency','1',*rest]
+    b_label = f'Stockfish_{a.elo}' if a.elo else 'Stockfish'; extra = ['--options-b', f'UCI_LimitStrength=true,UCI_Elo={a.elo}'] if a.elo else []
+    cmd=[sys.executable,'tests/run_tournament_quick.py','--engine-a',str(engine_exe(p)),'--label-a',p.name,'--engine-b',str(sf),'--label-b',b_label,'--threads','1','--movetime',str(MOVETIME_MS),'--concurrency',str(CONCURRENCY),*extra,*rest]
     return subprocess.run(cmd,cwd=ROOT).returncode
 if __name__=='__main__': raise SystemExit(main())

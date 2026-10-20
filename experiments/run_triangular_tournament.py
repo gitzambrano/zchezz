@@ -71,11 +71,14 @@ def main():
     parser.add_argument("--concurrency", type=int, default=5, help="Jogos concomitantes (padrão: 5)")
     parser.add_argument("--movetime", type=int, default=100, help="Tempo por lance em ms (padrão: 100)")
     parser.add_argument("--show-config", action="store_true", help="Mostra a configuração e sai")
+    parser.add_argument("--prof-6xx", default="v603", help="Perfil NNU5 (padrão: v603)")
+    parser.add_argument("--prof-5xx", default="v509", help="Perfil NNU4 (padrão: v509)")
+    parser.add_argument("--prof-3xx", default="v333", help="Perfil NNU3 (padrão: v333)")
     args = parser.parse_args()
 
-    v600_exe = get_engine_exe("v600")
-    v507_exe = get_engine_exe("v507")
-    v331_exe = get_engine_exe("v331")
+    v600_exe = get_engine_exe(args.prof_6xx)
+    v507_exe = get_engine_exe(args.prof_5xx)
+    v331_exe = get_engine_exe(args.prof_3xx)
 
     if args.show_config:
         print(f"triangular_tournament:")
@@ -101,13 +104,13 @@ def main():
     print("#"*70)
 
     # 1. v600 vs v507
-    run_match(v600_exe, "v600", v507_exe, "v507", args.games, args.concurrency, args.movetime, results_dir)
+    run_match(v600_exe, args.prof_6xx, v507_exe, args.prof_5xx, args.games, args.concurrency, args.movetime, results_dir)
 
-    # 2. v600 vs v331
-    run_match(v600_exe, "v600", v331_exe, "v331", args.games, args.concurrency, args.movetime, results_dir)
+    # 2. 6xx vs 3xx
+    run_match(v600_exe, args.prof_6xx, v331_exe, args.prof_3xx, args.games, args.concurrency, args.movetime, results_dir)
 
-    # 3. v507 vs v331
-    run_match(v507_exe, "v507", v331_exe, "v331", args.games, args.concurrency, args.movetime, results_dir)
+    # 3. 5xx vs 3xx
+    run_match(v507_exe, args.prof_5xx, v331_exe, args.prof_3xx, args.games, args.concurrency, args.movetime, results_dir)
 
     print("\n" + "#"*70)
     print(" TORNEIO TRIANGULAR COMPLETO!")

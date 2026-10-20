@@ -38,6 +38,8 @@ Zchezz implements a mature alpha-beta search stack:
 - **Null-move pruning** — forward pruning when the position is strong enough to pass a move
 - **Futility pruning** — prunes losing moves near the leaves using static evaluation margins
 - **SEE-based pruning** — drops losing captures and quiet moves that SEE predicts to fail badly
+- **Refined Reverse Futility Pruning (RFP)** *(v3.33, v5.09, v6.03)* — tightens the fail-high margin (`75 * depth - (improving ? 40 : 0)`) and extends depth cutoff to $d \le 10$, safely pruning settled branches to allocate node budget to deeply contested lines (+12.2 Elo H2H, record 108 wins against Stockfish 2900)
+- **Stockfish Gravity Move Ordering** *(v3.32, v5.08, v6.02)* — applies gravity decay to quiet move history with quadratic cutoff bonuses
 - **Pawn-structure correction history** *(v3.29)* — adjusts static evaluation using a per-pawn-hash correction term, improving positional consistency across similar structures
 - **Compact clustered Transposition Table** — 32-byte aligned clusters, each holding three 10-byte entries; supports age-based replacement, hash score correction, and TT-move ordering
 - **TT-move pseudo-legality validation** *(v3.30)* — rejects stale or colliding compact-TT moves whose geometry or special-move fields are impossible in the current position before they reach make/unmake
@@ -133,19 +135,19 @@ Contempt         = 0
 
 ```bash
 make -C engine/build native
-# → engine/c/zchezz_v332/zchezz.exe
+# → engine/c/zchezz_v333/zchezz.exe
 ```
 
 ### Windows (MinGW)
 
 ```bat
 mingw32-make -C engine/build native
-:: → engine\c\zchezz_v331\zchezz.exe
+:: → engine\c\zchezz_v333\zchezz.exe
 ```
 
 ### With Syzygy tablebase support
 
-Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v332/`. The build system detects them automatically — no flags required.
+Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v333/`. The build system detects them automatically — no flags required.
 
 ### WebAssembly
 
@@ -163,10 +165,13 @@ Zchezz maintains two engine families in parallel:
 
 | Family | Current | Evaluator | Status |
 | ------------- | ------- | ------------------------------------------------------------- | ------------------------------------- |
-| **3.x** | v3.32 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
-| **5.x** | v508 (v5.08) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
-| **6.x** | v602 (v6.02) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Experimental development |
-| **5.x** | v507 (v5.07) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
+| **3.x** | v3.33 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
+| **5.x** | v509 (v5.09) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
+| **6.x** | v603 (v6.03) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Experimental development |
+| **3.x** | v332 (v3.32) | NNU3 — 799 inputs, 256-neuron L1 | Supported comparison baseline |
+| **5.x** | v508 (v5.08) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Supported comparison baseline |
+| **6.x** | v602 (v6.02) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Supported comparison baseline |
+| **5.x** | v507 (v5.07) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental comparison baseline |
 
 The **3.x family** is the released engine for play and tournaments. **v331 (v3.31)** adds validated UCI pondering with correct `ponderhit`/`stop` semantics; browser pondering is sliced in a Web Worker so the UI remains responsive. The previous released profile is **v330 (v3.30)**, while **v328 (v3.28)** remains a supported historical baseline. The **5.x family** uses profile **v507 (v5.07)** with the same validated pondering support and is an experimental line with a richer, bucket-based NNUE architecture under active development. Released binaries are always from the 3.x family unless explicitly labelled otherwise.
 

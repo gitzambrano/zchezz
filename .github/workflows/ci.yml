@@ -17,18 +17,18 @@ jobs:
       - run: python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py tests/test_teaching_format.py tests/test_teaching_methods.py -q
       - name: Public entrypoint smoke
         run: python train/run.py --show-config && python train/teacher.py --show-config && python train/teaching/inspect_dataset.py --show-config && python train/teaching/seeds.py --show-config && python train/teaching/targeted_selfplay.py --show-config && python train/teaching/export_eval_bin.py --show-config && python train/teaching/loader.py && python tests/run_selfplay.py --show-config && python tests/run_tournament_quick.py --show-config && python tests/benchmark.py --show-config && bash -n engine/build/build_termux.sh
-      - run: make -C engine/build ENGINE=v332 STATIC_FLAG= ARCH_FLAGS= native && make -C engine/build ENGINE=v508 STATIC_FLAG= ARCH_FLAGS= native
+      - run: make -C engine/build ENGINE=v333 STATIC_FLAG= ARCH_FLAGS= native && make -C engine/build ENGINE=v509 STATIC_FLAG= ARCH_FLAGS= native
       - name: TT move legality regression
-        run: gcc -O2 -D_GNU_SOURCE -std=c11 -DNO_TABLEBASES -Iengine/c/zchezz_v332 tests/test_tt_move_legality.c engine/c/zchezz_v332/board.c engine/c/zchezz_v332/nnue.c -lm -pthread -o /tmp/test_tt_move_legality && /tmp/test_tt_move_legality
+        run: gcc -O2 -D_GNU_SOURCE -std=c11 -DNO_TABLEBASES -Iengine/c/zchezz_v333 tests/test_tt_move_legality.c engine/c/zchezz_v333/board.c engine/c/zchezz_v333/nnue.c -lm -pthread -o /tmp/test_tt_move_legality && /tmp/test_tt_move_legality
       - name: UCI startup smoke
-        run: for profile in v332 v508; do exe="engine/c/zchezz_${profile}/zchezz.exe"; output="$(printf 'uci\nisready\nquit\n' | "$exe" 2>&1)"; printf '%s\n' "$output"; grep -q '^uciok$' <<< "$output"; grep -q '^readyok$' <<< "$output"; done
-      - run: python tools/check_nnue.py --profile v332 && python tools/check_nnue.py --profile v508
+        run: for profile in v333 v509; do exe="engine/c/zchezz_${profile}/zchezz.exe"; output="$(printf 'uci\nisready\nquit\n' | "$exe" 2>&1)"; printf '%s\n' "$output"; grep -q '^uciok$' <<< "$output"; grep -q '^readyok$' <<< "$output"; done
+      - run: python tools/check_nnue.py --profile v333 && python tools/check_nnue.py --profile v509
 
       - name: Ponder protocol gates
-        run: python tests/validate_ponder_protocol.py --profile v332 && python tests/validate_ponder_protocol.py --profile v508
+        run: python tests/validate_ponder_protocol.py --profile v333 && python tests/validate_ponder_protocol.py --profile v509
       - name: WASM ponder contracts
         run: python -m pytest tests/test_wasm_ponder.py -q
       - name: Install Emscripten
         run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
       - name: Build WASM bundles
-        run: make -C engine/build ENGINE=v332 STATIC_FLAG= ARCH_FLAGS= bundle && make -C engine/build ENGINE=v508 STATIC_FLAG= ARCH_FLAGS= bundle
+        run: make -C engine/build ENGINE=v333 STATIC_FLAG= ARCH_FLAGS= bundle && make -C engine/build ENGINE=v509 STATIC_FLAG= ARCH_FLAGS= bundle

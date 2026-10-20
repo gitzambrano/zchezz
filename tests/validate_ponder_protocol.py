@@ -98,7 +98,7 @@ def no_bestmove(lines: list[str], where: str) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", required=True, choices=("v331", "v332", "v507", "v508"))
+    ap.add_argument("--profile", required=True, choices=("v331", "v332", "v333", "v507", "v508", "v509", "v601", "v602", "v603"))
     args = ap.parse_args()
 
     u = Uci(engine_path(args.profile))
