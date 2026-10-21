@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT/"utils"))
 from engine_profiles import DEFAULT_PROFILE,PROFILES
 
 def test_supported_profiles_and_default():
-    assert DEFAULT_PROFILE=="v334"; assert set(PROFILES)=={"v325","v326","v327","v328","v329","v330","v331","v332","v333","v334","v500","v505","v506","v507","v508","v509","v510","v601","v602","v603","v604"}; assert (ROOT/"engine/ACTIVE_ENGINE").read_text(encoding="utf-8").strip()=="v334","v334"
+    assert DEFAULT_PROFILE=="v334"; assert set(PROFILES)=={"v325","v326","v327","v328","v329","v330","v331","v332","v333","v334","v500","v505","v506","v507","v508","v509","v510","v601","v602","v603","v604"}; assert (ROOT/"engine/ACTIVE_ENGINE").read_text(encoding="utf-8").strip()=="v334"
     for p in PROFILES.values(): assert p.engine_dir.is_dir() and p.weights.is_file()
 def test_no_v4_engine_tree(): assert not list((ROOT/"engine/c").glob("zchezz_v4*"))
 def test_makefile_defaults_are_safe():

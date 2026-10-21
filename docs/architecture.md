@@ -20,23 +20,23 @@ Each engine directory contains its own `main.c`, board, search, NNUE, Syzygy and
 
 Cross-family engine execution uses UCI subprocesses. Native in-process tools under `engine/c/tools/` compile against the host API and are not used as a generic cross-family ABI.
 
-### v333
+### v334
 
-The v333 search provides iterative deepening, PVS/alpha-beta, aspiration, quiescence, TT, refined Reverse Futility Pruning (RFP with depth <= 10 and 75 margin), Stockfish Gravity move-ordering and history pruning, LMR, null-move/futility/SEE pruning, Syzygy integration, MultiPV and Lazy SMP.
+The v334 search provides iterative deepening, PVS/alpha-beta, aspiration, quiescence, TT with fixed prefetch hash, Quiet SEE pruning extended to depth <= 5 with -45*depth margin, Continuous Smooth History LMR (clamp(ch/1024, -2, 2)), refined Reverse Futility Pruning, Stockfish Gravity move-ordering, Syzygy integration, MultiPV and Lazy SMP.
 
-Its evaluator is NNU3: 799 inputs, a 256-neuron first hidden layer and a 64-neuron H2 file representation. The file has 50 live H2 neurons; the C loader compacts those to 52 SIMD slots (50 live plus two zeros) without changing the file contract.
+Its evaluator is NNU3: 799 inputs, a 256-neuron first hidden layer and a 64-neuron H2 file representation. The file has 50 live H2 neurons; the C loader compacts those to 52 SIMD slots (50 live plus two zeros) without changing the file contract. `v333`, `v332` and `v331` are retained as available frozen comparison baselines.
 
 ### v328
 
 `v328` is frozen and remains available for explicit regression/comparison work against newer versions. It is not the bare/default orchestration target.
 
-### v509
+### v510
 
 The v509 evaluator is NNU4 HalfKP-4-Bucket with 2560 sparse inputs per perspective, H1=48, `[stm, opp]` concat=96, H2=20 and scalar output, sharing the v333 refined RFP search parameters. Its model, encoder, importer, exporter and C runtime remain separate from NNU3.
 
-### v603
+### v604
 
-The v603 evaluator is NNU5 HalfKAv2-32-Bucket with 256 neurons, sharing the v333 refined RFP search parameters.
+The v604 evaluator is NNU5 HalfKAv2-32-Bucket with 256 neurons, sharing the v334 search improvements. `v603`, `v602` and `v601` remain available baselines.
 
 ### Historical snapshots
 
