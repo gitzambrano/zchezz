@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "utils"))
 
-from repo_paths import artifact_dir, engine_dir, engine_executable, latest_version, nnue_weights  # noqa: E402
+from repo_paths import active_version, artifact_dir, engine_dir, engine_executable, nnue_weights  # noqa: E402
 
 def sha256(path: Path) -> str | None:
     if not path.is_file():
@@ -73,7 +73,7 @@ def main() -> int:
     parser.add_argument("--regression-run", default="")
     args = parser.parse_args()
 
-    version = args.version or latest_version()
+    version = args.version or active_version()
     now = dt.datetime.now(dt.timezone.utc)
     edir = engine_dir(version)
     status = command_text(["git", "status", "--porcelain"])

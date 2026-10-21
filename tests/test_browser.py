@@ -36,6 +36,8 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "utils"))
+from repo_paths import active_version
 
 # ═══════════════ CONFIGURATION ═══════════════
 VERSION = ""
@@ -72,20 +74,11 @@ def check(name: str, condition: bool, detail: str = "") -> None:
 
 
 def engine_dir(version: str) -> Path:
-    if version:
-        path = ROOT / "engine" / "c" / f"zchezz_{version}"
-        if path.is_dir():
-            return path
-        raise FileNotFoundError(f"engine directory not found: {path}")
-
-    versions = []
-    for path in (ROOT / "engine" / "c").glob("zchezz_v*"):
-        suffix = path.name.removeprefix("zchezz_v")
-        if suffix.isdigit():
-            versions.append((int(suffix), path))
-    if not versions:
-        raise FileNotFoundError("no numeric engine/c/zchezz_v* directory found")
-    return max(versions)[1]
+    v = version or active_version()
+    path = ROOT / "engine" / "c" / f"zchezz_{v}"
+    if path.is_dir():
+        return path
+    raise FileNotFoundError(f"engine directory not found: {path}")
 
 
 def start_server(directory: Path, port: int):

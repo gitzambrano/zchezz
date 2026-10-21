@@ -11,7 +11,7 @@ import chess
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "utils"))
-from repo_paths import latest_version, wasm_bundle  # noqa: E402
+from repo_paths import active_version, wasm_bundle  # noqa: E402
 
 # ═══════════════ CONFIGURATION ═══════════════
 HTML_PATH = ""
@@ -72,7 +72,7 @@ def main() -> int:
     parser.add_argument("--write-cleaned", type=parse_bool, default=WRITE_CLEANED)
     args = parser.parse_args()
 
-    path = Path(args.html) if args.html else wasm_bundle(latest_version())
+    path = Path(args.html) if args.html else wasm_bundle(active_version())
     if not path.is_file():
         print(f"SKIP: HTML artifact not found: {path}")
         return 0

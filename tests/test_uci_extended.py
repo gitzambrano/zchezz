@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT / "utils"))
 from repo_paths import (  # noqa: E402
     default_opening_book,
     engine_executable,
-    latest_version,
+    active_version,
     tablebase_root,
 )
 
@@ -153,7 +153,7 @@ def resolve_engine() -> Path:
         if not path.is_absolute():
             path = ROOT / path
         return path.resolve()
-    return engine_executable(VERSION or latest_version()).resolve()
+    return engine_executable(VERSION or active_version()).resolve()
 
 def handshake(eng: UCIEngine) -> tuple[list[str], set[str]]:
     eng.send("uci")

@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "utils"))
-from repo_paths import engine_executable, latest_version  # noqa: E402
+from repo_paths import active_version, engine_executable  # noqa: E402
 
 # ═══════════════ CONFIGURATION ═══════════════
 VERSION = ""
@@ -73,7 +73,7 @@ def parse_bool(text: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected true/false, got {text!r}")
 
 def resolve_engine(version: str, explicit: str) -> Path:
-    return Path(explicit) if explicit else engine_executable(version or latest_version())
+    return Path(explicit) if explicit else engine_executable(version or active_version())
 
 def run_perft(exe: Path, fen: str, depth: int, timeout: float) -> int | None:
     text = f"position fen {fen}\nperft {depth}\nquit\n"
