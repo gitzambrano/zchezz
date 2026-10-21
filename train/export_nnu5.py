@@ -11,8 +11,8 @@ QA = 255.0; QB = 64.0; SHIFT = 8.0; QA_EFF = 254.0; OUT_SCALE = 320.0 / (QB * QB
 EXPECTED_SIZE = 4 + 4 + 20 + 16 + (L1_IN * L1_OUT * 2) + (L1_OUT * 4) + (L2_OUT * L2_IN) + (L2_OUT * 4) + L3_IN + 4
 assert EXPECTED_SIZE == 11_568_496
 
-DEFAULT_CKPT = ROOT / 'checkpoints/v600/latest.pt'
-DEFAULT_DST = ROOT / 'engine/c/zchezz_v600/nnue_weights.bin'
+DEFAULT_CKPT = ROOT / 'checkpoints/v605/latest.pt'
+DEFAULT_DST = ROOT / 'engine/c/zchezz_v605/nnue_weights.bin'
 
 
 def _q(a, scale, limit, dtype, name):

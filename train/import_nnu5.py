@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np, torch
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SRC = ROOT / 'engine/c/zchezz_v600/nnue_weights.bin'
-DEFAULT_DST = ROOT / 'checkpoints/v600/latest.pt'
+DEFAULT_SRC = ROOT / 'engine/c/zchezz_v605/nnue_weights.bin'
+DEFAULT_DST = ROOT / 'checkpoints/v605/latest.pt'
 QA = 255.0; QB = 64.0; SHIFT = 8.0; OUT_SCALE = 320.0 / (QB * QB)
 
 

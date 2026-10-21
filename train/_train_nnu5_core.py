@@ -133,14 +133,14 @@ import dataset
 #  never a literal (CLAUDE.md rule 8). Edit here to change the defaults
 #  used when a flag is not passed on the command line.
 # ════════════════════════════════════════════════════════════════════════
-CKPT_DIR = "checkpoints/v600"     # where the per-epoch .pt checkpoints are written
+CKPT_DIR = "checkpoints/v605"     # where the per-epoch .pt checkpoints are written
 CHECKPOINT_SOURCE = "auto"        # checkpoint to resume or transfer from:
                                    #   'auto'         -> check CKPT_DIR first; if empty, find the newest .pt
                                    #                     in any subfolder under checkpoints/ for weight transfer
                                    #   'new' / '' / False -> start fresh from random init (no checkpoint)
                                    #   'path/to/dir'  -> pick the newest checkpoint inside that folder
                                    #   'path/to/file.pt' -> load this exact checkpoint
-DATASET_NAME = "halfka_v2_hm_32b_v600_64x16"  # tag stored in the checkpoint; resume only continues if this matches
+DATASET_NAME = "halfka_v2_hm_32b_v605_deep"  # tag stored in the checkpoint; resume only continues if this matches
 EPOCHS = 100                      # number of training epochs. This also sets the LR
                                    # schedule: CosineAnnealingLR(T_max=EPOCHS), so a small
                                    # EPOCHS anneals the learning rate to eta_min quickly.
@@ -270,29 +270,16 @@ DATA_DIR = "data"        # root holding one folder per dataset
 # low quality. Add it back only with a measured reason.
 DATASETS = [
     # name                                                            pct   mode      col    lam
-    {"name": "extraquiet_cp_sf5k_res_filter",                     "pct": 0.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   # 40.1M  humans / SF 5k nodes
-    {"name": "lichess_cp_sfdb_filter",                            "pct": 0.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   # 18.6M  lichess / SF evals from the lichess DB
-    {"name": "selfplay_cp_sf50k_res_filter_data20260410",         "pct": 0.20, "mode": "sample-files", "col": "cp", "lam": 0.00},   # 16.1M  selfplay / SF 50k
-    {"name": "lichess_cp_sf_filter",                              "pct": 0.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   # 15.2M  lichess / SF
-    {"name": "selfplay_cp_zchezz_res_filter_data20260401",        "pct": 0.50, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  9.1M  selfplay / Zchezz itself
-    {"name": "selfplay_cp_zchezz_res_filter_data20260404",        "pct": 0.50, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  8.8M  selfplay / Zchezz itself
-    {"name": "selfplay_cp_sf50k_res_filter_data20260404",         "pct": 0.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  7.5M  selfplay / SF 50k
-    {"name": "selfplay_cp_sf100k_res_endgames_filter_data20260414","pct": 0.50, "mode": "sample-files", "col": "cp", "lam": 0.00},  #  5.7M  selfplay endgames / SF 100k
     {"name": "extraquiet_cp_sfd14_endgames_filter",               "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  2.8M  human endgames / SF depth 14
-    {"name": "selfplay-lichess_cp_sf500k_res_filter_endgames",    "pct": 1.00, "mode": "sample-rows",  "col": "cp", "lam": 0.00},   #  2.7M  selfplay endgames / SF 500k
-    {"name": "extraquiet_cp_sf60k_filter",                        "pct": 0.10, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  1.5M  humans / SF 60k
+    {"name": "extraquiet_cp_sfd12_endgames_filter",               "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  262k  human endgames / SF depth 12
+    {"name": "extraquiet_cp_sf60k_filter",                        "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  1.5M  humans / SF 60k
+    {"name": "selfplay-lichess_cp_sf500k_res_filter_endgames",    "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.15},   #  2.7M  selfplay endgames / SF 500k
+    {"name": "selfplay_v507_filter",                              "pct": 0.15, "mode": "sample-files", "col": "cp", "lam": 0.20},   # 17.5M  selfplay v507 (15% = 2.6M/epoch)
+    {"name": "selfplay_lookahead_filter",                         "pct": 0.20, "mode": "sample-files", "col": "cp", "lam": 0.15},   # 11.7M  selfplay lookahead (20% = 2.3M/epoch)
+    {"name": "selfplay_v331_filter",                              "pct": 0.50, "mode": "sample-files", "col": "cp", "lam": 0.15},   #  1.07M selfplay v331 (50% = 535k/epoch)
     {"name": "synthetic_endgame_cp_sf_filter_data20260414",       "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  1.2M  generated endgames / SF
-    {"name": "selfplay_cp_zchezz_res_filter_data20260410",        "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  850k  selfplay / Zchezz itself
-    {"name": "synthetic_endgame_cp_sf_filter_data20260413",       "pct": 1.00, "mode": "sample-rows",  "col": "cp", "lam": 0.00},   #  521k  generated endgames / SF
-    {"name": "extraquiet_cp_sfd12_endgames_filter",               "pct": 0.50, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  262k  human endgames / SF depth 12
-    {"name": "lichess_cp_sf400k_filter",                          "pct": 0.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  150k  lichess / SF 400k
-    {"name": "miscelaneous_cp_sf1M_res_filter",                   "pct": 1.00, "mode": "sample-rows",  "col": "cp", "lam": 0.00},   #   34k  mixed / SF 1M
-    # AlphaZero-style results-only source (TD(1)): LCZ test91 self-play,
-    # imported by train/labeling/import_lc0.py into data/lc0_test91_res/.
-    # Carries fen+result (+ LC0's own eval as cp, derived from root_q), so
-    # lam=1.00 trains purely on outcomes while future lam<1 runs can reuse
-    # the same files without relabelling.
-    {"name": "lc0_test91_res",                                    "pct": 0.00, "mode": "sample-files",  "col": "result", "lam": 1.00},   # 351k  LC0 test91 selfplay / real game outcomes
+    {"name": "synthetic_endgame_cp_sf_filter_data20260413",       "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #  521k  generated endgames / SF
+    {"name": "miscelaneous_cp_sf1M_res_filter",                   "pct": 1.00, "mode": "sample-files", "col": "cp", "lam": 0.00},   #   34k  mixed / SF 1M
 ]
 
 # Packed .bin selfplay sources (Appendix F.2/F.3). Same rules; `k` is the
