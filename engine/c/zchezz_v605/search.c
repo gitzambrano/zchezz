@@ -426,7 +426,7 @@ int nnue_fast_eval_bb(NnueAccum *na, int stm, const uint8_t *board,
                       const uint64_t bb[12], uint64_t board_hash);
 
 static inline int eval_stm_fast(Board *b) {
-    return eval_stm(b);
+    return nnue_fast_eval_bb(b->nnue, b->turn == COL_W ? 0 : 1, b->b, b->bb, b->hash);
 }
 
 /* ── SEE (pure bitboard — Phase 3) ────────────────────────────
