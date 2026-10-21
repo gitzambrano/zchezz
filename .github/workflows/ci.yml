@@ -32,3 +32,161 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
       - name: Build WASM bundles
         run: make -C engine/build ENGINE=v334 STATIC_FLAG= ARCH_FLAGS= bundle && make -C engine/build ENGINE=v510 STATIC_FLAG= ARCH_FLAGS= bundle
+
+  elo-avx2-800:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[elo-avx2-800]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        profile: [v334, v510]
+        elo: [2800, 2900]
+    env:
+      PROFILE: ${{ matrix.profile }}
+      ANCHOR_ELO: ${{ matrix.elo }}
+      ZCHEZZ_STOCKFISH: /usr/games/stockfish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Stockfish 16 and python-chess
+        run: |
+          set -euo pipefail
+          python -m pip install -q -e ".[dev]"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq stockfish
+      - name: Verify CPU AVX2, compile AVX2 and verify vector instructions
+        run: |
+          set -euo pipefail
+          grep -qm1 -w avx2 /proc/cpuinfo || { echo "CPU does not support AVX2"; exit 1; }
+          make -C engine/build ENGINE="$PROFILE" ARCH_FLAGS=-mavx2 STATIC_FLAG= native
+          python - <<'PY'
+          import os, subprocess
+          exe=f"engine/c/zchezz_{os.environ['PROFILE']}/zchezz.exe"
+          p=subprocess.run(["objdump","-d",exe],check=True,capture_output=True,text=True)
+          assert "%ymm" in p.stdout, "AVX2/YMM instructions absent from binary"
+          print("AVX2 confirmed: CPU supports AVX2, compiler used -mavx2, and bin contains YMM operations")
+          PY
+      - name: Validate Stockfish Elo calibration controls
+        run: |
+          set -euo pipefail
+          printf 'uci\nquit\n' | /usr/games/stockfish > /tmp/stockfish_uci_options.txt
+          grep -q '^option name UCI_LimitStrength type check' /tmp/stockfish_uci_options.txt
+          grep -q '^option name UCI_Elo type spin' /tmp/stockfish_uci_options.txt
+          grep '^id name' /tmp/stockfish_uci_options.txt
+          grep '^option name UCI_Elo' /tmp/stockfish_uci_options.txt
+          python - <<'PY'
+          import os,re
+          s=open("/tmp/stockfish_uci_options.txt").read()
+          m=re.search(r"^option name UCI_Elo type spin default \d+ min (\d+) max (\d+)",s,re.M)
+          assert m and int(m.group(1))<=int(os.environ["ANCHOR_ELO"])<=int(m.group(2)), "Requested Elo not supported"
+          PY
+      - name: Generate shared deterministic diverse balanced opening book
+        run: |
+          mkdir -p artifacts/elo_avx2/book
+          python - <<'PY'
+          import chess, chess.engine, random, os
+          r=random.Random(20261021)
+          target=100
+          seen=set()
+          rows=[]
+          choices=["e2e4","d2d4","c2c4","g1f3","g2g3","b2b3"]
+          sf=chess.engine.SimpleEngine.popen_uci("/usr/games/stockfish")
+          sf.configure({"Threads":1,"Hash":16})
+          try:
+              for attempt in range(1000):
+                  board=chess.Board()
+                  opening=chess.Move.from_uci(choices[attempt%len(choices)])
+                  board.push(opening)
+                  num_plies=r.choice([8,10,12])
+                  for _ in range(num_plies-1):
+                      if board.is_game_over(): break
+                      infos=sf.analyse(board,chess.engine.Limit(depth=6),multipv=3)
+                      candidate=[i["pv"][0] for i in infos if i.get("pv")]
+                      if not candidate: break
+                      selected=r.choices(candidate,weights=[8,4,2][:len(candidate)],k=1)[0]
+                      board.push(selected)
+                  if board.is_game_over() or len(board.move_stack)!=num_plies: continue
+                  score=sf.analyse(board,chess.engine.Limit(depth=10))["score"].pov(chess.WHITE).score(mate_score=10000)
+                  if score is None or abs(score)>140: continue
+                  fen=board.epd()
+                  if fen in seen: continue
+                  seen.add(fen)
+                  rows.append(fen)
+                  if len(rows)==target: break
+          finally:
+              sf.quit()
+          if len(rows)!=target: raise RuntimeError(f"Only generated {len(rows)}/{target} balanced openings")
+          path="artifacts/elo_avx2/book/elo.epd"
+          with open(path,"w") as f:
+              f.write("\n".join(rows)+"\n")
+          print(f"Generated {len(rows)} unique balanced FEN openings with seed=20261021: {path}")
+          PY
+      - name: Launch 200 paired-color 200ms games against Stockfish
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/elo_avx2/seedhook
+          printf 'import random\nrandom.seed(20261021)\n' > artifacts/elo_avx2/seedhook/sitecustomize.py
+          export PYTHONPATH="$PWD/artifacts/elo_avx2/seedhook${PYTHONPATH:+:$PYTHONPATH}"
+          OUT="artifacts/elo_avx2/${PROFILE}_sf${ANCHOR_ELO}"
+          mkdir -p "$OUT"
+          python tests/benchmark.py \
+            --profile "$PROFILE" --elo "$ANCHOR_ELO" \
+            --games 100 --movetime 200 --concurrency 4 --threads 1 \
+            --max-plies 400 --move-timeout 15 --counter-every 10 \
+            --report-loops 100 \
+            --openings artifacts/elo_avx2/book --opening-file elo.epd \
+            --results-dir "$OUT" 2>&1 | tee "$OUT/console.txt"
+      - name: Extract WDL, Elo and verify 200 legal completed games
+        if: success()
+        run: |
+          python - <<'PY'
+          import chess.pgn, json, math, os, pathlib, collections
+          profile=os.environ["PROFILE"]
+          elo=int(os.environ["ANCHOR_ELO"])
+          folder=pathlib.Path(f"artifacts/elo_avx2/{profile}_sf{elo}")
+          files=list(folder.glob("*.pgn"))
+          assert len(files)==1, f"Expected 1 PGN: {files}"
+          w=d=l=0
+          terminations=collections.Counter()
+          problems=[]
+          with files[0].open(encoding="utf8") as f:
+              while (game:=chess.pgn.read_game(f)) is not None:
+                  assert not game.errors, f"Invalid game: {game.errors}"
+                  result=game.headers.get("Result","*")
+                  t=game.headers.get("Termination","")
+                  terminations[t]+=1
+                  if any(s in t.lower() for s in ["timeout","inválido","invalido","error"]):
+                      problems.append(t)
+                  aswhite=game.headers["White"]==profile
+                  if result=="1/2-1/2": d+=1
+                  elif result=="1-0":
+                      if aswhite: w+=1
+                      else: l+=1
+                  elif result=="0-1":
+                      if aswhite: l+=1
+                      else: w+=1
+                  else: raise ValueError(f"Unknown result {result}")
+          n=w+d+l
+          p=(w+.5*d)/n
+          delta=400*math.log10(p/(1-p)) if 0<p<1 else None
+          estimated=elo+delta if delta is not None else None
+          var=((w/n)*(1-p)**2+(d/n)*(.5-p)**2+(l/n)*(0-p)**2)
+          ci=1.96*(400/(math.log(10)*p*(1-p)))*math.sqrt(var/n) if 0<p<1 else None
+          summary={"profile":profile,"stockfish_uci_elo":elo,"stockfish_version":"Ubuntu stockfish 16-1build1","movetime_ms":200,"cpu_avx2":True,"engine_threads":1,"concurrent_games":4,"book_seed":20261021,"games":n,"wins":w,"draws":d,"losses":l,"score_fraction":p,"elo_difference":delta,"elo_estimate":estimated,"ci95_half_width":ci,"termination_counts":dict(terminations),"errors":problems}
+          (folder/"summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False)+"\n")
+          print(json.dumps(summary,indent=2,ensure_ascii=False))
+          if n!=200 or problems: raise SystemExit(f"INVALID benchmark: games={n}, errors={len(problems)}")
+          PY
+      - name: Preserve PGNs, logs and reproducible opening FENs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: elo-avx2-${{ matrix.profile }}-sf${{ matrix.elo }}
+          path: artifacts/elo_avx2/
+          retention-days: 90
+          if-no-files-found: error
