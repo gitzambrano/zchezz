@@ -4,17 +4,17 @@
 .github/workflows/       one minimal read-only CI workflow
 engine/ACTIVE_ENGINE     default profile marker (`v331`)
 engine/build/            shared build + WebAssembly/bundle infrastructure
-engine/c/zchezz_v333/    default released engine; NNU3
+engine/c/zchezz_v334/    default released engine; NNU3
 engine/c/zchezz_v332/    previous released engine; NNU3
 engine/c/zchezz_v331/    retained comparison baseline; NNU3
 engine/c/zchezz_v328/    frozen NNU3 regression/comparison baseline (pre-v3.29)
 engine/c/zchezz_v327/    frozen NNU3 regression/comparison baseline
-engine/c/zchezz_v509/    secondary supported engine; NNU4
+engine/c/zchezz_v510/    secondary supported engine; NNU4
 engine/c/zchezz_v508/    previous secondary engine; NNU4
-engine/c/zchezz_v603/    secondary supported engine; NNU5
+engine/c/zchezz_v604/    secondary supported engine; NNU5
 engine/c/zchezz_v507/    previous secondary engine; NNU4
 engine/c/zchezz_v3xx/    retained historical v3 snapshots
-engine/c/tools/          native v509-host self-play/arena/GA tooling
+engine/c/tools/          native v510-host self-play/arena/GA tooling
 engine/c/tests/          C invariant harness
 train/                   architecture-neutral data + family-specific NNUE code
 tests/                   correctness/UCI/game/benchmark harnesses
@@ -24,7 +24,7 @@ utils/cliconf.py         small optional-override helper
 artifacts/               generated test/evidence output
 ```
 
-Operational entry points must work with no required CLI arguments and default safely to v333 unless the file is explicitly family-specific. `v328` and `v327` remain selectable only for explicit frozen-baseline regression work. Cross-family orchestration selects a profile and uses UCI process boundaries; `v507` remains the supported NNU4 line.
+Operational entry points must work with no required CLI arguments and default safely to v334 unless the file is explicitly family-specific. `v328` and `v327` remain selectable only for explicit frozen-baseline regression work. Cross-family orchestration selects a profile and uses UCI process boundaries; `v507` remains the supported NNU4 line.
 
 ## Colab organization
 

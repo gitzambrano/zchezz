@@ -71,9 +71,9 @@ def main():
     parser.add_argument("--concurrency", type=int, default=5, help="Jogos concomitantes (padrão: 5)")
     parser.add_argument("--movetime", type=int, default=100, help="Tempo por lance em ms (padrão: 100)")
     parser.add_argument("--show-config", action="store_true", help="Mostra a configuração e sai")
-    parser.add_argument("--prof-6xx", default="v603", help="Perfil NNU5 (padrão: v603)")
-    parser.add_argument("--prof-5xx", default="v509", help="Perfil NNU4 (padrão: v509)")
-    parser.add_argument("--prof-3xx", default="v333", help="Perfil NNU3 (padrão: v333)")
+    parser.add_argument("--prof-6xx", default="v604", help="Perfil NNU5 (padrão: v604)")
+    parser.add_argument("--prof-5xx", default="v510", help="Perfil NNU4 (padrão: v510)")
+    parser.add_argument("--prof-3xx", default="v334", help="Perfil NNU3 (padrão: v334)")
     args = parser.parse_args()
 
     v600_exe = get_engine_exe(args.prof_6xx)

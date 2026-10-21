@@ -185,7 +185,7 @@ def collect_targets(
 
     # 5. Intermediate checkpoints in active profiles (keep latest.pt and the last completed epoch)
     if clean_intermediate_epochs and checkpoints_dir.is_dir():
-        for profile in ("v331", "v331_exp1", "v331_exp2", "v331_exp3", "v332", "v333", "v507", "v507_exp1", "v507_exp2", "v508", "v509", "v601", "v602", "v603"):
+        for profile in ("v331", "v331_exp1", "v331_exp2", "v331_exp3", "v332", "v333", "v334", "v507", "v507_exp1", "v507_exp2", "v508", "v509", "v510", "v601", "v602", "v603", "v604"):
             p_dir = checkpoints_dir / profile
             if p_dir.is_dir():
                 epoch_files = sorted([f for f in p_dir.iterdir() if f.is_file() and f.name.endswith(".pt") and f.name != "latest.pt"])

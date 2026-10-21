@@ -2,11 +2,11 @@
 
 Zchezz has a released NNU3 profile, frozen NNU3 comparison baselines, and supported NNU4/NNU5 experimental profiles.
 
-- `v333` is the default/released working line and uses NNU3 with refined Reverse Futility Pruning (RFP) and Stockfish Gravity. `v332` and `v331` are retained as available baselines.
+- `v334` is the default/released working line and uses NNU3 with Quiet SEE d5 pruning, Continuous Smooth History LMR and TT Prefetch cache fix. `v333`, `v332` and `v331` are retained as available baselines.
 - `v328` is retained as the frozen pre-v3.29 NNU3 regression/comparison baseline.
-- `v509` is a supported secondary line and uses compact NNU4 HalfKP-4-Bucket with refined RFP and Stockfish Gravity. `v508` and `v507` are available baselines.
-- `v603` is a supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket) with refined RFP. `v602` and `v601` are available baselines.
-- `engine/ACTIVE_ENGINE` is `v333`.
+- `v510` is a supported secondary line and uses compact NNU4 HalfKP-4-Bucket with Quiet SEE d5, Continuous Smooth History LMR and TT Prefetch cache fix. `v509`, `v508` and `v507` are available baselines.
+- `v604` is a supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket) with Quiet SEE d5, Continuous Smooth History LMR and TT Prefetch cache fix. `v603`, `v602` and `v601` are available baselines.
+- `engine/ACTIVE_ENGINE` is `v334`.
 
 ## Layering
 

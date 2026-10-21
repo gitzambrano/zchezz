@@ -135,19 +135,19 @@ Contempt         = 0
 
 ```bash
 make -C engine/build native
-# → engine/c/zchezz_v333/zchezz.exe
+# → engine/c/zchezz_v334/zchezz.exe
 ```
 
 ### Windows (MinGW)
 
 ```bat
 mingw32-make -C engine/build native
-:: → engine\c\zchezz_v333\zchezz.exe
+:: → engine\c\zchezz_v334\zchezz.exe
 ```
 
 ### With Syzygy tablebase support
 
-Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v333/`. The build system detects them automatically — no flags required.
+Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fathom)) inside `engine/c/zchezz_v334/`. The build system detects them automatically — no flags required.
 
 ### WebAssembly
 
@@ -166,8 +166,8 @@ Zchezz maintains two engine families in parallel:
 | Family | Current | Evaluator | Status |
 | ------------- | ------- | ------------------------------------------------------------- | ------------------------------------- |
 | **3.x** | v3.33 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
-| **5.x** | v509 (v5.09) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
-| **6.x** | v603 (v6.03) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Experimental development |
+| **5.x** | v510 (v5.10) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
+| **6.x** | v604 (v6.04) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Experimental development |
 | **3.x** | v332 (v3.32) | NNU3 — 799 inputs, 256-neuron L1 | Supported comparison baseline |
 | **5.x** | v508 (v5.08) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Supported comparison baseline |
 | **6.x** | v602 (v6.02) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Supported comparison baseline |
