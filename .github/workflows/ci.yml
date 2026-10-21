@@ -32,3 +32,139 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
       - name: Build WASM bundles
         run: make -C engine/build ENGINE=v334 STATIC_FLAG= ARCH_FLAGS= bundle && make -C engine/build ENGINE=v510 STATIC_FLAG= ARCH_FLAGS= bundle
+
+  legacy-3x-h2h:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[legacy-h2h-3x]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        old_profile: [v314, v320, v325]
+    env:
+      OLD_PROFILE: ${{ matrix.old_profile }}
+      ZCHEZZ_STOCKFISH: /usr/games/stockfish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install python-chess and Stockfish for reproducible openings
+        run: |
+          set -euo pipefail
+          python -m pip install -q -e ".[dev]"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq stockfish
+      - name: Verify exact same NNU3 weights and AVX2 builds
+        run: |
+          set -euo pipefail
+          grep -qw avx2 /proc/cpuinfo
+          sha256sum engine/c/zchezz_"$OLD_PROFILE"/nnue_weights.bin engine/c/zchezz_v334/nnue_weights.bin
+          cmp engine/c/zchezz_"$OLD_PROFILE"/nnue_weights.bin engine/c/zchezz_v334/nnue_weights.bin
+          make -C engine/build ENGINE="$OLD_PROFILE" ARCH_FLAGS=-mavx2 STATIC_FLAG= native
+          make -C engine/build ENGINE=v334 ARCH_FLAGS=-mavx2 STATIC_FLAG= native
+          for profile in "$OLD_PROFILE" v334; do
+            exe="engine/c/zchezz_${profile}/zchezz.exe"
+            objdump -d "$exe" | grep -q -m 1 '%ymm' || { echo "No YMM in $exe"; exit 1; }
+            output="$(printf 'uci\nisready\nquit\n' | "$exe" --nnue nnue_weights.bin 2>&1)"
+            echo "$output" | grep -q '^uciok$'
+            echo "$output" | grep -q '^readyok$'
+          done
+      - name: Create deterministic book of 100 balanced positions
+        run: |
+          mkdir -p artifacts/legacy/book
+          python - <<'PY'
+          import chess, chess.engine, random
+          r=random.Random(20261021)
+          choices=["e2e4","d2d4","c2c4","g1f3","g2g3","b2b3"]
+          rows=[]
+          seen=set()
+          sf=chess.engine.SimpleEngine.popen_uci("/usr/games/stockfish")
+          sf.configure({"Threads":1,"Hash":16})
+          try:
+              for attempt in range(1000):
+                  board=chess.Board()
+                  board.push_uci(choices[attempt%len(choices)])
+                  n=r.choice([8,10,12])
+                  for _ in range(n-1):
+                      if board.is_game_over(): break
+                      analysis=sf.analyse(board,chess.engine.Limit(depth=6),multipv=3)
+                      candidate=[a["pv"][0] for a in analysis if a.get("pv")]
+                      if not candidate: break
+                      board.push(r.choices(candidate,weights=[8,4,2][:len(candidate)],k=1)[0])
+                  if len(board.move_stack)!=n or board.is_game_over(): continue
+                  score=sf.analyse(board,chess.engine.Limit(depth=10))["score"].pov(chess.WHITE).score(mate_score=10000)
+                  fen=board.epd()
+                  if score is None or abs(score)>140 or fen in seen: continue
+                  seen.add(fen)
+                  rows.append(fen)
+                  if len(rows)>=100: break
+          finally:
+              sf.quit()
+          assert len(rows)==100, f"not enough openings: {len(rows)}"
+          with open("artifacts/legacy/book/openings.epd","w") as f:
+              f.write("\n".join(rows)+"\n")
+          print(f"Generated {len(rows)} balanced unique positions with seed=20261021")
+          PY
+      - name: Play 200 paired AVX2 200ms H2H games vs current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/legacy/seedhook
+          printf 'import random\nrandom.seed(20261021)\n' > artifacts/legacy/seedhook/sitecustomize.py
+          export PYTHONPATH="$PWD/artifacts/legacy/seedhook${PYTHONPATH:+:$PYTHONPATH}"
+          OUT="artifacts/legacy/${OLD_PROFILE}_vs_v334"
+          mkdir -p "$OUT"
+          python tests/_run_tournament_quick_core.py \
+            --engine-a "engine/c/zchezz_${OLD_PROFILE}/zchezz.exe" --label-a "$OLD_PROFILE" \
+            --engine-b "engine/c/zchezz_v334/zchezz.exe" --label-b "v334" \
+            --games 100 --movetime 200 --concurrency 4 --threads 1 \
+            --max-plies 400 --move-timeout 20 --counter-every 20 \
+            --report-loops 100 \
+            --openings artifacts/legacy/book --opening-file openings.epd \
+            --results-dir "$OUT" 2>&1 | tee "$OUT/console.txt"
+      - name: Verify valid games and quantify Elo delta
+        run: |
+          python - <<'PY'
+          import chess.pgn,json,os,pathlib,math,collections
+          profile=os.environ["OLD_PROFILE"]
+          folder=pathlib.Path(f"artifacts/legacy/{profile}_vs_v334")
+          pgns=list(folder.glob("*.pgn"))
+          assert len(pgns)==1, pgns
+          w=d=l=0
+          errors=[]
+          counts=collections.Counter()
+          with pgns[0].open(encoding="utf-8") as f:
+              while (g:=chess.pgn.read_game(f)) is not None:
+                  assert not g.errors, g.errors
+                  result=g.headers.get("Result")
+                  term=g.headers.get("Termination","")
+                  counts[term]+=1
+                  if any(x in term.lower() for x in ["timeout","inválido","invalido","error"]): errors.append(term)
+                  assert {g.headers["White"],g.headers["Black"]}=={profile,"v334"}
+                  if result=="1/2-1/2": d+=1
+                  elif result=="1-0":
+                      if g.headers["White"]==profile: w+=1
+                      else: l+=1
+                  elif result=="0-1":
+                      if g.headers["Black"]==profile: w+=1
+                      else: l+=1
+                  else: raise ValueError(result)
+          n=w+d+l
+          score=(w+d/2)/n
+          diff=400*math.log10(score/(1-score)) if 0<score<1 else None
+          var=((w/n)*(1-score)**2+(d/n)*(.5-score)**2+(l/n)*score**2)
+          ci=1.96*400/math.log(10)/score/(1-score)*math.sqrt(var/n) if 0<score<1 else None
+          summary={"old_version":profile,"main_version":"v334","games":n,"wins_old":w,"draws":d,"losses_old":l,"score_old":score,"elo_old_minus_main":diff,"ci95_halfwidth":ci,"avx2":True,"movetime_ms":200,"concurrency":4,"threads_per_engine":1,"opening_seed":20261021,"matching_nnue_weights":True,"termination_counts":dict(counts),"errors":errors}
+          (folder/"summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2)+"\n")
+          print(json.dumps(summary,ensure_ascii=False,indent=2))
+          assert n==200 and not errors, f"invalid: {n} games, {len(errors)} errors"
+          PY
+      - name: Preserve complete results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: legacy-${{ matrix.old_profile }}-vs-v334
+          path: artifacts/legacy/
+          retention-days: 90
+          if-no-files-found: error
