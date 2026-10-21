@@ -32,3 +32,69 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
       - name: Build WASM bundles
         run: make -C engine/build ENGINE=v334 STATIC_FLAG= ARCH_FLAGS= bundle && make -C engine/build ENGINE=v510 STATIC_FLAG= ARCH_FLAGS= bundle
+
+  elo-calibration:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [v334, v510]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install tournament dependencies and Stockfish
+        run: |
+          python -m pip install -e ".[dev]"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq stockfish
+          ls -l /usr/games/stockfish
+      - name: Compile selected Zchezz engine
+        run: make -C engine/build ENGINE=${{ matrix.profile }} STATIC_FLAG= ARCH_FLAGS= native
+      - name: Prepare deterministic diverse paired openings
+        run: |
+          mkdir -p artifacts/elo_openings
+          python - <<'PY'
+          import chess
+          lines = [
+              "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6",
+              "d2d4 d7d5 c2c4 e7e6 b1c3 g8f6",
+              "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4 g8f6",
+              "d2d4 g8f6 c2c4 g7g6 b1c3 f8g7 e2e4 d7d6",
+              "c2c4 e7e5 b1c3 g8f6 g2g3 d7d5",
+              "e2e4 e7e6 d2d4 d7d5 b1c3 g8f6",
+          ]
+          with open("artifacts/elo_openings/elo.epd", "w") as f:
+              for line in lines:
+                  board = chess.Board()
+                  for token in line.split():
+                      move = chess.Move.from_uci(token)
+                      if move not in board.legal_moves: raise ValueError(line)
+                      board.push(move)
+                  f.write(board.epd() + chr(10))
+          PY
+      - name: UCI Elo calibration at 200ms, paired colors
+        env:
+          ZCHEZZ_STOCKFISH: /usr/games/stockfish
+        shell: bash
+        run: |
+          set -euo pipefail
+          for elo in 2900 2800; do
+            echo "::group::${{ matrix.profile }} vs Stockfish ${elo}"
+            python tests/benchmark.py \
+              --profile "${{ matrix.profile }}" --elo "${elo}" \
+              --games 6 --movetime 200 --threads 1 --concurrency 1 \
+              --max-plies 250 --counter-every 1 --report-loops 1 \
+              --openings artifacts/elo_openings --opening-file elo.epd \
+              --results-dir "artifacts/elo_${{ matrix.profile }}_${elo}" \
+              2>&1 | tee "artifacts/elo_${{ matrix.profile }}_${elo}.txt"
+            echo "::endgroup::"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: elo-${{ matrix.profile }}
+          path: artifacts/elo_*
+          if-no-files-found: warn
