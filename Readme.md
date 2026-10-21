@@ -142,7 +142,7 @@ make -C engine/build native
 
 ```bat
 mingw32-make -C engine/build native
-:: → engine\c\zchezz_v334\zchezz.exe
+:: → engine\c\zchezz_v335\zchezz.exe
 ```
 
 ### With Syzygy tablebase support
@@ -161,19 +161,19 @@ make -C engine/build bundle    # produces standalone index.html with embedded NN
 
 ## Engine families
 
-Zchezz maintains two engine families in parallel:
+Zchezz maintains three engine families:
 
 | Family | Current | Evaluator | Status |
 | ------------- | ------- | ------------------------------------------------------------- | ------------------------------------- |
-| **3.x** | v3.33 | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
-| **5.x** | v510 (v5.10) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental development |
-| **6.x** | v605 (v6.05) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Experimental development |
-| **3.x** | v332 (v3.32) | NNU3 — 799 inputs, 256-neuron L1 | Supported comparison baseline |
-| **5.x** | v508 (v5.08) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Supported comparison baseline |
+| **3.x** | v335 (v3.35) | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
+| **5.x** | v510 (v5.10) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Supported secondary line |
+| **6.x** | v605 (v6.05) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Supported secondary line |
+| **3.x** | v334 (v3.34) | NNU3 — 799 inputs, 256-neuron L1 | Supported comparison baseline |
+| **5.x** | v509 (v5.09) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Supported comparison baseline |
 | **6.x** | v604 (v6.04) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Supported comparison baseline |
-| **5.x** | v507 (v5.07) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Experimental comparison baseline |
+| **3.x** | v328 (v3.28) | NNU3 — 799 inputs, 256-neuron L1 | Frozen comparison baseline |
 
-The **3.x family** is the released engine for play and tournaments. **v331 (v3.31)** adds validated UCI pondering with correct `ponderhit`/`stop` semantics; browser pondering is sliced in a Web Worker so the UI remains responsive. The previous released profile is **v330 (v3.30)**, while **v328 (v3.28)** remains a supported historical baseline. The **5.x family** uses profile **v507 (v5.07)** with the same validated pondering support and is an experimental line with a richer, bucket-based NNUE architecture under active development. Released binaries are always from the 3.x family unless explicitly labelled otherwise.
+The **3.x family** is the released working engine for play and tournaments with **v335 (v3.35)** as repository default. The **5.x family** (`v510`) is a supported secondary line based on NNU4 HalfKP-4-Bucket. The **6.x family** (`v605`) is a supported secondary line representing NNU5 (HalfKAv2 32-Bucket with AVX2 SCReLU). Released binaries are always from the 3.x family unless explicitly labelled otherwise.
 
 For contributor and developer documentation see the [`docs/`](docs/) directory.
 

@@ -2,7 +2,7 @@
 
 ```text
 .github/workflows/       one minimal read-only CI workflow
-engine/ACTIVE_ENGINE     default profile marker (`v331`)
+engine/ACTIVE_ENGINE     default profile marker (`v335`)
 engine/build/            shared build + WebAssembly/bundle infrastructure
 engine/c/zchezz_v335/    default released engine; NNU3
 engine/c/zchezz_v334/    previous released engine; NNU3
@@ -26,7 +26,7 @@ utils/cliconf.py         small optional-override helper
 artifacts/               generated test/evidence output
 ```
 
-Operational entry points must work with no required CLI arguments and default safely to v335 unless the file is explicitly family-specific. `v328` and `v327` remain selectable only for explicit frozen-baseline regression work. Cross-family orchestration selects a profile and uses UCI process boundaries; `v507` remains the supported NNU4 line.
+Operational entry points must work with no required CLI arguments and default safely to v335 unless the file is explicitly family-specific. `v328` and `v327` remain selectable only for explicit frozen-baseline regression work. Cross-family orchestration selects a profile and uses UCI process boundaries; `v510` remains the supported NNU4 line and `v605` the supported NNU5 line.
 
 ## Colab organization
 
