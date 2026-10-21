@@ -43,8 +43,8 @@ def test_strength_docs_keep_nodes_separate_from_movetime():
     assert "200 ms" in text
 
 
-def test_native_launchers_default_to_v334():
+def test_native_launchers_default_to_v335():
     bat = (ROOT / "engine/build/build_native.bat").read_text(encoding="utf-8")
     termux = (ROOT / "engine/build/build_termux.sh").read_text(encoding="utf-8")
-    assert "set ENGINE=v334" in bat
-    assert 'VERSION="${1:-v334}"' in termux
+    assert "set ENGINE=v335" in bat
+    assert 'VERSION="${1:-v335}"' in termux

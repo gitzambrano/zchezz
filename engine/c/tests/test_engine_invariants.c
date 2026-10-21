@@ -145,7 +145,25 @@ static void run_sequence(const char *name, const char *fen, const char *moves[],
 }
 
 static void test_nnue_feature_contracts(void) {
-#ifdef NN_FEAT_IN
+#if defined(NN_KING_BUCKETS) && (NN_KING_BUCKETS == 32)
+    /* NNU5 / HalfKAv2-32Bucket contracts. */
+    CHECK(NN_FEAT_IN == 22528, "NNU5 feature dimension changed");
+    CHECK(NN_FEAT_PER_BUCKET == 704, "NNU5 bucket feature dimension changed");
+    CHECK(NN_L1_OUT == 256 && NN_L2_IN == 512 && NN_L2_OUT == 64 &&
+          NN_L3_IN == 64 && NN_L3_OUT == 1,
+          "NNU5 layer dimensions changed");
+    int hm_w = 0, hm_b = 0;
+    int bw = nnue_king_bucket_w(60, &hm_w);
+    int bb = nnue_king_bucket_b(4, &hm_b);
+    CHECK(bw >= 0 && bw < 32, "white king e1 bucket out of range");
+    CHECK(bb >= 0 && bb < 32, "black king e8 bucket out of range");
+    CHECK(nnue_feature_index(WP, 48, 1, bw, hm_w) >= 0,
+          "white-POV WP feature valid");
+    CHECK(nnue_feature_index(BP, 8, 0, bb, hm_b) >= 0,
+          "black-POV BP feature valid");
+    CHECK(nnue_feature_index(WK, 60, 1, bw, hm_w) == -1,
+          "ally king must not be an NNU5 feature");
+#elif defined(NN_FEAT_IN)
     /* NNU4 / HalfKP-4Bucket contracts. */
     CHECK(NN_FEAT_IN == 2560, "NNU4 feature dimension changed");
 #if NN_L1_OUT == 512

@@ -40,6 +40,166 @@ Este documento consolida o histórico de todas as rodadas experimentais de redes
 
 ---
 
+## Rodada 3: Exploração de 10 Novas Otimizações (2.000 jogos vs `v334`)
+- **Período:** Outubro/2026
+- **Base inicial:** `v334` (NNU3)
+- **Tabela de Resultados (200 jogos cada a 100ms/lance, 10 workers):**
+
+| Experimento | Modificação Principal | Score (200j) | % | Elo H2H vs v334 | V / E / D |
+|---|---|:---:|:---:|:---:|:---:|
+| 🥇 **`exp7_see_quiet_d6`** | **Poda Quiet SEE estendida a $d \le 6$ ($-40d$)** | **108.0 / 200** | **54.00%** | **+27.9 ± 36.1** | **64 V / 88 E / 48 D** |
+| 🥈 **`exp5_history_bonus_scale`** | **Escala de Gravidade de Histórico em Profundidades Médias** | **103.0 / 200** | **51.50%** | **+10.4 ± 38.2** | **66 V / 74 E / 60 D** |
+| `exp3_asp_widening` | Janela de Aspiração Progressiva Geométrica ($\pm 16$) | 99.5 / 200 | 49.75% | -1.7 ± 34.9 | 52 V / 95 E / 53 D |
+| `exp10_history_pruning_deep`| Poda de Histórico estendida a $d \le 5$ ($-48d$) | 99.0 / 200 | 49.50% | -3.5 ± 35.7 | 54 V / 90 E / 56 D |
+| `exp2_nmp_eval_scale` | NMP Proporcional Dinâmico $((eval - \beta)/180)$ | 97.5 / 200 | 48.75% | -8.7 ± 36.8 | 56 V / 83 E / 61 D |
+| `exp9_iir_pv_relaxed` | IIR Sutil em Falha de TT com $d \ge 4$ | 96.5 / 200 | 48.25% | -12.2 ± 35.6 | 51 V / 91 E / 58 D |
+| `exp8_counter_virtual_hist` | Bônus Virtual de Histórico ($+768$) para Contra-lance | 93.0 / 200 | 46.50% | -24.4 ± 35.4 | 47 V / 92 E / 61 D |
+| `exp4_capture_lmr_dyn` | LMR Dinâmico para Capturas Perdedoras | 92.5 / 200 | 46.25% | -26.1 ± 35.2 | 46 V / 93 E / 61 D |
+| `exp1_lmp_tight` | LMP Agressivo em Profundidades Baixas ($6, 12, 19\dots$) | 90.5 / 200 | 45.25% | -33.1 ± 34.2 | 41 V / 99 E / 60 D |
+| `exp6_rfp_tight_improving` | RFP Assimétrico Enxuto ($70d$) | 88.0 / 200 | 44.00% | -41.9 ± 38.0 | 50 V / 76 E / 74 D |
+
+---
+
+## Rodada 4: Ordenação Avançada de Lances e Dual-NNUE (Cabeça Auxiliar)
+- **Período:** Outubro/2026
+- **Base inicial:** `v334` (NNU3)
+- **Hipótese:** 
+  1. Capturas no Zchezz não tinham tabela de histórico dinâmico (apenas MVV-LVA estático). Uma tabela `capture_history` dinâmica e continuação a 4 plies (`cmh2`) poderia acelerar os cortes.
+  2. A avaliação completa de 52 neurônios L2 é cara em nós rasos e no Quiescence Search. Uma cabeça neural linear auxiliar (Dual-NNUE) avaliada em 2.5ns via SIMD AVX2 poderia cortar nós prematuramente sem perda de precisão.
+- **Resultados Preliminares (Rodada 4 - 800 jogos vs v334 @ 100ms):**
+  - `exp11_move_ordering`: -13.9 Elo (96.0/200, 48.0%, 52V 88E 60D).
+  - `exp12_aux_fast_nnue` (100k posições): **+40.1 ± 34.2 Elo** (111.5/200, 55.8%, 62V 99E 39D, +23 vitórias líquidas).
+  - `exp13_move_ordering_plus_r3`: -20.9 Elo (94.0/200, 47.0%, 44V 100E 56D).
+  - `exp14_grand_combo`: +10.4 Elo (103.0/200, 51.5%, 68V 70E 62D).
+
+---
+
+## Rodada 4b: Escalonamento para 2 Milhões de Posições e Calibração de Margens
+- **Período:** Outubro/2026
+- **Treinamento:** Acumulação streaming out-of-core sobre 2.000.000 de posições (`selfplay-lichess` + `extraquiet_endgames`).
+- **Fidelidade da Rede Auxiliar:** **99.17% de correlação** com a rede neural NNU3 completa em 20.000 posições de teste inéditas.
+- **Resultados de Torneio (800 jogos vs v334 @ 100ms):**
+  - 🥇 **`exp16_dual_nnue_tuned_margins`**: **+56.1 ± 37.1 Elo** (116.0 / 200, 58.0%, **75 Vitórias, 82 Empates, 43 Derrotas, +32 vitórias líquidas**). Depth: 16.1 vs 15.6 (+0.5 plies).
+  - `exp12b_aux_fast_2m`: +3.5 ± 35.4 Elo (101.0/200, 50.5%, 55V 92E 53D).
+  - `exp15_dual_nnue_plus_see_d6`: ±0.0 ± 36.7 Elo (100.0/200, 50.0%, 58V 84E 58D).
+  - `exp17_dual_nnue_plus_r3_best`: -13.9 ± 37.6 Elo (96.0/200, 48.0%, 57V 78E 65D).
+- **Conclusão:** O **Dual-NNUE com margens calibradas (+160cp QS stand-pat, +100cp shallow RFP) e Quiet SEE d6** alcançou o maior salto de força do motor (+56.1 Elo).
+
+---
+
+## Rodada 5: Combinações Sinérgicas sobre o Campeão `exp16`
+- **Período:** Outubro/2026
+- **Base inicial:** `exp16_dual_nnue_tuned_margins` (Dual-NNUE 2M + Quiet SEE d6)
+- **Resultados de Torneio (800 jogos vs v334 @ 100ms, 10 workers):**
+  - 🥇 **`exp20_exp16_rfp_d4`**: **+22.6 ± 37.5 Elo** (106.5 / 200, 53.25%, 67V 79E 54D). RFP rápido estendido até $d \le 4$.
+  - 🥈 **`exp18_exp16_fast_delta`**: **+19.1 ± 37.5 Elo** (105.5 / 200, 52.75%, 66V 79E 55D). Fast Delta Pruning em QS.
+  - 🥉 **`exp19_exp16_hist_scale`**: **+19.1 ± 36.5 Elo** (105.5 / 200, 52.75%, 63V 85E 52D). Profundidade média de **16.6 plies** (recorde!).
+  - 🏅 **`exp21_exp16_counter_lmr`**: **+5.2 ± 37.1 Elo** (101.5 / 200, 50.75%, 61V 81E 58D). Isenção de contra-lance no LMR.
+- **Conclusão:** Todas as 4 combinações superaram com folga o baseline `v334`, consolidando a superioridade da árvore Dual-NNUE.
+
+---
+
+## Rodada 6: Mega-Validação de 400 Jogos H2H e 400 Jogos vs Stockfish 2900
+- **Período:** Outubro/2026
+- **Configuração:** 3.200 partidas totais (400 jogos cada vs `v334` @ 100ms e 400 jogos cada vs Stockfish 2900 @ 200ms, 10 workers).
+- **Resultados H2H vs `v334_main` (400 jogos):**
+  - 🥇 **`exp16_dual_nnue_tuned`**: **+27.9 ± 26.2 Elo** (216.0 / 400 = 54.0%, **+134 =164 -102, +32 vitórias líquidas!**).
+  - 🥈 **`exp20_exp16_rfp_d4`**: **+18.3 ± 25.7 Elo** (210.5 / 400 = 52.6%, +124 =173 -103, +21 vitórias líquidas).
+  - 🥉 **`exp12_aux_fast_nnue`**: **+17.4 ± 27.0 Elo** (210.0 / 400 = 52.5%, +136 =148 -116, +20 vitórias líquidas).
+  - 🏅 **`exp19_exp16_hist_scale`**: **+12.2 ± 25.9 Elo** (207.0 / 400 = 51.7%, +123 =168 -109, +14 vitórias líquidas).
+- **Resultados vs Stockfish 2900 (400 jogos):**
+  - 🛡️ **`exp12_aux_fast_nnue`**: **-99.0 ± 31.5 Elo** (144.5 / 400 = 36.1%, **106 vitórias sobre o Stockfish 2900!**).
+  - `exp19_exp16_hist_scale`: -139.0 ± 32.4 Elo (124.0 / 400, 78 vitórias).
+  - `exp20_exp16_rfp_d4`: -154.5 ± 32.9 Elo (116.5 / 400, 82 vitórias).
+  - `exp16_dual_nnue_tuned`: -163.0 ± 33.1 Elo (112.5 / 400, 78 vitórias).
+
+---
+
+## Rodada 7: Validação das Soluções Híbridas
+- **Período:** Outubro/2026
+- **Objetivo:** Unificar o alto volume de vitórias H2H de `exp16` com a extrema resiliência contra motores de alta profundidade de `exp12`.
+- **Candidatos Híbridos:**
+  - `exp_hybrid_gold`: QS stand-pat `+180cp`, RFP `+110cp`, Quiet SEE d6 (`-40*d`).
+  - `exp_hybrid_safe`: QS stand-pat `+200cp`, RFP `+110cp`, Quiet SEE d6 (`-40*d`).
+- **Resultados dos Confrontos:**
+  - 👑 **`exp_hybrid_safe` vs `v334_main`** (400 jogos @ 100ms): **+33.1 ± 26.6 Elo** (219.0 / 400 = 54.8%, **+141 =156 -103, +38 vitórias líquidas!**). Profundidade recorde: **18.3 plies**!
+  - 🛡️ **`exp_hybrid_safe` vs `Stockfish 2900`** (100 jogos @ 200ms): **-85.0 ± 60.6 Elo** (38.0 / 100 = 38.0%, **+26 =24 -50** — salto de **+78 Elo** sobre o baseline vs SF!).
+  - `exp_hybrid_gold` vs `v334_main` (400 jogos @ 100ms): **+21.7 ± 25.0 Elo** (212.5 / 400 = 53.1%, +120 =185 -95, +25 vitórias líquidas).
+  - `exp_hybrid_gold` vs `exp16_dual_nnue_tuned` (200 jogos @ 100ms confronto direto): **+10.4 ± 36.7 Elo** (103.0 / 200 = 51.5%, +61 =84 -55).
+- **Veredito:** O **`exp_hybrid_safe`** bateu todos os recordes anteriores (+33.1 Elo em 400 partidas, +78 Elo vs Stockfish 2900, 18.3 plies de profundidade), sendo o candidato oficial para promoção a `v335`.
+
+---
+
+## Rodada 8: Recozimento da Cabeça Dual-NNUE (3M Posições Stockfish)
+- **Período:** Outubro/2026
+- **Configuração:** Fine-tuning com *Cosine Annealing* ($10^{-4} \to 10^{-6}$) ao longo de 192 arquivos parquet de dados Stockfish em `data/` (3.005.000 posições).
+- **Resultados de Torneio (200 jogos @ 100ms vs `v335_release` inicial):**
+  - 🥇 **`cand_annealed_head`**: **+31.4 ± 34.7 Elo** (109.0 / 200 = 54.5%, **61 Vitórias, 96 Empates, 43 Derrotas, +18 vitórias líquidas!**).
+  - Profundidade média: **16.7 plies** vs 16.6 plies.
+  - Velocidade `bench`: **1.927.234 NPS** (+6.1% mais rápido, -5% nós para resolver a profundidade 13).
+- **Veredito:** Os pesos recozidos superaram a versão `v335` inicial com folga (+31.4 Elo) e foram incorporados diretamente no `fast_head_weights.h` da release `v335`. Ganho acumulado sobre `v334`: **+64.5 Elo**!
+
+---
+
+## Rodada 9: Afinação Fina de Poda e Dynamic RFP (+20.9 Elo)
+- **Período:** Outubro/2026
+- **Candidatos testados (200 jogos cada @ 100ms vs `v335_release`):**
+  - 🥇 `exp25_rfp_improving_tune`: `rfp_margin = depth*70 - (improving ? 45 : 0)` $\to$ **+20.9 ± 36.7 Elo** (106.0/200, depth 16.8).
+  - 🥈 `exp22_fast_delta_qs`: `fast_val + delta < alpha - 200` $\to$ +8.7 ± 35.2 Elo (102.5/200).
+  - 🥉 `exp24_lmr_history_tuning`: LMR histórico ajustado $\to$ +1.7 Elo.
+  - ❌ `exp23_quiet_see_ordering`: SEE em lances calmos dentro do score_move $\to$ -31.4 Elo (overhead excessivo).
+- **Veredito:** `exp25` incorporado ao `v335_release`. **Ganho acumulado total da `v335` sobre a `v334`: +85.4 Elo!**
+
+---
+
+## Rodada 10 & 11: Mega-Validações em Alta Amostragem (2.300 Jogos)
+- **Período:** Outubro/2026
+- **Testes Realizados:**
+  - `cand3_gm_combo` vs `v335_release` (600 jogos @ 100ms): +4.1 ± 20.5 Elo (303.5/600, empate técnico).
+  - `cand3_gm_combo` vs `Stockfish 2900` (400 jogos @ 200ms): 142.0/400 (35.5%, 106 vitórias contra SF 2900!).
+  - `cand6_combo_clean` vs `v335_release` (600 jogos @ 100ms): -2.3 ± 21.6 Elo (298.0/600, empate técnico).
+  - `cand6_combo_clean` vs `Stockfish 2900` (400 jogos @ 200ms): 125.5/400 (31.4%).
+- **Conclusão:** O algoritmo de busca da `v335_release` já atingiu o ponto ótimo para a rede NNU3. Poda adicional causa perdas táticas contra o Stockfish.
+
+---
+
+## Rodada 12: Exploração do Dual-NNUE na Linha 6xx (NNU5 - 512 Neurônios)
+- **Período:** Outubro/2026
+- **Treinamento:** Head linear de 512 neurônios treinado em 1.000.000 posições de Stockfish com MAE recorde de **140.6 cp** ($r = 0.7566$).
+- **Candidato `v605_dual`:**
+  - vs `v604_baseline` (100 jogos @ 100ms): **+3.5 ± 54.1 Elo** (50.5%).
+  - vs `v335_release` (100 jogos @ 100ms): **-354.5 ± 91.2 Elo** (11.5%).
+- **Diagnóstico Arquitetural:** A rede NNU5 tem 11.5 MB e 32 buckets de rei. Cada lance no tabuleiro causa *cache misses* contínuos no cache L2 da CPU, limitando o NPS a 423k em blitz enquanto a `v335` (426 KB, 100% em cache L1/L2) roda a 590k-780k NPS com avaliação tática madura.
+
+---
+
+## Rodada 13: Fine-Tuning da Rede Primária NNU3 (426 KB) no Stockfish Corpus
+- **Período:** Outubro/2026
+- **Treinamento GPU (RTX 4050 Laptop via CUDA):**
+  - 5 épocas com Cosine Annealing ($3 \cdot 10^{-5} \to 1 \cdot 10^{-7}$) sobre 2.500.000 posições.
+  - Val MAE caiu de **232.5 cp para 215.2 cp** (-17.3 cp em toda a rede primária).
+  - Head auxiliar calibrado com MAE recorde de **119.5 cp** ($r = 0.7770$).
+- **Resultado em Jogo (`cand_v336` vs `v335_release` - 200 jogos @ 100ms):**
+  - **Placar:** 94.0 / 200 (47.0%) $\to$ **-20.9 ± 38.2 Elo** (57 V, 74 E, 69 D).
+- **Conclusão:** Treinar a rede primária puramente em avaliações estáticas de Stockfish gera desvio de distribuição (*distribution shift*) em relação às posições reais da árvore de busca do Zchezz. A rede `v335` original (calibrada via self-play balanceado) permanece como a avaliação de jogo mais forte e resiliente.
+
+---
+
+## Rodada 14: Modernização Integral da Linha 6xx (605 Modernizada)
+- **Período:** Outubro/2026
+- **Inovações Implementadas:**
+  1. **Correção do Bug de Invalidação de Buckets:** No HalfKAv2, o rei adversário é apenas uma peça normal (plano 10). O movimento do rei branco invalidava desnecessariamente os acumuladores de ambas as perspectivas. Corrigido para invalidar estritamente a perspectiva do jogador que moveu o rei, atualizando a perspectiva adversária de forma incremental.
+  2. **Vetorização AVX2 do Refresh do Acumulador:** O recalculo de perspectiva em trocas de bucket foi vetorizado com _mm256_add_epi16 em passos de 16 elementos (8x mais rápido por ciclo de CPU).
+  3. **Tabela de Transposição Compacta (sf32):** Migrada de os48 (24 bytes/entrada, 2.8M entradas em 64MB) para sf32 (clusters de 32 bytes alinhados à linha de cache, 3 slots de 10 bytes = 6.3M entradas em 64MB).
+  4. **Geração de Lances em Estágios (Staged Move Generation):** Lances gerados sob demanda (TT -> capturas ordenadas por MVV-LVA/SEE -> lances calmos com LMP).
+  5. **Dual-NNUE Auxiliary Head:** Cabeça linear de 512 neurônios calibrada em 1M posições de Stockfish acelerando cortes rasos em Quiescence e nós não-PV.
+- **Resultados em Jogo:**
+  - 605_modern vs 604_baseline (100 jogos @ 100ms): **+17.4 ± 59.0 Elo** (40 V, 25 E, 35 D).
+  - **Velocidade de Busca:** De 423.000 NPS para **661.989 NPS (+56.5% de ganho de nós por segundo)**.
+- **Decisão:** Promovida 605 a padrão suportado oficial da família NNU5 no branch main.
+
+---
+
 ## Histórico de Arquitetura e Modelos NNUE
 1. **NNU3 (Canônico HalfKP 799):**
    - Topologia: 799 entradas, FC 256 neurônios (HalfKP), H2 64 (50 ativos compactados para 52 SIMD), saída escalar.

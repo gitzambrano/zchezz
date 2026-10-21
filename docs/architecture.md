@@ -2,11 +2,11 @@
 
 Zchezz has a released NNU3 profile, frozen NNU3 comparison baselines, and supported NNU4/NNU5 experimental profiles.
 
-- `v334` is the default/released working line and uses NNU3 with Quiet SEE d5 pruning, Continuous Smooth History LMR and TT Prefetch cache fix. `v333`, `v332` and `v331` are retained as available baselines.
+- `v335` is the default/released working line and uses NNU3 with Dual-NNUE auxiliary head, Quiet SEE d6 pruning, Dynamic RFP, and Compact sf32 TT. `v334`, `v333`, `v332` and `v331` are retained as available baselines.
 - `v328` is retained as the frozen pre-v3.29 NNU3 regression/comparison baseline.
 - `v510` is a supported secondary line and uses compact NNU4 HalfKP-4-Bucket with Quiet SEE d5, Continuous Smooth History LMR and TT Prefetch cache fix. `v509`, `v508` and `v507` are available baselines.
-- `v604` is a supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket) with Quiet SEE d5, Continuous Smooth History LMR and TT Prefetch cache fix. `v603`, `v602` and `v601` are available baselines.
-- `engine/ACTIVE_ENGINE` is `v334`.
+- `v605` is a supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket) with fixed King Bucket invalidation, AVX2 vectorized accumulator refresh, sf32 compact TT, staged move generation and Dual-NNUE auxiliary head. `v604`, `v603`, `v602` and `v601` are available baselines.
+- `engine/ACTIVE_ENGINE` is `v335`.
 
 ## Layering
 
@@ -20,11 +20,11 @@ Each engine directory contains its own `main.c`, board, search, NNUE, Syzygy and
 
 Cross-family engine execution uses UCI subprocesses. Native in-process tools under `engine/c/tools/` compile against the host API and are not used as a generic cross-family ABI.
 
-### v334
+### v335
 
-The v334 search provides iterative deepening, PVS/alpha-beta, aspiration, quiescence, TT with fixed prefetch hash, Quiet SEE pruning extended to depth <= 5 with -45*depth margin, Continuous Smooth History LMR (clamp(ch/1024, -2, 2)), refined Reverse Futility Pruning, Stockfish Gravity move-ordering, Syzygy integration, MultiPV and Lazy SMP.
+The v335 search provides iterative deepening, PVS/alpha-beta, aspiration, quiescence, TT with sf32 compact 32-byte cache-aligned buckets, Quiet SEE pruning extended to depth <= 6, Dynamic RFP with improving flag, staged move generation, Dual-NNUE auxiliary head, Syzygy integration, MultiPV and Lazy SMP.
 
-Its evaluator is NNU3: 799 inputs, a 256-neuron first hidden layer and a 64-neuron H2 file representation. The file has 50 live H2 neurons; the C loader compacts those to 52 SIMD slots (50 live plus two zeros) without changing the file contract. `v333`, `v332` and `v331` are retained as available frozen comparison baselines.
+Its evaluator is NNU3: 799 inputs, a 256-neuron first hidden layer and a 64-neuron H2 file representation. The file has 50 live H2 neurons; the C loader compacts those to 52 SIMD slots (50 live plus two zeros) without changing the file contract. `v334`, `v333`, `v332` and `v331` are retained as available frozen comparison baselines.
 
 ### v328
 
@@ -32,11 +32,11 @@ Its evaluator is NNU3: 799 inputs, a 256-neuron first hidden layer and a 64-neur
 
 ### v510
 
-The v509 evaluator is NNU4 HalfKP-4-Bucket with 2560 sparse inputs per perspective, H1=48, `[stm, opp]` concat=96, H2=20 and scalar output, sharing the v333 refined RFP search parameters. Its model, encoder, importer, exporter and C runtime remain separate from NNU3.
+The v510 evaluator is NNU4 HalfKP-4-Bucket with 2560 sparse inputs per perspective, H1=48, `[stm, opp]` concat=96, H2=20 and scalar output. Its model, encoder, importer, exporter and C runtime remain separate from NNU3. `v509`, `v508` and `v507` remain available baselines.
 
-### v604
+### v605
 
-The v604 evaluator is NNU5 HalfKAv2-32-Bucket with 256 neurons, sharing the v334 search improvements. `v603`, `v602` and `v601` remain available baselines.
+The v605 evaluator is NNU5 HalfKAv2-32-Bucket with 256 neurons, featuring fixed king bucket invalidation, AVX2 vectorized accumulator refresh, sf32 compact TT, staged move generation and Dual-NNUE auxiliary head. `v604`, `v603`, `v602` and `v601` remain available baselines.
 
 ### Historical snapshots
 

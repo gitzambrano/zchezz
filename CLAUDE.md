@@ -2,11 +2,11 @@
 
 # Supported engine profiles
 
-- Treat `v334` as the repository default and released working line (NNU3).
-- Keep `v333`, `v332`, `v331`, `v328` and `v327` available as frozen NNU3 regression/comparison baselines; do not retarget them with current-release changes.
+- Treat `v335` as the repository default and released working line (NNU3).
+- Keep `v334`, `v333`, `v332`, `v331`, `v328` and `v327` available as frozen NNU3 regression/comparison baselines; do not retarget them with current-release changes.
 - Treat `v510` as a supported secondary line (NNU4); `v509`, `v508` and `v507` remain available comparison baselines.
-- Treat `v604` as the supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket); `v603`, `v602` and `v601` remain available comparison baselines.
-- Keep `engine/ACTIVE_ENGINE` equal to `v334` unless the user explicitly requests a promotion.
+- Treat `v605` as the supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket); `v604`, `v603`, `v602` and `v601` remain available comparison baselines.
+- Keep `engine/ACTIVE_ENGINE` equal to `v335` unless the user explicitly requests a promotion.
 - Maintain the three active lineages (3xx, 5xx, and 60x) documented and accessible via their profile definitions.
 - Do not create or restore `engine/c/zchezz_v4xx` directories.
 - Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
@@ -16,7 +16,7 @@
 ## Bare-run contract
 
 - Every public operational script must run with no command-line arguments.
-- A bare run must select `v334` unless the script is a family-specific implementation module whose profile is explicit in its file name.
+- A bare run must select `v335` unless the script is a family-specific implementation module whose profile is explicit in its file name.
 - Optional CLI arguments may override defaults; they must not be required for normal execution.
 - `--show-config` or an equivalent non-destructive inspection mode must not build engines, start games, train, delete files, or change repository state.
 - Missing optional external prerequisites must produce a clear diagnostic. Scripts intended for inspection or orchestration must not fail merely because Stockfish, CUDA, tablebases, or an opening corpus is absent.
@@ -51,12 +51,12 @@
 
 ## Builds and tests
 
-- Bare native builds use `ENGINE=v334`.
+- Bare native builds use `ENGINE=v335`.
 - `ENGINE=v328` and `ENGINE=v327` remain available for frozen regression comparisons.
 - `ENGINE=v510` must build independently without changing the default marker.
-- `ENGINE=v604` must build independently without changing the default marker.
+- `ENGINE=v605` must build independently without changing the default marker.
 - Run deterministic local tests before considering a change complete.
-- Test `v334`, `v510`, and `v604` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
+- Test `v335`, `v510`, and `v605` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
 - Run perft, UCI smoke, NNUE artifact validation, C invariants, and Python contract tests when their dependencies are available.
 - Treat skipped tests as missing evidence, not as passes.
 - Keep generated test evidence under `artifacts/`; do not overwrite source files as a test side effect.
@@ -81,7 +81,7 @@
 ## Source and documentation
 
 - Keep comments technical, current, and conditional. State what must be true and what a caller may rely on.
-- Historical source comments may retain the version they document; current `v334`/`v510` comments must not present an older family as the active implementation.
+- Historical source comments may retain the version they document; current `v335`/`v510` comments must not present an older family as the active implementation.
 - In `AGENTS.md`, do not include project history, migration narratives, or explanations of why a previous design changed.
 - Keep `CLAUDE.md` and `AGENTS.md` bodies identical; only the first title line may differ.
 - Update comments, tests, and docs when a public contract changes.
