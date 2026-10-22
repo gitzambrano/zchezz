@@ -1,6 +1,6 @@
 # UCI Interface
 
-The default engine is `engine/c/zchezz_v331/` and identifies itself as Zchezz 3.31.
+The default engine is `engine/c/zchezz_v335/` and identifies itself as Zchezz 3.35.
 
 ## Core commands
 
@@ -10,7 +10,7 @@ The engine handles the normal UCI lifecycle: `uci`, `isready`, `ucinewgame`, `se
 
 ## Options
 
-The v331 UCI layer exposes at least:
+The v335 UCI layer exposes at least:
 
 - `Hash`
 - `Threads`
@@ -32,4 +32,4 @@ Tests, not documentation prose, are authoritative for the exact option inventory
 
 ## Cross-family use
 
-Treat UCI as the stable boundary between v331, v507 and external engines such as Stockfish. Do not link v331 and v507 search/evaluator internals into one generic comparison process.
+Treat UCI as the stable boundary between v335, v510, v605, and external engines such as Stockfish. Do not link search or evaluator internals into one generic comparison process.

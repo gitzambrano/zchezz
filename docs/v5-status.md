@@ -4,8 +4,8 @@ This document tracks the experimental investigation and baseline status of the N
 
 ## Baselines
 
-- **Experimental v5 baseline:** `v507`, NNU4 HalfKP-4Bucket (`2560 -> 48/perspective -> 20 -> 1`), weight SHA-256 `5e6cca42f11823505edefb3ee068e0e9bb3a8576f8fb5b0b7a688736ed377150`. Adds validated UCI pondering (`go ponder` / `ponderhit`) and serves as native host for in-process C tools (`arena`, `selfplay`, `ga_tune`).
-- **Repository default line:** `v331` (NNU3).
+- **Supported v5 baseline:** `v510`, NNU4 HalfKP-4Bucket (`2560 -> 48/perspective -> 20 -> 1`), incorporating Continuous Smooth History LMR, TT prefetch cache optimizations, and Quiet SEE d5 pruning. `v509`, `v508`, and `v507` remain available comparison baselines.
+- **Repository default line:** `v335` (NNU3).
 - **Rule:** Cross-family comparisons are diagnostic only. Any v5 candidate must demonstrate empirical strength gains directly against the v5 baseline under the standard 200 ms movetime protocol.
 
 ## Summary of Completed Investigations
@@ -62,4 +62,4 @@ Systematic local edits to int8 weights were tested to escape local minima:
 
 ## Current Direction
 
-Local NNUE micro-surgery is closed. Future improvements require either search-side mechanisms (correction history, pruning-aware residuals) or global retraining on large-scale datasets (10M+ positions). v507 remains the stable secondary NNU4 experimental baseline.
+Local NNUE micro-surgery is closed. Future improvements require either search-side mechanisms (correction history, pruning-aware residuals) or global retraining on large-scale datasets (10M+ positions). v510 remains the supported secondary NNU4 baseline, with v507 available as an earlier comparison baseline.

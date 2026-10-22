@@ -8,15 +8,15 @@ Native executables, WASM glue/binaries and generated bundle output are produced 
 
 ## Test evidence
 
-Longer test runners place summaries/logs under `artifacts/`. Generated evidence may be deleted and reproduced; it must not overwrite engine source or installed NNUE weights.
+Longer test runners place summaries and logs under `artifacts/`. Generated evidence may be deleted and reproduced; it must not overwrite engine source or installed NNUE weights.
 
 ## Training
 
-Training checkpoints live under `checkpoints/<profile>/`. `latest.pt` is the canonical resumable checkpoint for a supported profile. Large datasets and transient optimizer outputs are local/generated resources unless explicitly promoted to tracked artifacts.
+Training checkpoints live under `checkpoints/<profile>/`. `latest.pt` is the canonical resumable checkpoint for a supported profile. Large datasets and transient optimizer outputs are local or generated resources unless explicitly promoted to tracked artifacts.
 
 ## Installed NNUE weights
 
-`engine/c/zchezz_v331/nnue_weights.bin` and `engine/c/zchezz_v507/nnue_weights.bin` are runtime inputs tracked with their engine profiles. They are not disposable build output. Frozen baselines such as `zchezz_v328` and `zchezz_v325` also track their installed networks.
+`engine/c/zchezz_v335/nnue_weights.bin`, `engine/c/zchezz_v510/nnue_weights.bin`, and `engine/c/zchezz_v605/nnue_weights.bin` are runtime inputs tracked with their engine profiles. They are not disposable build output. Comparison baselines (`zchezz_v334`, `zchezz_v328`, `zchezz_v507`, `zchezz_v604`, etc.) also track their installed networks.
 
 ## Browser bundle
 

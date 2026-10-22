@@ -2,24 +2,24 @@
 
 ## Architecture-neutral data
 
-Raw datasets should store chess-domain information such as position/FEN, side to move, result, evaluation, move and evaluator provenance. NNU3/NNU4 feature encoding belongs inside the selected training family.
+Raw datasets should store chess-domain information such as position/FEN, side to move, result, evaluation, move, and evaluator provenance. NNUE feature encoding belongs inside the selected training family.
 
-The reusable teaching format under `train/teaching/` follows the same rule. It stores a standard chess-domain board, White-relative raw scores, sparse move labels, method flags, and provenance. It deliberately does not bake NNU3/NNU4 features or a fixed policy softmax into the dataset.
+The reusable teaching format under `train/teaching/` follows the same rule. It stores a standard chess-domain board, White-relative raw scores, sparse move labels, method flags, and provenance. It deliberately does not bake NNU3, NNU4, or NNU5 features into the dataset.
 
 ## Profile entry point
 
 ```bash
-python train/run.py                    # v331
-python train/run.py --profile v331
+python train/run.py                    # v335
+python train/run.py --profile v335
+python train/run.py --profile v510
+python train/run.py --profile v605
 python train/run.py --profile v328    # frozen NNU3 baseline (pre-v3.29)
-python train/run.py --profile v325    # frozen NNU3 baseline
-python train/run.py --profile v507
 python train/run.py --show-config
 ```
 
-A bare run defaults to v331. Inspection mode must not train or modify artifacts.
+A bare run defaults to v335. Inspection mode must not train or modify artifacts.
 
-## v331 / v328 / v325 NNU3 family
+## v335 / v334 / v332 / v331 / v328 NNU3 family
 
 - `train/encoding_nnu3.py`
 - `train/model_nnu3.py`
@@ -28,9 +28,9 @@ A bare run defaults to v331. Inspection mode must not train or modify artifacts.
 - `train/import_nnu3.py`
 - `train/export_nnu3.py`
 
-The installed runtime artifact is NNU3. v331 uses the same installed NNU3 weights as v330/v328/v325.
+The installed runtime artifact is NNU3 (799 features, 256 H1, 64 H2 with 52-slot runtime compaction).
 
-## v507 family
+## v510 / v509 / v508 / v507 NNU4 family
 
 - `train/encoding.py`
 - `train/model.py`
@@ -38,11 +38,21 @@ The installed runtime artifact is NNU3. v331 uses the same installed NNU3 weight
 - `train/import_nnu4.py`
 - `train/export_nnu4.py`
 
-The installed runtime artifact is compact NNU4.
+The installed runtime artifact is compact NNU4 (HalfKP-4-Bucket, 2560 sparse inputs/perspective, H1=48, concat=96, H2=20).
+
+## v605 / v604 / v603 / v602 / v601 NNU5 family
+
+- `train/encoding_nnu5.py`
+- `train/model_nnu5.py`
+- `train/_train_nnu5_core.py`
+- `train/import_nnu5.py`
+- `train/export_nnu5.py`
+
+The installed runtime artifact is NNU5 (HalfKAv2-32-Bucket, 22528 sparse inputs/perspective, 256 neurons, SCReLU, H2=64).
 
 ## Checkpoints
 
-`checkpoints/<profile>/latest.pt` is the canonical resumable checkpoint. Before loading tensors, training/export code must verify architecture metadata and fail on cross-family mismatches. When no checkpoint exists, the profile importer may reconstruct a resumable checkpoint from the installed engine weights.
+`checkpoints/<profile>/latest.pt` is the canonical resumable checkpoint. Before loading tensors, training and export code must verify architecture metadata and fail on cross-family mismatches. When no checkpoint exists, the profile importer may reconstruct a resumable checkpoint from the installed engine weights.
 
 ## Teaching and distillation
 
@@ -67,12 +77,13 @@ Teaching methods are extensible. Built-in methods register by name in `train/tea
 
 `train/teaching/loader.py` derives value probabilities, soft policy targets, and pairwise move-order targets from the raw teaching corpus at training time. New policy/value architectures should consume this adapter directly.
 
-For the existing v329/v328/v325 NNU3 and v506 NNU4 value trainers, `train/teaching/export_eval_bin.py` writes a compatibility `SAMPLE_DTYPE` `.bin`. Because the export is evaluator supervision and a real outcome may be unknown, pass it to the current trainers with `k=0`:
+For existing value trainers, `train/teaching/export_eval_bin.py` writes a compatibility `SAMPLE_DTYPE` `.bin`. Because the export is evaluator supervision and a real outcome may be unknown, pass it to the current trainers with `k=0`:
 
 ```bash
 python train/teaching/export_eval_bin.py
-python train/run.py --profile v331 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
-python train/run.py --profile v507 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v335 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v510 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
+python train/run.py --profile v605 --source kind=bin,path=data/teaching/stockfish_eval.bin,k=0
 ```
 
 Useful teaching commands:

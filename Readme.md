@@ -39,6 +39,8 @@ Zchezz implements a mature alpha-beta search stack:
 - **Futility pruning** — prunes losing moves near the leaves using static evaluation margins
 - **SEE-based pruning** — drops losing captures and quiet moves that SEE predicts to fail badly
 - **Refined Reverse Futility Pruning (RFP)** *(v3.33, v5.09, v6.03)* — tightens the fail-high margin (`75 * depth - (improving ? 40 : 0)`) and extends depth cutoff to $d \le 10$, safely pruning settled branches to allocate node budget to deeply contested lines (+12.2 Elo H2H, record 108 wins against Stockfish 2900)
+- **Dual-NNUE Auxiliary Fast Head** *(v3.35, v6.05)* — evaluates hidden-layer activations using an auxiliary linear head for early branch pruning before full evaluation
+- **Quiet SEE depth extension** *(v3.35)* — extends static exchange pruning on quiet moves up to depth 6, reducing unpromising branch growth
 - **Stockfish Gravity Move Ordering** *(v3.32, v5.08, v6.02)* — applies gravity decay to quiet move history with quadratic cutoff bonuses
 - **Pawn-structure correction history** *(v3.29)* — adjusts static evaluation using a per-pawn-hash correction term, improving positional consistency across similar structures
 - **Compact clustered Transposition Table** — 32-byte aligned clusters, each holding three 10-byte entries; supports age-based replacement, hash score correction, and TT-move ordering
@@ -159,19 +161,44 @@ make -C engine/build bundle    # produces standalone index.html with embedded NN
 
 ---
 
-## Engine families
+## Engine families and baselines
 
-Zchezz maintains three engine families:
+Zchezz maintains three active engine families, each with its own evaluation architecture and baseline champion:
 
-| Family | Current | Evaluator | Status |
-| ------------- | ------- | ------------------------------------------------------------- | ------------------------------------- |
-| **3.x** | v335 (v3.35) | NNU3 — 799 inputs, 256-neuron L1 | **Official release, ~2900 Elo** |
-| **5.x** | v510 (v5.10) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Supported secondary line |
-| **6.x** | v605 (v6.05) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Supported secondary line |
-| **3.x** | v334 (v3.34) | NNU3 — 799 inputs, 256-neuron L1 | Supported comparison baseline |
-| **5.x** | v509 (v5.09) | NNU4 HalfKP-4-Bucket — 2560 sparse inputs/perspective, H1=48 | Supported comparison baseline |
-| **6.x** | v604 (v6.04) | NNU5 HalfKAv2-32-Bucket — 256 neurons | Supported comparison baseline |
-| **3.x** | v328 (v3.28) | NNU3 — 799 inputs, 256-neuron L1 | Frozen comparison baseline |
+| Family | Current Baseline | Evaluator Architecture | Memory Footprint | Speed & Depth | Status |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **3.x** | **v335 (v3.35)** | NNU3 (799 inputs, 256-neuron L1, 52 SIMD slots) | ~427 KB weights | ~1.1M NPS, depth 16+ | **Official release champion, ~2900 Elo** |
+| **5.x** | **v510 (v5.10)** | NNU4 HalfKP-4-Bucket (2560 sparse inputs/perspective) | ~248 KB weights | ~1.4M NPS, depth 16+ | Supported secondary line |
+| **6.x** | **v605 (v6.05)** | NNU5 HalfKAv2-32-Bucket (22528 sparse inputs/perspective) | ~11.5 MB weights | ~1.6M NPS, depth 16.8 | Supported secondary line |
+| **3.x** | v334 (v3.34) | NNU3 (799 inputs, 256-neuron L1) | ~427 KB weights | ~1.0M NPS | Supported comparison baseline |
+| **5.x** | v509 (v5.09) | NNU4 HalfKP-4-Bucket (2560 sparse inputs/perspective) | ~248 KB weights | ~1.4M NPS | Supported comparison baseline |
+| **6.x** | v604 (v6.04) | NNU5 HalfKAv2-32-Bucket (256 neurons) | ~11.5 MB weights | ~1.5M NPS | Supported comparison baseline |
+| **3.x** | v328 (v3.28) | NNU3 (pre-v3.29 historical state) | ~427 KB weights | ~0.9M NPS | Frozen comparison baseline |
+
+### Baseline explanations
+
+#### 1. Official release champion: v335 (3.x line)
+- **Role:** The official tournament engine, repository default (`engine/ACTIVE_ENGINE`), and WebAssembly build target.
+- **Evaluator:** NNU3 architecture with 799 features (768 half-mirror piece squares and 31 endgame features), a 256-neuron first hidden layer, and runtime compaction to 52 SIMD slots through dead-neuron elimination.
+- **Search stack:** Features a Dual-NNUE auxiliary fast head for rapid evaluation, Quiet SEE pruning extended to depth 6, dynamic Reverse Futility Pruning (RFP) with improving flag adaptation, 32-byte cache-aligned compact Transposition Table with pseudo-legality filtering, and Stockfish gravity move ordering.
+- **Performance:** Balances high tactical accuracy and compact footprint, achieving ~2900 Elo strength and winning against Stockfish 2900 with a record 108 wins.
+
+#### 2. Supported secondary line: v510 (5.x line)
+- **Role:** The supported low-footprint secondary line designed for memory-constrained and fast-eval environments.
+- **Evaluator:** NNU4 HalfKP-4-Bucket architecture with 2560 sparse inputs per perspective, 48 hidden neurons per perspective concatenated to 96 `[stm, opp]`, 20 neurons in H2, and a scalar output (~248 KB weights).
+- **Search stack:** Incorporates Quiet SEE pruning to depth 5, Continuous Smooth History LMR, TT prefetch cache optimizations, and validated UCI pondering.
+- **Performance:** Provides rapid evaluation throughput with minimal memory requirements.
+
+#### 3. Supported secondary line: v605 (6.x line)
+- **Role:** The high-capacity secondary line representing the deep HalfKAv2 32-bucket architecture.
+- **Evaluator:** NNU5 architecture with 22,528 sparse inputs per perspective, 256 hidden neurons with SCReLU activation, and 64 neurons in layer 2. Retrained for 20 deep epochs on GPU across 300M+ positions (validation loss 0.507), scoring +107.5 Elo over v604.
+- **Search stack:** Features a Dual-NNUE Fast Auxiliary Head calibrated via GPU Ridge regression ($r = 0.7093$), fixed king-bucket invalidation logic, AVX2 vectorized accumulator refresh, staged move generation, and compact sf32 Transposition Table.
+- **Performance:** Achieves search throughput exceeding 1.6M NPS and an average depth of 16.8 plies at 100 ms movetime.
+
+#### 4. Baseline hierarchy and comparison roles
+- **Default resolution:** All repository scripts, test runners, and bare builds resolve `v335` by default without required command-line arguments.
+- **Active family baselines:** `v510` and `v605` are the active reference baselines for their respective architecture families.
+- **Frozen comparison baselines:** Older milestone versions (`v334`, `v333`, `v332`, `v331`, `v328`, `v327` in 3.x; `v509`, `v508`, `v507` in 5.x; `v604`, `v603`, `v602`, `v601` in 6.x) remain permanently frozen to guarantee reproducible regression testing.
 
 The **3.x family** is the released working engine for play and tournaments with **v335 (v3.35)** as repository default. The **5.x family** (`v510`) is a supported secondary line based on NNU4 HalfKP-4-Bucket. The **6.x family** (`v605`) is a supported secondary line representing NNU5 (HalfKAv2 32-Bucket with AVX2 SCReLU). Released binaries are always from the 3.x family unless explicitly labelled otherwise.
 
