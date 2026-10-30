@@ -6,13 +6,6 @@ import re
 from pathlib import Path
 
 LEGACY_ABSOLUTE_ROOT_ALLOWLIST = {
-    "tests/debug_game.py",
-    "tests/debug_lc0_abs.py",
-    "tests/debug_lc0_bits.py",
-    "tests/debug_lc0_layout.py",
-    "tests/debug_lc0_polarity.py",
-    "tests/debug_lc0_polarity2.py",
-    "tests/debug_lc0_stm.py",
     "tests/run_tournament.py",
     "tests/test_move_parsing.py",
     "tests/test_uci.py",
