@@ -31,6 +31,16 @@ For a strength-affecting candidate, follow `docs/regression-testing.md`. Do not 
 
 If browser/WASM delivery changed, build the selected bundle and run the browser/static checks available on the validation platform. State explicitly when Emscripten or browser automation was unavailable.
 
+When releasing v335 for the browser, require static WASM/book validation
+**and real Chromium E2E** before synchronizing the verified bundle into
+`index.html`. `.github/workflows/publish-pages.yml` is the only workflow
+authorized to push web output to `main`; never publish candidate engine
+branches or an untested WASM. Keep the site at v335 unless explicitly promoted.
+
+For locally compiled native engines, always prefer `-march=native` if the
+compiler/CPU supports it; use `Makefile.portable` for portable distribution.
+Document the compiler, CPU capabilities, native flags and NNUE hash.
+
 ## 5. Provenance
 
 Retain SHA/profile/network hash, compiler/platform/flags, test summaries and strength artifact references together. A release result without reproducible inputs is incomplete.
