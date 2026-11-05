@@ -1,7 +1,7 @@
 # Repository Layout
 
 ```text
-.github/workflows/       one minimal read-only CI workflow
+.github/workflows/       read-only CI + guarded Pages publishing workflow
 engine/ACTIVE_ENGINE     default profile marker (`v335`)
 engine/build/            shared build + WebAssembly/bundle infrastructure
 engine/c/zchezz_v335/    default released engine; NNU3
