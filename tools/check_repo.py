@@ -31,7 +31,8 @@ def main() -> int:
     publisher=ROOT/'.github/workflows/publish-pages.yml'
     if publisher.is_file():
         pub=publisher.read_text(encoding='utf-8').lower()
-        if 'contents: write' not in pub: error('publisher requires scoped contents: write')
+        if 'contents: write' not in pub or 'pages: write' not in pub: error('publisher requires scoped contents: write and pages: write')
+        if '/pages/builds' not in pub: error('publisher must request Pages build after bot push')
         if 'refs/heads/main' not in pub: error('publisher must restrict writes to main')
         if 'tests/test_browser.py' not in pub: error('publisher must gate on browser E2E')
         if 'git push' not in pub or '--force' in pub: error('publisher must commit web artifacts without force')
