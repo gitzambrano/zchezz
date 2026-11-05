@@ -31,8 +31,10 @@ python tools/publish_web.py --mode check                  # ensures index == v33
 ```
 
 The dedicated `.github/workflows/publish-pages.yml` automates this sequence
-after relevant pushes to `main`, and commits only the verified bundle and
-`index.html`. It skips re-running on generated bundle-only changes and never
+after relevant pushes to `main`, commits only the verified bundle and
+`index.html`, then explicitly requests a Pages rebuild using the Pages API:
+`GITHUB_TOKEN` commits alone do not trigger Pages builds. It skips re-running on
+generated bundle-only changes and never
 promotes other engine profiles. The regular CI remains read-only.
 
 The browser target always uses Emscripten `-msimd128`; native
