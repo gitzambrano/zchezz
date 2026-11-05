@@ -1,6 +1,6 @@
 name: ci
 on:
-  push: {branches: [main]}
+  push: {branches: [main, experiments/hotpath-matrix-20261104]}
   pull_request:
   workflow_dispatch:
 permissions: {contents: read}
@@ -35,7 +35,7 @@ jobs:
 
   perf_studies:
     name: perf study (${{ matrix.variant }})
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/experiments/hotpath-matrix-20261104'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
