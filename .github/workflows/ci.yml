@@ -35,7 +35,7 @@ jobs:
 
   perf_studies:
     name: perf study (${{ matrix.variant }})
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
