@@ -35,6 +35,26 @@ mingw32-make -C engine/build ENGINE=v328 native
 
 A bare shared build targets v335.
 
+## Native machine optimization is the default
+
+Use `-march=native` **every time it is supported** for local, single-host
+compilation or performance benchmarking. Bare `make -C engine/build` and
+`make -C engine/build -f Makefile.native` use `-O3 -ffast-math -march=native`.
+AVX2 is enabled automatically by `-march=native` on an AVX2-capable host.
+Never force `-mavx2` for a CPU that lacks it; never redistribute native
+binaries as universally compatible.
+
+Use `make -C engine/build -f Makefile.portable` for distribution and unknown
+hardware. It clears `ARCH_FLAGS` and emits `zchezz.portable.exe`, leaving
+the optimized `zchezz.exe` intact. Both Makefiles support `native-active`
+(v335/v510/v605) and `native-supported` (all registered profiles).
+The portable build uses the compiler's default baseline ISA; it is not a
+cross-compiler for arbitrary OS/CPU architectures.
+
+The 3xx, 5xx and 60x engines may differ in their SIMD implementations.
+Record architecture flags, host CPU, compiler and binary flavor in every
+benchmark. Comparisons must use identical settings for both engines.
+
 ## Tablebases
 
 If both Fathom source and header files are present for the selected profile, native builds may include tablebase support. If the pair is absent, the shared build defines `NO_TABLEBASES`. This allows a clean checkout to compile without local Fathom files.
@@ -71,7 +91,7 @@ Do not use those native tools as a cross-family ABI. Use the Python/UCI runners 
 
 ## CI portability
 
-CI clears `STATIC_FLAG` and `ARCH_FLAGS` for smoke builds so hosted runners are not required to support the local production ISA or static runtime. Performance comparisons must use the same compiler and flags on both sides.
+CI deliberately clears `STATIC_FLAG` and `ARCH_FLAGS` for smoke builds; this is a portability exception, **not** the local build default. Performance comparisons must use the same compiler and flags on both sides.
 
 ## WebAssembly
 
