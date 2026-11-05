@@ -1,20 +1,25 @@
-name: isolated-v335-perf
+name: isolated-v335-stage2
 on:
-  push: {branches: [experiments/hotpath-matrix-20261104]}
+  push: {branches: [experiments/hotpath-stage2-20261104]}
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
   perf_studies:
-    name: perf study (${{ matrix.variant }})
+    name: stage2 (${{ matrix.variant }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        variant: [lmr_piece, qs_order, qs_evasion_tt, fasthead_off, probcut_off, prefetch_off]
+        variant: [lmr_piece, probcut_tuned, probcut_depth7_only, probcut_cap3_only, fasthead_qs_off, fasthead_main_off]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: python -m pip install python-chess numpy
-      - run: python tools/perf_hotpaths.py --variant "${{ matrix.variant }}" --bench-depth 11 --games 6 --movetime 200
+      - run: python -m pip install python-chess numpy pytest
+      - run: python tools/check_repo.py && python -m pytest tests/test_repository_contracts.py -q
+      - name: Paired tournament and isolated NPS (200 ms)
+        shell: bash
+        run: |
+          case "${{ matrix.variant }}" in lmr_piece|probcut_tuned) openings=100 ;; *) openings=12 ;; esac
+          python tools/perf_hotpaths.py --variant "${{ matrix.variant }}" --bench-depth 11 --games "$openings" --movetime 200 --concurrency 2 --max-plies 240 --opening-count 120
