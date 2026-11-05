@@ -23,11 +23,18 @@ def main() -> int:
     stale=sorted(p.name for p in (ROOT/"engine/c").glob("zchezz_v4*"))
     if stale: error(f"v4 engine trees are not supported: {stale}")
     workflows=sorted([*ROOT.joinpath('.github/workflows').glob('*.yml'),*ROOT.joinpath('.github/workflows').glob('*.yaml')])
-    if [p.name for p in workflows] != ["ci.yml"]: error(f"Actions must contain only ci.yml: {[p.name for p in workflows]}")
+    if [p.name for p in workflows] != ["ci.yml", "publish-pages.yml"]: error(f"Actions must contain ci.yml and publish-pages.yml: {[p.name for p in workflows]}")
     elif workflows:
         wf=workflows[0].read_text(encoding='utf-8').lower()
         for bad in ('contents: write','git push','git commit','playwright','emsdk','upload-artifact'):
             if bad in wf: error(f"ci.yml contains forbidden heavy/mutating behavior: {bad}")
+    publisher=ROOT/'.github/workflows/publish-pages.yml'
+    if publisher.is_file():
+        pub=publisher.read_text(encoding='utf-8').lower()
+        if 'contents: write' not in pub: error('publisher requires scoped contents: write')
+        if 'refs/heads/main' not in pub: error('publisher must restrict writes to main')
+        if 'tests/test_browser.py' not in pub: error('publisher must gate on browser E2E')
+        if 'git push' not in pub or '--force' in pub: error('publisher must commit web artifacts without force')
     for top in ('tests','tools','utils','train'):
         if not (ROOT/top).exists(): continue
         for path in (ROOT/top).rglob('*.py'):
