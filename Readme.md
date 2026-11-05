@@ -133,25 +133,46 @@ Contempt         = 0
 
 **Prerequisites:** GCC (MinGW-W64 on Windows, system GCC on Linux/macOS), GNU Make.
 
-### Linux / macOS
+### Local native-optimized build (recommended for your own CPU)
+
+**Always use `-march=native` when the compiler and local CPU support it.** The
+default Makefile and the explicit `Makefile.native` do this automatically.
+On an AVX2-capable CPU, `-march=native` enables AVX2 (plus other supported
+instructions); do **not** add `-mavx2` on CPUs without AVX2.
 
 ```bash
-make -C engine/build                     # bare default: native v335
-make -C engine/build native-active       # v335 (NNU3), v510 (NNU4), v605 (NNU5)
-make -C engine/build native-supported    # all 23 registered profiles, including frozen baselines
-make -C engine/c/zchezz_v335             # same shared build, via local delegating Makefile
+make -C engine/build                           # default: v335, -O3 -ffast-math -march=native
+make -C engine/build -f Makefile.native         # explicit host-optimized build
+make -C engine/build -f Makefile.native native-active     # v335, v510, v605
+make -C engine/build -f Makefile.native native-supported  # all 23 profiles
+make -C engine/c/zchezz_v335                    # same optimized shared default
 ```
 
-The native executable is emitted as `engine/c/zchezz_<profile>/zchezz.exe`, next
-to its own `nnue_weights.bin`. On Linux this is an ELF binary despite the historical
-`.exe` filename. Builds are host-platform binaries, not cross-platform release packages.
-Override `ENGINE=v510`, `ARCH_FLAGS=` (portable CPU baseline), or `STATIC_FLAG=` as needed.
+Host-native binaries are `engine/c/zchezz_<profile>/zchezz.exe` (a Linux ELF
+on Linux despite the historical extension). **They are not universally portable.**
+If `-march=native` is unsupported by the selected toolchain, use the portable
+Makefile, rather than silently changing native build flags.
+
+### Portable / distribution build (separate Makefile and executable)
+
+```bash
+make -C engine/build -f Makefile.portable
+make -C engine/build -f Makefile.portable native-active
+make -C engine/build -f Makefile.portable native-supported
+```
+
+The portable Makefile uses `-O3 -ffast-math` with **no `-march=native` and
+no forced AVX2**, producing `zchezz.portable.exe`, distinct from `zchezz.exe`.
+Distribute that binary for compatible OS/ABI and baseline ISA; provide separate
+AVX2-specific builds only with explicit CPU compatibility. For an explicitly
+AVX2-targeted, machine-specific test use
+`ARCH_FLAGS="-march=native -mavx2"` **only** on a verified AVX2 machine.
 
 ### Windows (MinGW)
 
 ```bat
-mingw32-make -C engine/build
-:: → engine\c\zchezz_v335\zchezz.exe
+mingw32-make -C engine/build -f Makefile.native
+mingw32-make -C engine/build -f Makefile.portable
 ```
 
 ### With Syzygy tablebase support
@@ -165,7 +186,16 @@ Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fatho
 make -C engine/build wasm
 make -C engine/build bundle           # produces engine/c/zchezz_v335/zchezz_bundle.html
 make -C engine/build bundle-active    # bundles v335, v510 and v605
+# After Chromium E2E is successful, sync the versioned bundle with Pages index:
+python tools/publish_web.py --mode sync   # copies v335 bundle to index.html
 ```
+
+The dedicated `.github/workflows/publish-pages.yml` rebuilds v335 using
+Emscripten SIMD128, verifies static bundle/book and real Chromium browser
+behavior, then synchronizes **both** the versioned bundle and root `index.html`
+on `main`. GitHub Pages must be configured to serve `main` from `/(root)`.
+Generic CI is read-only; the publisher is the only narrowly scoped exception.
+WASM uses `-msimd128`, not native CPU `-march=native` or x86 AVX2.
 
 ---
 
