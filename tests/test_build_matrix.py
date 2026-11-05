@@ -60,7 +60,7 @@ def test_host_native_and_portable_makefiles_have_distinct_outputs():
     native = (build / "Makefile.native").read_text(encoding="utf-8")
     portable = (build / "Makefile.portable").read_text(encoding="utf-8")
     shared = (build / "Makefile").read_text(encoding="utf-8")
-    assert "ARCH_FLAGS ?= -march=native" in shared
+    assert __import__("re").search(r"ARCH_FLAGS\s*\?=\s*-march=native", shared)
     assert "ARCH_FLAGS ?= -march=native" in native
     assert "ARCH_FLAGS :=" in portable
     assert "OUTPUT_SUFFIX := .portable" in portable
