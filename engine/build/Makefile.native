@@ -1,0 +1,5 @@
+# Host-optimized native build. -march=native enables AVX2 if CPU supports it.
+# Selected engine defaults to v335. Produces zchezz.exe.
+ARCH_FLAGS ?= -march=native
+OUTPUT_SUFFIX :=
+include Makefile
