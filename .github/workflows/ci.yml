@@ -1,6 +1,6 @@
 name: ci
 on:
-  push: {branches: [main, maintenance/build-default-v335-20261104]}
+  push: {branches: [main]}
   pull_request:
   workflow_dispatch:
 permissions: {contents: read}
