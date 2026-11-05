@@ -32,3 +32,21 @@ jobs:
         run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
       - name: Build WASM bundles
         run: make -C engine/build ENGINE=v334 STATIC_FLAG= ARCH_FLAGS= bundle && make -C engine/build ENGINE=v510 STATIC_FLAG= ARCH_FLAGS= bundle
+
+  perf_studies:
+    name: perf study (${{ matrix.variant }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [lmr_piece, qs_order, qs_evasion_tt, fasthead_off, probcut_off, prefetch_off]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Python chess dependency
+        run: python -m pip install python-chess
+      - name: Perft + paired NPS + H2H (200 ms, 12 games)
+        run: python tools/perf_hotpaths.py --variant "${{ matrix.variant }}" --bench-depth 11 --games 6 --movetime 200
