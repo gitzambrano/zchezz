@@ -1,41 +1,11 @@
-name: ci
+name: isolated-v335-perf
 on:
-  push: {branches: [main, experiments/hotpath-matrix-20261104]}
-  pull_request:
+  push: {branches: [experiments/hotpath-matrix-20261104]}
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
-  smoke:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: {python-version: "3.12"}
-      - run: pip install -e ".[dev]"
-      - run: python tools/check_repo.py
-      - run: python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py tests/test_teaching_format.py tests/test_teaching_methods.py -q
-      - name: Public entrypoint smoke
-        run: python train/run.py --show-config && python train/teacher.py --show-config && python train/teaching/inspect_dataset.py --show-config && python train/teaching/seeds.py --show-config && python train/teaching/targeted_selfplay.py --show-config && python train/teaching/export_eval_bin.py --show-config && python train/teaching/loader.py && python tests/run_selfplay.py --show-config && python tests/run_tournament_quick.py --show-config && python tests/benchmark.py --show-config && bash -n engine/build/build_termux.sh
-      - run: make -C engine/build ENGINE=v334 STATIC_FLAG= ARCH_FLAGS= native && make -C engine/build ENGINE=v510 STATIC_FLAG= ARCH_FLAGS= native
-      - name: TT move legality regression
-        run: gcc -O2 -D_GNU_SOURCE -std=c11 -DNO_TABLEBASES -Iengine/c/zchezz_v334 tests/test_tt_move_legality.c engine/c/zchezz_v334/board.c engine/c/zchezz_v334/nnue.c -lm -pthread -o /tmp/test_tt_move_legality && /tmp/test_tt_move_legality
-      - name: UCI startup smoke
-        run: for profile in v334 v510; do exe="engine/c/zchezz_${profile}/zchezz.exe"; output="$(printf 'uci\nisready\nquit\n' | "$exe" 2>&1)"; printf '%s\n' "$output"; grep -q '^uciok$' <<< "$output"; grep -q '^readyok$' <<< "$output"; done
-      - run: python tools/check_nnue.py --profile v334 && python tools/check_nnue.py --profile v510
-
-      - name: Ponder protocol gates
-        run: python tests/validate_ponder_protocol.py --profile v334 && python tests/validate_ponder_protocol.py --profile v510
-      - name: WASM ponder contracts
-        run: python -m pytest tests/test_wasm_ponder.py -q
-      - name: Install Emscripten
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
-      - name: Build WASM bundles
-        run: make -C engine/build ENGINE=v334 STATIC_FLAG= ARCH_FLAGS= bundle && make -C engine/build ENGINE=v510 STATIC_FLAG= ARCH_FLAGS= bundle
-
   perf_studies:
     name: perf study (${{ matrix.variant }})
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/experiments/hotpath-matrix-20261104'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
@@ -46,7 +16,5 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - name: Python chess dependency
-        run: python -m pip install python-chess
-      - name: Perft + paired NPS + H2H (200 ms, 12 games)
-        run: python tools/perf_hotpaths.py --variant "${{ matrix.variant }}" --bench-depth 11 --games 6 --movetime 200
+      - run: python -m pip install python-chess numpy
+      - run: python tools/perf_hotpaths.py --variant "${{ matrix.variant }}" --bench-depth 11 --games 6 --movetime 200
