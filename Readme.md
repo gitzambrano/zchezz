@@ -136,14 +136,21 @@ Contempt         = 0
 ### Linux / macOS
 
 ```bash
-make -C engine/build native
-# → engine/c/zchezz_v335/zchezz.exe
+make -C engine/build                     # bare default: native v335
+make -C engine/build native-active       # v335 (NNU3), v510 (NNU4), v605 (NNU5)
+make -C engine/build native-supported    # all 23 registered profiles, including frozen baselines
+make -C engine/c/zchezz_v335             # same shared build, via local delegating Makefile
 ```
+
+The native executable is emitted as `engine/c/zchezz_<profile>/zchezz.exe`, next
+to its own `nnue_weights.bin`. On Linux this is an ELF binary despite the historical
+`.exe` filename. Builds are host-platform binaries, not cross-platform release packages.
+Override `ENGINE=v510`, `ARCH_FLAGS=` (portable CPU baseline), or `STATIC_FLAG=` as needed.
 
 ### Windows (MinGW)
 
 ```bat
-mingw32-make -C engine/build native
+mingw32-make -C engine/build
 :: → engine\c\zchezz_v335\zchezz.exe
 ```
 
@@ -156,7 +163,8 @@ Place `tbprobe.c` and `tbprobe.h` (from [Fathom](https://github.com/jdart1/Fatho
 ```bash
 # Requires Emscripten (emcc on PATH)
 make -C engine/build wasm
-make -C engine/build bundle    # produces standalone index.html with embedded NNUE
+make -C engine/build bundle           # produces engine/c/zchezz_v335/zchezz_bundle.html
+make -C engine/build bundle-active    # bundles v335, v510 and v605
 ```
 
 ---
