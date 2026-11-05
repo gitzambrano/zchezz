@@ -1,7 +1,7 @@
 name: publish-pages
 on:
   push:
-    branches: [main, maintenance/native-pages-publish-20261104]
+    branches: [main]
     paths:
       - 'engine/build/**'
       - 'engine/c/zchezz_v335/**'
