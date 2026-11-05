@@ -49,6 +49,16 @@
 - Keep installed engine weights and the corresponding importer sufficient to reconstruct a resumable checkpoint.
 - Do not commit transient optimizer checkpoints unless the user explicitly requests tracked training artifacts.
 
+## Architecture flags and reproducible builds
+
+- **Always prefer `-march=native` for local native builds when the host compiler supports it.** This automatically enables AVX2 and other supported instructions on CPUs that implement them; never force AVX2 on an unsupported CPU.
+- The bare `make -C engine/build` and explicit `-f Makefile.native` select a host-optimized v335 build using `ARCH_FLAGS=-march=native` by default. Do not silently override it with blank `ARCH_FLAGS` for local performance work.
+- Use `make -C engine/build -f Makefile.portable` when building for distribution, heterogeneous machines, unknown CPUs, CI portability or regression controls. Its `ARCH_FLAGS` is empty and its output is `zchezz.portable.exe`, separate from host `zchezz.exe`.
+- The shared build matrix supports the same two flavors for all supported profiles; preserve the `.portable.exe` suffix in portable multi-engine builds.
+- For native performance comparisons compile BOTH candidates with the same compiler, `-O3`, `-ffast-math`, `ARCH_FLAGS` and CPU; record compiler/host flags. Do not infer CPU speed gains or Elo from portable CI NPS.
+- When `-march=native` is unavailable, use the portable flavor explicitly and record why. Never ship a host-native executable as universally compatible.
+- WebAssembly uses Emscripten `-msimd128`, not `-march=native` or x86 AVX2; retain this separation.
+
 ## Builds and tests
 
 - Bare native builds use `ENGINE=v335`.
@@ -73,9 +83,10 @@
 
 - Keep Actions minimal and generic.
 - Automatic CI may run on `main` and pull requests. Do not trigger broad automatic jobs solely because a branch name starts with a version prefix.
-- Workflows must not commit, push, merge, delete branches, create branches, publish releases, or modify source files.
-- Workflows use read-only repository permissions unless a user-requested publishing task requires a separate explicit workflow.
-- Do not create version-specific or round-specific workflow files.
+- Generic CI (`.github/workflows/ci.yml`) remains read-only and never writes source, releases or branches.
+- The specifically authorized `.github/workflows/publish-pages.yml` is the **only** source-writing exception: after regenerating v335 WASM and passing real Chromium browser E2E, it may atomically synchronize `index.html` from `engine/c/zchezz_v335/zchezz_bundle.html` and commit just these two web artifacts to `main` (no force pushes).
+- The Pages publisher must never publish untested WASM, advance `ACTIVE_ENGINE`, or merge experimental changes. Set its triggers to relevant web/build changes only; prevent self-trigger loops from generated bundles.
+- Do not create version-specific or round-specific workflow files or broaden write permissions in generic CI.
 - Local scripts remain the authoritative way to run tests and experiments; Actions are optional verification.
 
 ## Source and documentation
