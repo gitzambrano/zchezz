@@ -39,6 +39,7 @@ def main() -> int:
     parser.add_argument("--target", choices=("native", "bundle"), default="native")
     parser.add_argument("--arch-flags", default=None)
     parser.add_argument("--static-flag", default=None)
+    parser.add_argument("--output-suffix", choices=("", ".portable"), default="")
     parser.add_argument("--show-config", action="store_true")
     args = parser.parse_args()
     profiles = selected_profiles(args.scope)
@@ -64,13 +65,15 @@ def main() -> int:
             cmd.append(f"ARCH_FLAGS={args.arch_flags}")
         if args.static_flag is not None:
             cmd.append(f"STATIC_FLAG={args.static_flag}")
+        if args.output_suffix and args.target == "native":
+            cmd.append(f"OUTPUT_SUFFIX={args.output_suffix}")
         cmd.append(args.target)
         print(f"BUILD profile={name} format={p.network_format} target={args.target}", flush=True)
         result = subprocess.run(cmd, check=False)
         if result.returncode:
             print(f"FAIL profile={name} target={args.target}: exit {result.returncode}", file=sys.stderr)
             return result.returncode
-        output = p.engine_dir / ("zchezz.exe" if args.target == "native" else "zchezz_bundle.html")
+        output = p.engine_dir / (f"zchezz{args.output_suffix}.exe" if args.target == "native" else "zchezz_bundle.html")
         if not output.is_file() or output.stat().st_size == 0:
             print(f"ERROR: missing or empty build output {output}", file=sys.stderr)
             return 1
