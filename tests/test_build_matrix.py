@@ -53,3 +53,21 @@ def test_make_defaults_to_native_and_exposes_matrix_targets():
     local = (ROOT / "engine/c/zchezz_v335/Makefile").read_text(encoding="utf-8")
     assert "$(MAKE) -C ../../build ENGINE=v335" in local
     assert "tbprobe.c" not in local
+
+
+def test_host_native_and_portable_makefiles_have_distinct_outputs():
+    build = ROOT / "engine/build"
+    native = (build / "Makefile.native").read_text(encoding="utf-8")
+    portable = (build / "Makefile.portable").read_text(encoding="utf-8")
+    shared = (build / "Makefile").read_text(encoding="utf-8")
+    assert "ARCH_FLAGS ?= -march=native" in shared
+    assert "ARCH_FLAGS ?= -march=native" in native
+    assert "ARCH_FLAGS :=" in portable
+    assert "OUTPUT_SUFFIX := .portable" in portable
+    assert "zchezz$(OUTPUT_SUFFIX).exe" in shared
+    assert '"--output-suffix=$(OUTPUT_SUFFIX)"' in shared
+    for mk, suffix, flag_expected in (("Makefile.native", "zchezz.exe", True), ("Makefile.portable", "zchezz.portable.exe", False)):
+        run = subprocess.run(["make", "-C", str(build), "-f", mk, "-n", "-B", "native"],
+                             text=True, capture_output=True, check=True)
+        assert suffix in run.stdout
+        assert ("-march=native" in run.stdout) is flag_expected
