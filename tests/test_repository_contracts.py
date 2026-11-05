@@ -16,7 +16,8 @@ def test_actions_are_minimal_read_only():
     text=(wf/"ci.yml").read_text(encoding="utf-8").lower(); assert "contents: read" in text; assert len(text.splitlines())<35
     for bad in ("git push","git commit","create branch","delete branch","upload-artifact","playwright","emsdk","contents: write"): assert bad not in text
     publisher=(wf/"publish-pages.yml").read_text(encoding="utf-8").lower()
-    assert "contents: write" in publisher and "refs/heads/main" in publisher
+    assert "contents: write" in publisher and "pages: write" in publisher and "refs/heads/main" in publisher
+    assert "/pages/builds" in publisher
     assert "tests/test_browser.py" in publisher and "tools/publish_web.py" in publisher
     assert "git push" in publisher and "--force" not in publisher
     assert "github.event_name" not in publisher or "push" in publisher
