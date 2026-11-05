@@ -193,7 +193,7 @@ python tools/publish_web.py --mode sync   # copies v335 bundle to index.html
 The dedicated `.github/workflows/publish-pages.yml` rebuilds v335 using
 Emscripten SIMD128, verifies static bundle/book and real Chromium browser
 behavior, then synchronizes **both** the versioned bundle and root `index.html`
-on `main`. GitHub Pages must be configured to serve `main` from `/(root)`.
+on `main` and explicitly requests a Pages rebuild through the Pages API (bot-authored commits alone do not trigger it). GitHub Pages must serve `main` from `/(root)`.
 Generic CI is read-only; the publisher is the only narrowly scoped exception.
 WASM uses `-msimd128`, not native CPU `-march=native` or x86 AVX2.
 
