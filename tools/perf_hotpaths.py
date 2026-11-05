@@ -67,8 +67,10 @@ def patch_search(txt: str, variant: str) -> str:
         txt = replace_one(txt, "if (fast_val - (depth * 90) >= beta + 110) return beta;",
                           "if (0 && fast_val - (depth * 90) >= beta + 110) return beta;")
         # Disable computation, not only the cutoff.
-        txt = replace_one(txt, "int fast_val = eval_stm_fast(b);", "int fast_val = 0; /* ablation: no fast evaluation */")
-        txt = replace_one(txt, "int fast_val = eval_stm_fast(b);", "int fast_val = 0; /* ablation: no fast evaluation */")
+        anchor = "int fast_val = eval_stm_fast(b);"
+        if txt.count(anchor) != 2:
+            raise RuntimeError("fasthead ablation anchors changed")
+        txt = txt.replace(anchor, "int fast_val = 0; /* ablation: no fast evaluation */")
         return txt
     if variant == "probcut_off":
         return replace_one(txt,
