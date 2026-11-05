@@ -17,7 +17,7 @@ jobs:
     name: Validate WASM and synchronize Pages
     runs-on: ubuntu-24.04
     timeout-minutes: 25
-    permissions: {contents: write}
+    permissions: {contents: write, pages: write}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,6 +33,7 @@ jobs:
       - name: Publish verified index to main (not experiments)
         if: github.ref == 'refs/heads/main'
         shell: bash
+        env: {GH_TOKEN: "${{ github.token }}"}
         run: |
           python tools/publish_web.py --mode sync
           git config user.name 'github-actions[bot]'
@@ -41,6 +42,7 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m 'build(web): synchronize verified v335 Pages bundle'
             git push origin HEAD:main
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds"
           else
             echo 'Pages already matches verified v335 bundle'
           fi
