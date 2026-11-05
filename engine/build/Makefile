@@ -1,10 +1,13 @@
-# Shared build entrypoint. Bare invocations compile v335 (NNU3).
+# Shared build entrypoint. Bare invocations compile v335 for the host CPU.
+# Use Makefile.portable for baseline/cross-machine binaries with no CPU flags.
+# -march=native automatically enables AVX2 on hosts that support it.
 .DEFAULT_GOAL := native
 ENGINE       ?= v335
 # Native in-process arena/selfplay/GA need the NNU4 per-instance API.
 # v510 is the supported NNU4 host; cross-family work uses UCI runners.
 TOOLS_ENGINE ?= v510
-ARCH_FLAGS   ?= -mavx2
+ARCH_FLAGS   ?= -march=native
+OUTPUT_SUFFIX ?=
 STATIC_FLAG  ?= -static
 
 ifeq ($(origin CC),default)
@@ -42,7 +45,7 @@ TB_DEFS = -DNO_TABLEBASES
 TB_STATUS = disabled
 endif
 
-TARGET = $(EDIR)/zchezz.exe
+TARGET = $(EDIR)/zchezz$(OUTPUT_SUFFIX).exe
 NATIVE_HEADERS = $(wildcard $(EDIR)/*.h)
 
 EMCC = emcc
@@ -71,6 +74,7 @@ build-info:
 	@echo TOOLS_ENGINE=$(TOOLS_ENGINE)
 	@echo CC=$(CC)
 	@echo ARCH_FLAGS=$(ARCH_FLAGS)
+	@echo TARGET=$(TARGET)
 	@echo HAVE_FATHOM=$(HAVE_FATHOM)
 	@echo Tablebases: $(TB_STATUS)
 
@@ -92,10 +96,10 @@ $(TARGET): $(NATIVE_SRCS) $(NATIVE_HEADERS)
 # Use these after 'native' to compile the three active lineages or every
 # registered frozen comparison baseline without changing ACTIVE_ENGINE.
 native-active:
-	$(PYTHON) build_matrix.py --scope active --target native "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)"
+	$(PYTHON) build_matrix.py --scope active --target native "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)" "--output-suffix=$(OUTPUT_SUFFIX)"
 
 native-supported:
-	$(PYTHON) build_matrix.py --scope supported --target native "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)"
+	$(PYTHON) build_matrix.py --scope supported --target native "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)" "--output-suffix=$(OUTPUT_SUFFIX)"
 
 bundle-active:
 	$(PYTHON) build_matrix.py --scope active --target bundle "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)"
