@@ -1,6 +1,6 @@
 name: ci
 on:
-  push: {branches: [main, maintenance/native-pages-publish-20261104]}
+  push: {branches: [main]}
   pull_request:
   workflow_dispatch:
 permissions: {contents: read}
