@@ -1,0 +1,6 @@
+# Portable ISA-neutral build, no -march=native or forced AVX2.
+# Selected engine defaults to v335. Produces zchezz.portable.exe,
+# so the portable binary cannot silently overwrite a host-optimized one.
+ARCH_FLAGS :=
+OUTPUT_SUFFIX := .portable
+include Makefile
