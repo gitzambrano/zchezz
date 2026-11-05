@@ -13,6 +13,31 @@ The same targets can be used with `ENGINE=v510` or other profiles when a differe
 
 Emscripten is required. Web builds define `NO_TABLEBASES` and `NO_BOOK` for native file-I/O integrations.
 
+## Pages synchronization and browser release gate
+
+The canonical Pages source is `index.html` in the repository root. It must
+match `engine/c/zchezz_v335/zchezz_bundle.html` byte-for-byte.
+A successful CI compile **does not** automatically mean that GitHub Pages
+serves that version; the `main` branch must receive the synchronized page
+commit, and Pages must use `main` / `/(root)` as its source.
+
+```bash
+make -C engine/build ENGINE=v335 bundle
+python tests/test_browser_html.py --html engine/c/zchezz_v335/zchezz_bundle.html
+python tests/test_book.py --html engine/c/zchezz_v335/zchezz_bundle.html
+python tests/test_browser.py --version v335 --headless   # requires Chromium/Playwright
+python tools/publish_web.py --mode sync                   # only after tests pass
+python tools/publish_web.py --mode check                  # ensures index == v335 bundle
+```
+
+The dedicated `.github/workflows/publish-pages.yml` automates this sequence
+after relevant pushes to `main`, and commits only the verified bundle and
+`index.html`. It skips re-running on generated bundle-only changes and never
+promotes other engine profiles. The regular CI remains read-only.
+
+The browser target always uses Emscripten `-msimd128`; native
+`-march=native` / `-mavx2` flags do not apply to WebAssembly.
+
 ## NNUE payload
 
 The bundle must embed the NNUE matching the selected engine:
