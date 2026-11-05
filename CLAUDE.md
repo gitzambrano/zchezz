@@ -85,7 +85,7 @@
 - Automatic CI may run on `main` and pull requests. Do not trigger broad automatic jobs solely because a branch name starts with a version prefix.
 - Generic CI (`.github/workflows/ci.yml`) remains read-only and never writes source, releases or branches.
 - The specifically authorized `.github/workflows/publish-pages.yml` is the **only** source-writing exception: after regenerating v335 WASM and passing real Chromium browser E2E, it may atomically synchronize `index.html` from `engine/c/zchezz_v335/zchezz_bundle.html` and commit just these two web artifacts to `main` (no force pushes).
-- The Pages publisher must never publish untested WASM, advance `ACTIVE_ENGINE`, or merge experimental changes. Set its triggers to relevant web/build changes only; prevent self-trigger loops from generated bundles.
+- The Pages publisher must never publish untested WASM, advance `ACTIVE_ENGINE`, or merge experimental changes. Request a Pages rebuild via the Pages REST API after a bot-authored commit because `GITHUB_TOKEN` pushes do not trigger Pages. Set its triggers to relevant web/build changes only; prevent self-trigger loops from generated bundles.
 - Do not create version-specific or round-specific workflow files or broaden write permissions in generic CI.
 - Local scripts remain the authoritative way to run tests and experiments; Actions are optional verification.
 
