@@ -1,4 +1,5 @@
-# Shared build entrypoint. Bare invocations always target v335.
+# Shared build entrypoint. Bare invocations compile v335 (NNU3).
+.DEFAULT_GOAL := native
 ENGINE       ?= v335
 # Native in-process arena/selfplay/GA need the NNU4 per-instance API.
 # v510 is the supported NNU4 host; cross-family work uses UCI runners.
@@ -42,6 +43,7 @@ TB_STATUS = disabled
 endif
 
 TARGET = $(EDIR)/zchezz.exe
+NATIVE_HEADERS = $(wildcard $(EDIR)/*.h)
 
 EMCC = emcc
 EMFLAGS = -O3 -std=c11 -msimd128 -DNO_TABLEBASES -DNO_BOOK \
@@ -62,7 +64,7 @@ PYTHON = python3
 RUN_LOCAL = ./
 endif
 
-.PHONY: native debug sanitize test-c clean wasm bundle selfplay arena ga_tune build-info require-tablebases
+.PHONY: native native-active native-supported bundle-active debug sanitize test-c clean wasm bundle selfplay arena ga_tune build-info require-tablebases
 
 build-info:
 	@echo ENGINE=$(ENGINE)
@@ -82,9 +84,21 @@ endif
 
 native: $(TARGET)
 
-$(TARGET): $(NATIVE_SRCS)
+$(TARGET): $(NATIVE_SRCS) $(NATIVE_HEADERS)
 	@echo Building $(ENGINE) - tablebases $(TB_STATUS).
-	$(CC) $(CFLAGS) $(TB_DEFS) $(WARNS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) $(TB_DEFS) $(WARNS) -o $@ $(NATIVE_SRCS) $(LDFLAGS)
+
+# Canonical profile registry determines the active and supported build sets.
+# Use these after 'native' to compile the three active lineages or every
+# registered frozen comparison baseline without changing ACTIVE_ENGINE.
+native-active:
+	$(PYTHON) build_matrix.py --scope active --target native "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)"
+
+native-supported:
+	$(PYTHON) build_matrix.py --scope supported --target native "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)"
+
+bundle-active:
+	$(PYTHON) build_matrix.py --scope active --target bundle "--arch-flags=$(ARCH_FLAGS)" "--static-flag=$(STATIC_FLAG)"
 
 debug: $(NATIVE_SRCS)
 	$(CC) -O0 -g3 -D_GNU_SOURCE -std=c11 -I$(EDIR) $(TB_DEFS) -Wall -Wextra -Wpedantic -Wshadow -o $(EDIR)/zchezz_debug.exe $(NATIVE_SRCS) -lm -pthread
