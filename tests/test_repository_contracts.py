@@ -12,9 +12,14 @@ def test_no_v4_engine_tree(): assert not list((ROOT/"engine/c").glob("zchezz_v4*
 def test_makefile_defaults_are_safe():
     text=(ROOT/"engine/build/Makefile").read_text(encoding="utf-8"); assert re.search(r"^ENGINE\s*\?=\s*v335\b",text,re.M); assert re.search(r"^TOOLS_ENGINE\s*\?=\s*v510\b",text,re.M); assert "-DNO_TABLEBASES" in text
 def test_actions_are_minimal_read_only():
-    wf=ROOT/".github/workflows"; files=sorted(p.name for p in wf.glob("*.yml"))+sorted(p.name for p in wf.glob("*.yaml")); assert files==["ci.yml"]
+    wf=ROOT/".github/workflows"; files=sorted(p.name for p in wf.glob("*.yml"))+sorted(p.name for p in wf.glob("*.yaml")); assert files==["ci.yml","publish-pages.yml"]
     text=(wf/"ci.yml").read_text(encoding="utf-8").lower(); assert "contents: read" in text; assert len(text.splitlines())<35
     for bad in ("git push","git commit","create branch","delete branch","upload-artifact","playwright","emsdk","contents: write"): assert bad not in text
+    publisher=(wf/"publish-pages.yml").read_text(encoding="utf-8").lower()
+    assert "contents: write" in publisher and "refs/heads/main" in publisher
+    assert "tests/test_browser.py" in publisher and "tools/publish_web.py" in publisher
+    assert "git push" in publisher and "--force" not in publisher
+    assert "github.event_name" not in publisher or "push" in publisher
 def test_cli_helper_is_small_optional_override_only():
     text=(ROOT/"utils/cliconf.py").read_text(encoding="utf-8"); assert len(text.splitlines())<120; assert "--show-config" in text; assert "subprocess" not in text
 def test_public_runners_are_thin_and_default_profile_driven():
