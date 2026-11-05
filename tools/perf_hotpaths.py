@@ -21,6 +21,8 @@ SOURCE = ROOT / "engine/c/zchezz_v335"
 VARIANTS = (
     "lmr_piece", "qs_order", "qs_evasion_tt",
     "fasthead_off", "probcut_off", "prefetch_off",
+    "probcut_tuned", "probcut_depth7_only", "probcut_cap3_only",
+    "fasthead_qs_off", "fasthead_main_off",
 )
 OPENINGS = (
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -",
@@ -34,6 +36,50 @@ OPENINGS = (
     "r2q1rk1/1pp2ppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - -",
     "r3r1k1/pp2bppp/1qn2n2/3p4/3P4/1BN1PN2/PP3PPP/R2QR1K1 w - -",
 )
+
+def make_openings(n: int) -> list[str]:
+    """Deterministic varied legal FEN positions; 100+ paired openings instead of 10."""
+    import chess
+    import random
+    rng = random.Random(20261104)
+    seeds = [
+        "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6",
+        "e2e4 e7e5 g1f3 b8c6 f1c4 f8c5",
+        "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4",
+        "e2e4 c7c5 g1f3 b8c6 d2d4 c5d4",
+        "e2e4 e7e6 d2d4 d7d5 b1c3 g8f6",
+        "e2e4 c7c6 d2d4 d7d5 b1c3 d5e4",
+        "d2d4 d7d5 c2c4 e7e6 b1c3 g8f6",
+        "d2d4 d7d5 c2c4 c7c6 g1f3 g8f6",
+        "d2d4 g8f6 c2c4 e7e6 g1f3 d7d5",
+        "d2d4 g8f6 c2c4 g7g6 b1c3 f8g7",
+        "c2c4 e7e5 b1c3 g8f6 g1f3 b8c6",
+        "g1f3 d7d5 d2d4 g8f6 c2c4 e7e6",
+        "e2e4 d7d6 d2d4 g8f6 b1c3 g7g6",
+        "e2e4 e7e5 f2f4 e5f4 g1f3 g8f6",
+        "d2d4 f7f5 c2c4 g8f6 b1c3 e7e6",
+    ]
+    openings = set(OPENINGS)
+    count = 0
+    while len(openings) < n and count < n * 30:
+        count += 1
+        b = chess.Board()
+        for uci in rng.choice(seeds).split():
+            mv = chess.Move.from_uci(uci)
+            if mv not in b.legal_moves:
+                raise RuntimeError(f"illegal curated opening move: {uci}")
+            b.push(mv)
+        for _ in range(rng.randrange(1, 8)):
+            moves = list(b.legal_moves)
+            if not moves:
+                break
+            b.push(rng.choice(moves))
+        if not b.is_game_over():
+            openings.add(" ".join(b.fen(en_passant="fen").split()[:4]))
+    if len(openings) < n:
+        raise RuntimeError(f"only generated {len(openings)} unique openings")
+    return sorted(openings)
+
 
 def replace_one(txt: str, before: str, after: str) -> str:
     count = txt.count(before)
@@ -76,6 +122,24 @@ def patch_search(txt: str, variant: str) -> str:
         return replace_one(txt,
             "if (!in_check && !is_pv && depth >= 5 && beta < 18000 && ply > 0) {",
             "if (0 && !in_check && !is_pv && depth >= 5 && beta < 18000 && ply > 0) {")
+    if variant in ("probcut_tuned", "probcut_depth7_only", "probcut_cap3_only"):
+        if variant in ("probcut_tuned", "probcut_depth7_only"):
+            txt = replace_one(txt,
+                "if (!in_check && !is_pv && depth >= 5 && beta < 18000 && ply > 0) {",
+                "if (!in_check && !is_pv && depth >= 7 && beta < 18000 && ply > 0) {")
+        if variant in ("probcut_tuned", "probcut_cap3_only"):
+            txt = replace_one(txt,
+                "for (int pi = 0; pi < pc_n; pi++) {\n            Move *pm = &pc_moves[pi];",
+                "for (int pi = 0; pi < pc_n && pi < 3; pi++) {\n            Move *pm = &pc_moves[pi];")
+        return txt
+    if variant == "fasthead_qs_off":
+        return replace_one(txt,
+            "        int fast_val = eval_stm_fast(b);\n        if (fast_val >= beta + 200) return beta;\n        stand = eval_stm(b);",
+            "        stand = eval_stm(b); /* experiment: bypass fast QS cutoff */")
+    if variant == "fasthead_main_off":
+        return replace_one(txt,
+            "            if (!is_pv && depth <= 3 && beta < 18000) {\n                int fast_val = eval_stm_fast(b);\n                if (fast_val - (depth * 90) >= beta + 110) return beta;\n            }",
+            "            /* experiment: bypass shallow alpha-beta fast cutoff */")
     if variant == "prefetch_off":
         if txt.count("tt_prefetch(b->hash);") < 3:
             raise RuntimeError("unexpected prefetch call count")
@@ -125,6 +189,9 @@ def main() -> int:
     ap.add_argument("--bench-depth", type=int, default=11)
     ap.add_argument("--games", type=int, default=6, help="paired openings (total games = 2x)")
     ap.add_argument("--movetime", type=int, default=200)
+    ap.add_argument("--concurrency", type=int, default=2)
+    ap.add_argument("--max-plies", type=int, default=240)
+    ap.add_argument("--opening-count", type=int, default=120)
     args = ap.parse_args()
     with tempfile.TemporaryDirectory(prefix="zchezz_perf_") as tmp:
         temp = Path(tmp)
@@ -148,7 +215,9 @@ def main() -> int:
               change_pct=round(nps_change, 3))), flush=True)
         openings_dir = temp / "openings"
         openings_dir.mkdir()
-        (openings_dir / "perf.epd").write_text("\n".join(OPENINGS) + "\n")
+        epd_openings = make_openings(args.opening_count)
+        (openings_dir / "perf.epd").write_text("\n".join(epd_openings) + "\n")
+        print(f"OPENINGS_COUNT={len(epd_openings)}; seeded and legal", flush=True)
         result_dir = temp / "results"
         cmd = [
             sys.executable, str(ROOT / "tests/run_tournament_quick.py"),
@@ -156,15 +225,16 @@ def main() -> int:
             "--engine-a", str(baseline), "--label-a", "v335_baseline",
             "--engine-b", str(candidate), "--label-b", args.variant,
             "--games", str(args.games), "--movetime", str(args.movetime),
-            "--concurrency", "1", "--threads", "1", "--max-plies", "160",
+            "--concurrency", str(args.concurrency), "--threads", "1",
+            "--max-plies", str(args.max_plies),
             "--openings", str(openings_dir), "--opening-file", "perf.epd",
             "--results-dir", str(result_dir),
-            "--no-pgn", "--no-epd", "--no-bin", "--counter-every", "2",
+            "--no-pgn", "--no-epd", "--no-bin", "--counter-every", "20",
             "--perf",
         ]
         print("SELFPLAY_CMD", " ".join(cmd), flush=True)
         # Stream test output into Actions logs (W/D/L and Elo parser native).
-        subprocess.run(cmd, check=True, cwd=ROOT, timeout=1080)
+        subprocess.run(cmd, check=True, cwd=ROOT, timeout=10800)
         print("STUDY_COMPLETE=" + json.dumps(dict(variant=args.variant, games=2*args.games,
              movetime_ms=args.movetime, nps_change_pct=round(nps_change, 3))), flush=True)
     return 0
