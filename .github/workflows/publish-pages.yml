@@ -1,0 +1,46 @@
+name: publish-pages
+on:
+  push:
+    branches: [main, maintenance/native-pages-publish-20261104]
+    paths:
+      - 'engine/build/**'
+      - 'engine/c/zchezz_v335/**'
+      - '!engine/c/zchezz_v335/zchezz_bundle.html'
+      - 'tools/publish_web.py'
+      - 'tests/test_browser.py'
+      - '.github/workflows/publish-pages.yml'
+  workflow_dispatch:
+permissions: {contents: read}
+concurrency: {group: zchezz-v335-pages-publish, cancel-in-progress: false}
+jobs:
+  publish:
+    name: Validate WASM and synchronize Pages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions: {contents: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install python-chess playwright
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
+      - run: python -m playwright install --with-deps chromium
+      - run: make -C engine/build ENGINE=v335 bundle
+      - name: Validate embedded network and book
+        run: python tests/test_browser_html.py --html engine/c/zchezz_v335/zchezz_bundle.html && python tests/test_book.py --html engine/c/zchezz_v335/zchezz_bundle.html && python tools/publish_web.py --mode validate
+      - name: Real Chromium engine/WASM E2E
+        run: python tests/test_browser.py --version v335 --headless
+      - name: Publish verified index to main (not experiments)
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          python tools/publish_web.py --mode sync
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- index.html engine/c/zchezz_v335/zchezz_bundle.html
+          if ! git diff --cached --quiet; then
+            git commit -m 'build(web): synchronize verified v335 Pages bundle'
+            git push origin HEAD:main
+          else
+            echo 'Pages already matches verified v335 bundle'
+          fi
