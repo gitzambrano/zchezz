@@ -1,32 +1,24 @@
-name: ci
+name: isolated-v335-cache-stage3
 on:
-  push: {branches: [main]}
-  pull_request:
+  push: {branches: [experiments/search-cache-stage3-20261106]}
   workflow_dispatch:
 permissions: {contents: read}
 jobs:
-  smoke:
+  perf_studies:
+    name: cache study (${{ matrix.variant }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 155
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [probcut_depth6, probcut_depth7, fasthead_qs_off, fasthead_qs_margin350, qs_see_reuse, tt_prefetch_l0, cmh_second_off, tt_prefetch_l3, qs_no_ttprobe]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
-      - run: pip install -e ".[dev]"
-      - run: python tools/check_repo.py
-      - run: python -m pytest tests/test_agent_instructions.py tests/test_repository_contracts.py tests/test_repo_paths.py tests/test_repo_policy.py tests/test_cliconf.py tests/test_documentation.py tests/test_teaching_format.py tests/test_teaching_methods.py tests/test_build_matrix.py tests/test_publish_web.py tests/test_lmr_postmake.py -q
-      - name: Public entrypoint smoke
-        run: python train/run.py --show-config && python train/teacher.py --show-config && python train/teaching/inspect_dataset.py --show-config && python train/teaching/seeds.py --show-config && python train/teaching/targeted_selfplay.py --show-config && python train/teaching/export_eval_bin.py --show-config && python train/teaching/loader.py && python tests/run_selfplay.py --show-config && python tests/run_tournament_quick.py --show-config && python tests/benchmark.py --show-config && bash -n engine/build/build_termux.sh
-      - name: Build all 23 supported native profiles
-        run: make -C engine/build STATIC_FLAG= ARCH_FLAGS= native-supported
-      - name: Compile host-native and portable flavors separately
-        run: make -C engine/build -f Makefile.native -B STATIC_FLAG= native && make -C engine/build -f Makefile.portable -B STATIC_FLAG= native
-      - name: Frozen TT move legality regression
-        run: gcc -O2 -D_GNU_SOURCE -std=c11 -DNO_TABLEBASES -Iengine/c/zchezz_v334 tests/test_tt_move_legality.c engine/c/zchezz_v334/board.c engine/c/zchezz_v334/nnue.c -lm -pthread -o /tmp/test_tt_move_legality && /tmp/test_tt_move_legality
-      - run: for p in v335 v510 v605; do exe="engine/c/zchezz_${p}/zchezz.exe"; output="$(printf 'uci\nisready\nquit\n' | "$exe" 2>&1)"; printf '%s\n' "$output"; grep -q '^uciok$' <<< "$output" && grep -q '^readyok$' <<< "$output" || exit 1; done
-      - run: for p in v335 v510 v605; do python tools/check_nnue.py --profile "$p" || exit 1; done
-      - run: for p in v335 v510 v605; do python tests/test_perft.py --version "$p" --max-depth 3 || exit 1; done
-      - run: for p in v335 v510 v605; do python tests/validate_ponder_protocol.py --profile "$p" || exit 1; done
-      - run: python -m pytest tests/test_wasm_ponder.py -q
-      - run: sudo apt-get update -qq && sudo apt-get install -y -qq emscripten
-      - run: make -C engine/build STATIC_FLAG= ARCH_FLAGS= bundle-active
+      - run: python -m pip install python-chess numpy
+      - name: Paired AVX2/native NPS and 200 ms H2H
+        shell: bash
+        run: |
+          case "${{ matrix.variant }}" in tt_prefetch_l3|qs_no_ttprobe) openings=12 ;; *) openings=100 ;; esac
+          python tools/perf_hotpaths.py --variant "${{ matrix.variant }}" --bench-depth 11 --games "$openings" --movetime 200 --concurrency 2 --max-plies 240 --opening-count 160
