@@ -194,7 +194,7 @@ def check_nnue_equivalence(baseline: Path, candidate: Path) -> None:
     import chess
     import chess.engine
     positions = make_openings(24)
-    with chess.engine.SimpleEngine.popen_uci(str(baseline)) as a, chess.engine.SimpleEngine.popen_uci(str(candidate)) as b:
+    with chess.engine.SimpleEngine.popen_uci(str(baseline), cwd=str(baseline.parent)) as a, chess.engine.SimpleEngine.popen_uci(str(candidate), cwd=str(candidate.parent)) as b:
         a.configure({"Threads": 1, "Hash": 16})
         b.configure({"Threads": 1, "Hash": 16})
         for i, fen4 in enumerate(positions):
