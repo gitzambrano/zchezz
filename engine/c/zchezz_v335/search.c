@@ -135,10 +135,14 @@ int tt_hashfull_permille(void) {
     size_t total = g_tt_clusters * 3;
     size_t sample = total < 1000 ? total : 1000;
     size_t used = 0;
-    TTEntry10 *flat = (TTEntry10 *)g_tt;
     uint8_t gen = tt_gen5();
-    for (size_t i=0; i<sample; ++i)
-        if (flat[i].depth8 && tt_age(&flat[i], gen) == 0) ++used;
+    /* TTCluster32 has 3 x 10-byte entries plus 2 bytes padding.
+     * Treating clusters as one flat TTEntry10 array reads across padding,
+     * so UCI hashfull would sample incorrect bytes from every fourth slot. */
+    for (size_t i=0; i<sample; ++i) {
+        const TTEntry10 *e = &g_tt[i / 3].e[i % 3];
+        if (e->depth8 && tt_age(e, gen) == 0) ++used;
+    }
     return sample ? (int)(used * 1000 / sample) : 0;
 }
 
