@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [nnue_relu_reuse, nnue_extcache32]
+        variant: [nnue_relu_reuse, nnue_extcache32, board_occ_incremental]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,5 +20,5 @@ jobs:
       - name: Paired host-native NPS, NNUE equivalence and selfplay
         shell: bash
         run: |
-          case "${{ matrix.variant }}" in nnue_relu_reuse) openings=100 ;; *) openings=12 ;; esac
+          case "${{ matrix.variant }}" in nnue_relu_reuse|board_occ_incremental) openings=100 ;; *) openings=12 ;; esac
           python tools/perf_hotpaths.py --variant "${{ matrix.variant }}" --bench-depth 11 --games "$openings" --movetime 200 --concurrency 2 --max-plies 240 --opening-count 160
