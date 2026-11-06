@@ -19,7 +19,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "engine/c/zchezz_v335"
 VARIANTS = (
-    "nnue_relu_reuse", "nnue_extcache32",
+    "nnue_relu_reuse", "nnue_extcache32", "board_occ_incremental",
 )
 OPENINGS = (
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -",
@@ -150,6 +150,39 @@ def patch_nnue(txt: str, variant: str) -> str:
     return txt[:fast_start] + fast
 
 
+
+def patch_board_occ(txt: str) -> str:
+    """Update occupancy from previous cached masks, not 12 bitboard reloads."""
+    old = """    b->occ_w = b->bb[0]|b->bb[1]|b->bb[2]|b->bb[3]|b->bb[4]|b->bb[5];
+    b->occ_b = b->bb[6]|b->bb[7]|b->bb[8]|b->bb[9]|b->bb[10]|b->bb[11];
+    b->occ   = b->occ_w | b->occ_b;"""
+    new = """    if (m->castle && m->castle <= 4) {
+        int kf = CASTLE_SQ[m->castle][0], kt = CASTLE_SQ[m->castle][1];
+        int rf = CASTLE_SQ[m->castle][2], rt = CASTLE_SQ[m->castle][3];
+        uint64_t clear = ~((1ULL << kf) | (1ULL << rf));
+        uint64_t set = (1ULL << kt) | (1ULL << rt);
+        if (col == COL_W) {
+            b->occ_w = (uf->occ_w & clear) | set;
+            b->occ_b = uf->occ_b;
+        } else {
+            b->occ_w = uf->occ_w;
+            b->occ_b = (uf->occ_b & clear) | set;
+        }
+    } else {
+        uint64_t from_bit = 1ULL << f, to_bit = 1ULL << to;
+        if (col == COL_W) {
+            b->occ_w = (uf->occ_w & ~from_bit) | to_bit;
+            b->occ_b = uf->occ_b & ~to_bit;
+            if (m->epc) b->occ_b &= ~(1ULL << (to + 8));
+        } else {
+            b->occ_b = (uf->occ_b & ~from_bit) | to_bit;
+            b->occ_w = uf->occ_w & ~to_bit;
+            if (m->epc) b->occ_w &= ~(1ULL << (to - 8));
+        }
+    }
+    b->occ = b->occ_w | b->occ_b;"""
+    return replace_one(txt, old, new)
+
 def build_engine(destination: Path, variant: str | None) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
     for name in ("main.c", "board.c", "board.h", "search.c", "search.h",
@@ -157,11 +190,14 @@ def build_engine(destination: Path, variant: str | None) -> Path:
                  "book.h", "poly_keys.h", "stdendian.h",
                  "fast_head_weights.h", "nnue_weights.bin", "tbconfig.h"):
         shutil.copy2(SOURCE / name, destination / name)
-    if variant:
+    if variant in ("nnue_relu_reuse", "nnue_extcache32"):
         head = destination / "nnue.h"
         head.write_text(patch_nnue_header(head.read_text(encoding="utf-8"), variant), encoding="utf-8")
         file = destination / "nnue.c"
         file.write_text(patch_nnue(file.read_text(encoding="utf-8"), variant), encoding="utf-8")
+    if variant == "board_occ_incremental":
+        board = destination / "board.c"
+        board.write_text(patch_board_occ(board.read_text(encoding="utf-8")), encoding="utf-8")
     exe = destination / "zchezz.exe"
     cmd = [
         "gcc", "-O3", "-ffast-math", "-march=native", "-std=c11", "-D_GNU_SOURCE",
@@ -231,6 +267,11 @@ def main() -> int:
         subprocess.run([sys.executable, str(ROOT / "tests/test_perft.py"),
                         "--exe", str(candidate), "--max-depth", "3", "--stop-on-fail", "true"],
                        cwd=ROOT, check=True, timeout=180)
+        if args.variant == "board_occ_incremental":
+            print("BOARD_OCC_PERFT_DEPTH4", flush=True)
+            subprocess.run([sys.executable, str(ROOT / "tests/test_perft.py"),
+                            "--exe", str(candidate), "--max-depth", "4", "--stop-on-fail", "true"],
+                           cwd=ROOT, check=True, timeout=360)
         # Alternate A/B/A to expose CPU drift on hosted runners.
         readings = [
             ("baseline", bench(baseline, args.bench_depth)),
@@ -245,7 +286,7 @@ def main() -> int:
               change_pct=round(nps_change, 3))), flush=True)
         print("HOST_ARCH=", subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip(), flush=True)
         print("COMPILER=", subprocess.run(["gcc", "--version"], capture_output=True, text=True).stdout.splitlines()[0], flush=True)
-        if args.variant == "nnue_relu_reuse":
+        if args.variant in ("nnue_relu_reuse", "board_occ_incremental"):
             check_nnue_equivalence(baseline, candidate)
         openings_dir = temp / "openings"
         openings_dir.mkdir()
