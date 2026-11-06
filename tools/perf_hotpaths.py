@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Isolated v335 hot-path A/B study runner; never changes tracked engine files.
+
+One independent candidate per invocation. Uses existing perft and UCI H2H
+runners. GitHub-hosted NPS is diagnostic, not promotion evidence.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SOURCE = ROOT / "engine/c/zchezz_v335"
+VARIANTS = (
+    "probcut_depth6", "probcut_depth7", "fasthead_qs_off",
+    "fasthead_qs_margin350", "qs_see_reuse", "tt_prefetch_l0",
+    "tt_prefetch_l3", "cmh_second_off", "qs_no_ttprobe",
+)
+OPENINGS = (
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -",
+    "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6",
+    "rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq -",
+    "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3",
+    "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq -",
+    "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq -",
+    "r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ -",
+    "r1bq1rk1/ppp1ppbp/2np1np1/8/2PPP3/2N2N2/PP2BPPP/R1BQ1RK1 b - -",
+    "r2q1rk1/1pp2ppp/p1np1n2/2b1p1B1/2B1P1b1/P1NP1N2/1PP1QPPP/R4RK1 w - -",
+    "r3r1k1/pp2bppp/1qn2n2/3p4/3P4/1BN1PN2/PP3PPP/R2QR1K1 w - -",
+)
+
+def make_openings(n: int) -> list[str]:
+    """Deterministic varied legal FEN positions; 100+ paired openings instead of 10."""
+    import chess
+    import random
+    rng = random.Random(20261104)
+    seeds = [
+        "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6",
+        "e2e4 e7e5 g1f3 b8c6 f1c4 f8c5",
+        "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4",
+        "e2e4 c7c5 g1f3 b8c6 d2d4 c5d4",
+        "e2e4 e7e6 d2d4 d7d5 b1c3 g8f6",
+        "e2e4 c7c6 d2d4 d7d5 b1c3 d5e4",
+        "d2d4 d7d5 c2c4 e7e6 b1c3 g8f6",
+        "d2d4 d7d5 c2c4 c7c6 g1f3 g8f6",
+        "d2d4 g8f6 c2c4 e7e6 g1f3 d7d5",
+        "d2d4 g8f6 c2c4 g7g6 b1c3 f8g7",
+        "c2c4 e7e5 b1c3 g8f6 g1f3 b8c6",
+        "g1f3 d7d5 d2d4 g8f6 c2c4 e7e6",
+        "e2e4 d7d6 d2d4 g8f6 b1c3 g7g6",
+        "e2e4 e7e5 f2f4 e5f4 g1f3 g8f6",
+        "d2d4 f7f5 c2c4 g8f6 b1c3 e7e6",
+    ]
+    openings = set(OPENINGS)
+    count = 0
+    while len(openings) < n and count < n * 30:
+        count += 1
+        b = chess.Board()
+        for uci in rng.choice(seeds).split():
+            mv = chess.Move.from_uci(uci)
+            if mv not in b.legal_moves:
+                raise RuntimeError(f"illegal curated opening move: {uci}")
+            b.push(mv)
+        for _ in range(rng.randrange(1, 8)):
+            moves = list(b.legal_moves)
+            if not moves:
+                break
+            b.push(rng.choice(moves))
+        if not b.is_game_over():
+            openings.add(" ".join(b.fen(en_passant="fen").split()[:4]))
+    if len(openings) < n:
+        raise RuntimeError(f"only generated {len(openings)} unique openings")
+    return sorted(openings)
+
+
+def replace_one(txt: str, before: str, after: str) -> str:
+    count = txt.count(before)
+    if count != 1:
+        raise RuntimeError(f"expected exactly one patch anchor, saw {count}: {before[:90]!r}")
+    return txt.replace(before, after, 1)
+
+def patch_search(txt: str, variant: str) -> str:
+    if variant in ("probcut_depth6", "probcut_depth7"):
+        depth = 6 if variant == "probcut_depth6" else 7
+        return replace_one(txt,
+            "if (!in_check && !is_pv && depth >= 5 && beta < 18000 && ply > 0) {",
+            f"if (!in_check && !is_pv && depth >= {depth} && beta < 18000 && ply > 0) {{")
+    if variant == "fasthead_qs_off":
+        return replace_one(txt,
+            "        int fast_val = eval_stm_fast(b);\n        if (fast_val >= beta + 200) return beta;\n        stand = eval_stm(b);",
+            "        stand = eval_stm(b); /* bypass fast-head cutoff only in QS */")
+    if variant == "fasthead_qs_margin350":
+        return replace_one(txt,
+            "if (fast_val >= beta + 200) return beta;",
+            "if (fast_val >= beta + 350) return beta;")
+    if variant in ("tt_prefetch_l0", "tt_prefetch_l3"):
+        local = "0" if variant == "tt_prefetch_l0" else "3"
+        return replace_one(txt,
+            "__builtin_prefetch(&g_tt[tt_index(hash)], 0, 1);",
+            f"__builtin_prefetch(&g_tt[tt_index(hash)], 0, {local});")
+    if variant == "cmh_second_off":
+        txt = replace_one(txt,
+            "int c1 = (cmh1 >= 0) ? ss->cont_hist[1][cmh1][ft] : 0;",
+            "int c1 = 0; /* drop second continuation-history cache load */")
+        txt = replace_one(txt,
+            "if (cmh1 >= 0) ch += ss->cont_hist[1][cmh1][ft_idx];",
+            "/* experiment: omit second CMH lookup in LMR */")
+        txt = replace_one(txt,
+            "if (cmh1 >= 0) ch_hp += ss->cont_hist[1][cmh1][ft_hp];",
+            "/* experiment: omit second CMH lookup in history pruning */")
+        return txt
+    if variant == "qs_no_ttprobe":
+        return replace_one(txt,
+            "int qs_tte_hit = tt_probe(qs_hash, ply, &qs_tte);",
+            "int qs_tte_hit = 0; /* ablation: skip QS TT probe */")
+    if variant == "qs_see_reuse":
+        # score_move() performs SEE again for a worse-value attacker capture;
+        # reuse the existing QS SEE result while preserving score/tie semantics.
+        before = """    for (int i = 0; i < n; i++) {
+        /* SEE pruning: mark bad captures */
+        if (!moves[i].prom && !moves[i].epc) {
+            int sv = see_board(b, moves[i].from, moves[i].to, 0);
+            if (sv < 0) { moves[i].score = -99999; continue; }
+        }
+        /* Delta pruning per move */
+        uint8_t cap = b->b[moves[i].to];
+        int gain = moves[i].epc ? MV_TAB[1] : cap ? MV_TAB[PC_TYPE(cap)] : 0;
+        if (stand + gain + 50 < alpha && !moves[i].prom) { moves[i].score = -99999; continue; }
+        moves[i].score = score_move(ss, &moves[i], b, ply, qs_pv, ok_sq, -1, -1, -1);
+    }"""
+        after = """    for (int i = 0; i < n; i++) {
+        int qs_cached_see = -99999;
+        /* One SEE pass; reuse it for ordering when score_move would call SEE. */
+        if (!moves[i].prom && !moves[i].epc) {
+            qs_cached_see = see_board(b, moves[i].from, moves[i].to, 0);
+            if (qs_cached_see < 0) { moves[i].score = -99999; continue; }
+        }
+        uint8_t cap = b->b[moves[i].to];
+        int gain = moves[i].epc ? MV_TAB[1] : cap ? MV_TAB[PC_TYPE(cap)] : 0;
+        if (stand + gain + 50 < alpha && !moves[i].prom) { moves[i].score = -99999; continue; }
+        if (qs_cached_see >= 0 && cap) {
+            int attacker = PC_TYPE(b->b[moves[i].from]);
+            int victim = PC_TYPE(cap);
+            if (MV_TAB[attacker] > MV_TAB[victim]) {
+                if (qs_pv && moves[i].from == qs_pv->from && moves[i].to == qs_pv->to)
+                    moves[i].score = 2000000;
+                else
+                    moves[i].score = 1600000 + qs_cached_see*10 + MVV_LVA[victim*7+attacker];
+                continue;
+            }
+        }
+        moves[i].score = score_move(ss, &moves[i], b, ply, qs_pv, ok_sq, -1, -1, -1);
+    }"""
+        return replace_one(txt, before, after)
+    raise ValueError(variant)
+
+def build_engine(destination: Path, variant: str | None) -> Path:
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in ("main.c", "board.c", "board.h", "search.c", "search.h",
+                 "nnue.c", "nnue.h", "syzygy.c", "syzygy.h", "book.c",
+                 "book.h", "poly_keys.h", "stdendian.h",
+                 "fast_head_weights.h", "nnue_weights.bin", "tbconfig.h"):
+        shutil.copy2(SOURCE / name, destination / name)
+    if variant:
+        file = destination / "search.c"
+        file.write_text(patch_search(file.read_text(encoding="utf-8"), variant), encoding="utf-8")
+    exe = destination / "zchezz.exe"
+    cmd = [
+        "gcc", "-O3", "-ffast-math", "-march=native", "-std=c11", "-D_GNU_SOURCE",
+        "-DNO_TABLEBASES", "-DNO_BOOK", "-I", str(destination), "-o", str(exe),
+        *[str(destination / name) for name in
+          ("main.c", "board.c", "search.c", "nnue.c", "syzygy.c", "book.c")],
+        "-lm", "-pthread",
+    ]
+    print("BUILD", variant or "baseline", "flags=-O3 -ffast-math -march=native", flush=True)
+    subprocess.run(cmd, check=True, timeout=180)
+    return exe
+
+def bench(exe: Path, depth: int) -> dict:
+    run = subprocess.run([str(exe)], cwd=exe.parent,
+                         input=f"uci\nisready\nbench {depth}\nquit\n",
+                         text=True, capture_output=True, timeout=180)
+    txt = run.stdout + "\n" + run.stderr
+    if run.returncode:
+        raise RuntimeError(f"bench failed: {exe}\n{txt[-3000:]}")
+    def field(label):
+        match = re.search(rf"^{re.escape(label)}\s*:\s*(\d+)", txt, re.M)
+        if not match:
+            raise RuntimeError(f"missing {label}: {txt[-3000:]}")
+        return int(match.group(1))
+    return dict(nodes=field("Total nodes"), elapsed_ms=field("Elapsed"),
+                nps=field("Nodes/sec"))
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--variant", choices=VARIANTS, required=True)
+    ap.add_argument("--bench-depth", type=int, default=11)
+    ap.add_argument("--games", type=int, default=6, help="paired openings (total games = 2x)")
+    ap.add_argument("--movetime", type=int, default=200)
+    ap.add_argument("--concurrency", type=int, default=2)
+    ap.add_argument("--max-plies", type=int, default=240)
+    ap.add_argument("--opening-count", type=int, default=160)
+    args = ap.parse_args()
+    with tempfile.TemporaryDirectory(prefix="zchezz_perf_") as tmp:
+        temp = Path(tmp)
+        baseline = build_engine(temp / "baseline", None)
+        candidate = build_engine(temp / args.variant, args.variant)
+        print("PERFT candidate, depth<=3", flush=True)
+        subprocess.run([sys.executable, str(ROOT / "tests/test_perft.py"),
+                        "--exe", str(candidate), "--max-depth", "3", "--stop-on-fail", "true"],
+                       cwd=ROOT, check=True, timeout=180)
+        # Alternate A/B/A to expose CPU drift on hosted runners.
+        readings = [
+            ("baseline", bench(baseline, args.bench_depth)),
+            ("candidate", bench(candidate, args.bench_depth)),
+            ("baseline", bench(baseline, args.bench_depth)),
+        ]
+        base_nps = statistics.median(x["nps"] for role, x in readings if role == "baseline")
+        cand_nps = readings[1][1]["nps"]
+        nps_change = 100.0 * (cand_nps / base_nps - 1.0)
+        print("NPS_RESULT=" + json.dumps(dict(variant=args.variant, reads=readings,
+              baseline_nps=base_nps, candidate_nps=cand_nps,
+              change_pct=round(nps_change, 3))), flush=True)
+        print("HOST_ARCH=", subprocess.run(["uname", "-m"], capture_output=True, text=True).stdout.strip(), flush=True)
+        print("COMPILER=", subprocess.run(["gcc", "--version"], capture_output=True, text=True).stdout.splitlines()[0], flush=True)
+        openings_dir = temp / "openings"
+        openings_dir.mkdir()
+        epd_openings = make_openings(args.opening_count)
+        (openings_dir / "perf.epd").write_text("\n".join(epd_openings) + "\n")
+        print(f"OPENINGS_COUNT={len(epd_openings)}; seeded and legal", flush=True)
+        result_dir = temp / "results"
+        cmd = [
+            sys.executable, str(ROOT / "tests/run_tournament_quick.py"),
+            "--profile", "v335",
+            "--engine-a", str(baseline), "--label-a", "v335_baseline",
+            "--engine-b", str(candidate), "--label-b", args.variant,
+            "--games", str(args.games), "--movetime", str(args.movetime),
+            "--concurrency", str(args.concurrency), "--threads", "1",
+            "--max-plies", str(args.max_plies),
+            "--openings", str(openings_dir), "--opening-file", "perf.epd",
+            "--results-dir", str(result_dir),
+            "--no-pgn", "--no-epd", "--no-bin", "--counter-every", "20",
+            "--perf",
+        ]
+        print("SELFPLAY_CMD", " ".join(cmd), flush=True)
+        # Stream test output into Actions logs (W/D/L and Elo parser native).
+        subprocess.run(cmd, check=True, cwd=ROOT, timeout=10800)
+        print("STUDY_COMPLETE=" + json.dumps(dict(variant=args.variant, games=2*args.games,
+             movetime_ms=args.movetime, nps_change_pct=round(nps_change, 3))), flush=True)
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
