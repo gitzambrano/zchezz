@@ -181,7 +181,8 @@ def patch_board_occ(txt: str) -> str:
         }
     }
     b->occ = b->occ_w | b->occ_b;"""
-    return replace_one(txt, old, new)
+    start = txt.index("void board_make(Board *b")
+    return txt[:start] + replace_one(txt[start:], old, new)
 
 def build_engine(destination: Path, variant: str | None) -> Path:
     destination.mkdir(parents=True, exist_ok=True)
