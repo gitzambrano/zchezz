@@ -1567,7 +1567,9 @@ static int alpha_beta(SearchState *ss, Board *b, int depth, int alpha, int beta,
                         if (!improving) reduce += 1;
                         {
                             int ft_idx = mfr * 64 + mto;
-                            uint8_t p_lmr = b->b[mfr];
+                            /* board_make() has already vacated mfr; use the moved piece at mto.
+                             * Reading mfr here aliases the wrong (empty) piece-history bucket. */
+                            uint8_t p_lmr = b->b[mto];
                             int col_lmr = (PC_COLOR(p_lmr) == COL_W) ? 0 : 1;
                             int pidx_lmr = piece_index(p_lmr);
                             int ch = ((int)ss->main_history[col_lmr][ft_idx] + (int)ss->piece_history[pidx_lmr][mto]) / 2;
