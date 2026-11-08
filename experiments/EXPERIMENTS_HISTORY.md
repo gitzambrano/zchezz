@@ -210,3 +210,42 @@ Este documento consolida o histórico de todas as rodadas experimentais de redes
 3. **NNU5 (Deep HalfKAv2 32-Bucket, 256 Neurônios):**
    - Topologia: 22.528 entradas por bucket de rei, 256 neurônios na primeira camada, concatenação 512, H2=64, saída escalar.
    - Tamanho: 11.5 MB. Elevada precisão posicional em finais e estruturas de peões complexas.
+
+---
+
+## Rodada 15: Correções e perfis de CPU, NNUE/TT/cache (novembro de 2026)
+
+**Baseline:** v335 NNU3 com correção de LMR (a peça deve ser lida em `b->b[mto]` *após* `board_make`, não `b->b[mfr]`). Corrigido em `main` no commit `307ad2c`, com teste de regressão. O cálculo de `hashfull` também foi corrigido para não percorrer os dois bytes de padding entre três `TTEntry10` de cada `TTCluster32` (commit `ab47460`).
+
+**Metodologia:** executáveis independentes recompilados com `gcc -O3 -ffast-math -march=native` e os mesmos parâmetros nos dois lados; relógio UCI de 200 ms/lance; 100 aberturas pareadas (200 partidas) nas variantes principais; `Threads=1`; perft 24/24; ELO reportado aqui sempre **do candidato relativamente ao v335 baseline**, não ELO absoluto. Diferenças de ~±40 ELO em 200 partidas não são conclusivas. Não inferir força apenas de NPS.
+
+### Bateria Stage 3 — busca, TT, prefetch, SEE e CMH
+
+Execução GitHub Actions: https://github.com/gitzambrano/zchezz/actions/runs/42243883385
+
+| Variante | Jogos | Δ NPS | Elo do candidato estimado | Interpretação |
+|---|---:|---:|---:|---|
+| `qs_see_reuse` | 200 | −1,215% | −3,5 | Remover SEE duplicado não acelerou; não promover |
+| `tt_prefetch_l0` | 200 | −0,093% | −26,1 | Prefetch com localidade zero não mostrou vantagem |
+| `fasthead_qs_margin350` | 200 | −2,468% | +3,5 | Mais lento; força inconclusiva |
+| `cmh_second_off` | 200 | −3,271% | +10,4 | Pior NPS; não há evidência para retirar o 2.º CMH |
+| `probcut_depth7` | 200 | +0,439% | −6,9 | +58 Elo dos 24 jogos iniciais não se confirmou |
+| `probcut_depth6` | 200 | −3,782% | +8,7 | Pior NPS, força inconclusiva |
+| `fasthead_qs_off` | 200 | +1,807% | +3,5 | Bom candidato para combinação/validação |
+| `qs_no_ttprobe` | 24 | −1,033% | −29,0 | Manter probe QS |
+| `tt_prefetch_l3` | 24 | +0,251% | 0 | Sem sinal relevante |
+
+### Bateria Stage 4 — memória NNUE e bitboards
+
+Execução GitHub Actions: https://github.com/gitzambrano/zchezz/actions/runs/42244967788
+
+| Variante | Jogos | Δ NPS | Elo do candidato estimado | Interpretação |
+|---|---:|---:|---:|---|
+| **`nnue_relu_reuse`** | **200** | **+5,278%** | **−6,9** | Principal candidata: evita recalcular as 256 ativações L1 após Fast Head. Passou equivalência de score/melhor lance em 24 FEN |
+| `board_occ_incremental` | 200 | −1,231% | −26,1 | Pior; passou perft depth 4 (32/32) e equivalência de busca, mas não promover |
+| `nnue_extcache32` | 24 | +1,122% | −58,5 | Cache maior: pouca evidência; testar isoladamente/combinação antes de decidir |
+
+**Próximo passo em execução:** Stage 5, branch `experiments/nnue-tt-stage5-20261108`:
+https://github.com/gitzambrano/zchezz/actions/runs/42530039885
+
+Contém **9 estudos de 200 partidas** (1.800 programadas) com novas sementes de aberturas, incluindo três réplicas independentes de `nnue_relu_reuse`, combinações Fast Head/NNUE, cache de 32/64 slots e indexação alternativa da TT. Antes do H2H: perft e, nas alterações de NNUE que não mudam a busca, equivalência de score/melhor lance em 64 posições depth 8. Não promover variantes experimentais ao `main` até avaliação dos novos resultados e da compatibilidade WASM/portável.
