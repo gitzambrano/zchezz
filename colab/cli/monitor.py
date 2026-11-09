@@ -62,9 +62,19 @@ def probe(worker):
                     if status != 404:
                         record["path_errors"].append({"path": path, "status": error_status(error), "error_type": type(error).__name__})
                     continue
-                entries = model.get("content") or []
+                entries = list(model.get("content") or [])
                 if model.get("type") != "directory":
                     entries = [model]
+                else:
+                    sub_entries = []
+                    for item in entries:
+                        if item.get("type") == "directory":
+                            try:
+                                sub_model = contents(assignment, item["path"])
+                                sub_entries.extend(sub_model.get("content") or [])
+                            except Exception:
+                                pass
+                    entries.extend(sub_entries)
                 for item in entries:
                     if item.get("type") != "file":
                         continue
