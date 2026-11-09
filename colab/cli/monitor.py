@@ -52,6 +52,10 @@ def probe(worker):
             return record
         record["identity"] = ",".join(sorted(a.endpoint for a in assignments))
         for assignment in assignments:
+            try:
+                client(worker).keep_alive_assignment(assignment.endpoint)
+            except Exception:
+                pass
             kernels = proxy_request(assignment, "GET", "/api/kernels")
             record["busy"] |= any(k.get("execution_state") == "busy" for k in kernels)
             for path in monitored_paths(worker):
@@ -110,20 +114,20 @@ def run(config):
             updates = {str(s["worker_id"]): evaluate(s, previous.get("workers", {}).get(str(s["worker_id"]), {}),
                        now=now, stall_seconds=config["stall_seconds"]) for s in snapshots}
             if config.get("recover"):
-                from colab.cli.recover import CONFIG as RECOVERY_CONFIG, recovery_allowed, recover
-                policy_path = config.get("recovery_spec", RECOVERY_CONFIG["spec"])
-                policies = read_report(policy_path)
-                for worker, record in updates.items():
-                    spec = policies.get(worker)
-                    if recovery_allowed(record, spec, now):
-                        record["last_recovery_at"] = now
-                        try:
-                            record["recovery_result"] = recover(int(worker), spec)
-                            if record["recovery_result"] in ("started", "exited", "unconfirmed"):
-                                record["recovery_attempts"] = record.get("recovery_attempts", 0) + 1
-                        except Exception as error:
-                            record["recovery_result"] = type(error).__name__
-                            record["recovery_attempts"] = record.get("recovery_attempts", 0) + 1
+                from colab.launch import launch_worker_cli
+                for worker_str, record in updates.items():
+                    wid = int(worker_str)
+                    if record.get("status") == "disconnected":
+                        prev_rec = previous.get("workers", {}).get(worker_str, {})
+                        last_relaunch = prev_rec.get("last_relaunch_at", 0)
+                        if now - last_relaunch >= 180:
+                            record["last_relaunch_at"] = now
+                            print(f"\n[WATCHDOG AUTO-RECOVERY] Worker {wid} disconnected. Auto-relaunching...")
+                            try:
+                                ok = launch_worker_cli(wid, gpu="none", force_restart=False)
+                                print(f"[WATCHDOG AUTO-RECOVERY] Worker {wid} relaunch result: {'[OK]' if ok else '[FAILED]'}")
+                            except Exception as e:
+                                print(f"[WATCHDOG AUTO-RECOVERY] Worker {wid} relaunch error: {e}")
             report = merge_report(previous, updates, now=now, backend="cli")
             write_report(output, report)
             display(updates)
