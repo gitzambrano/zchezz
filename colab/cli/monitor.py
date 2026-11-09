@@ -24,19 +24,21 @@ def monitored_paths(worker):
     """Select account-specific artifact directories from shared settings."""
     if "monitor_paths" in WORKERS[worker]:
         return WORKERS[worker]["monitor_paths"]
-    paths = [WORKERS[worker].get("drive_dir", "/content/drive/MyDrive/zquoridor_data/selfplay_contact_soup_858")]
+    paths = []
+    w_cfg = WORKERS.get(worker, {})
+    if w_cfg.get("output_dir"):
+        paths.append(w_cfg["output_dir"])
+    if w_cfg.get("drive_dir"):
+        paths.append(w_cfg["drive_dir"])
     if worker in (1, 2):
-        paths.insert(0, f"/content/drive/MyDrive/zquoridor_data/wall_drops_v401/worker_{worker}")
-    paths.extend([
-        "/content/drive/MyDrive/zquoridor_data/selfplay_contact_soup_858",
-        "/content/drive/MyDrive/zchezz_data/selfplay_v331",
-        "/content/drive/MyDrive/zchezz_data/selfplay_v507",
-        "/content/drive/MyDrive/zchezz_data/selfplay_v331_r2",
-        "/content/drive/MyDrive/zchezz_data/selfplay_v507_r2",
-        "/content/drive/MyDrive/zchezz_checkpoints/v331",
-        "/content/drive/MyDrive/zchezz_checkpoints/v507",
-    ])
-    return list(dict.fromkeys(paths))
+        paths.append(f"/content/drive/MyDrive/zquoridor_data/wall_drops_v410/worker_{worker}")
+    elif worker in (3, 4, 5):
+        paths.append(f"/content/drive/MyDrive/zquoridor_data/gumbel_sims_v410/worker_{worker}")
+    elif worker in (6, 7):
+        paths.append("/content/zchezz_shards")
+        prof = w_cfg.get("profile", "v331" if worker == 6 else "v507")
+        paths.append(f"/content/drive/MyDrive/zchezz_data/selfplay_{prof}")
+    return [p for p in dict.fromkeys(paths) if p]
 
 
 def probe(worker):

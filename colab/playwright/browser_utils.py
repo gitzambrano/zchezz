@@ -123,26 +123,34 @@ def is_cdp_reachable(port: int, host: str = "127.0.0.1", timeout: float = 1.0) -
         return False
 
 
-def is_profile_in_use(profile_dir: str) -> Tuple[bool, Optional[int]]:
-    """Check if any running chrome.exe process is currently using the specified user data directory."""
+def find_profile_process(profile_dir: str) -> Tuple[bool, Optional[int], Optional[int]]:
+    """Check if any running chrome.exe process is currently using profile_dir.
+    Returns (in_use, pid, cdp_port).
+    """
+    import re
     norm_target = os.path.normcase(os.path.abspath(profile_dir))
+    found_pid = None
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
-            p_name = proc.info.get("name") or ""
-            if "chrome" in p_name.lower():
+            if "chrome" in (proc.info.get("name") or "").lower():
                 cmdline = proc.info.get("cmdline") or []
-                cmd_str = " ".join(cmdline)
-                norm_cmd = os.path.normcase(cmd_str)
-                if norm_target in norm_cmd:
-                    return True, proc.info.get("pid")
-                for arg in cmdline:
-                    if arg.startswith("--user-data-dir="):
-                        val = os.path.normcase(os.path.abspath(arg.split("=", 1)[1].strip('"\'')))
-                        if val == norm_target:
-                            return True, proc.info.get("pid")
+                if any(norm_target in os.path.normcase(arg) for arg in cmdline):
+                    found_pid = proc.info.get("pid")
+                    for arg in cmdline:
+                        m = re.search(r"--remote-debugging-port=(\d+)", arg)
+                        if m:
+                            return True, found_pid, int(m.group(1))
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
-    return False, None
+    if found_pid is not None:
+        return True, found_pid, None
+    return False, None, None
+
+
+def is_profile_in_use(profile_dir: str) -> Tuple[bool, Optional[int]]:
+    """Check if any running chrome.exe process is currently using the specified user data directory."""
+    in_use, pid, _ = find_profile_process(profile_dir)
+    return in_use, pid
 
 
 def dismiss_modals(page: Any) -> bool:
@@ -178,47 +186,197 @@ def dismiss_modals(page: Any) -> bool:
         return False
 
 
-def handle_google_oauth_popup(popup: Any, target_account: Optional[str] = None) -> bool:
-    """Handle Google OAuth consent dialog popup for Google Drive connection."""
+_WHISPER_MODEL = None
+
+
+def transcribe_audio_bytes(raw_bytes: bytes) -> str:
+    """Transcribe raw audio bytes using the Whisper tiny model."""
+    global _WHISPER_MODEL
     try:
-        if popup.is_closed():
+        import io
+        import soundfile as sf
+        import scipy.signal
+        import whisper
+
+        if _WHISPER_MODEL is None:
+            _WHISPER_MODEL = whisper.load_model("tiny")
+
+        bio = io.BytesIO(raw_bytes)
+        data, sr = sf.read(bio, dtype="float32")
+        if len(data.shape) > 1:
+            data = data.mean(axis=1)
+        if sr != 16000:
+            num_samples = int(len(data) * 16000 / sr)
+            data = scipy.signal.resample(data, num_samples)
+
+        result = _WHISPER_MODEL.transcribe(data, fp16=False)
+        return result.get("text", "").strip()
+    except Exception as exc:
+        print(f"  [WHISPER ERROR] {exc}", flush=True)
+        return ""
+
+
+def solve_recaptcha_playwright(page: Any) -> bool:
+    """Detect and solve Google reCAPTCHA v2 challenges via audio fallback and Whisper."""
+    try:
+        anchor_frame = page.frame_locator("iframe[src*='anchor']")
+        anchor = anchor_frame.locator("#recaptcha-anchor")
+        if anchor.count() == 0:
             return False
-        url = popup.url or ""
+
+        try:
+            if anchor.get_attribute("aria-checked", timeout=2000) == "true":
+                return True
+        except Exception:
+            pass
+
+        print("  [reCAPTCHA] Clicking anchor checkbox...", flush=True)
+        anchor.click(timeout=5000)
+        time.sleep(3)
+
+        try:
+            if anchor.get_attribute("aria-checked", timeout=2000) == "true":
+                print("  [reCAPTCHA] Checkbox checked immediately.", flush=True)
+                return True
+        except Exception:
+            pass
+
+        bframe = page.frame_locator("iframe[src*='bframe']")
+        audio_btn = bframe.locator("#recaptcha-audio-button")
+        if audio_btn.count() > 0 and audio_btn.first.is_visible():
+            print("  [reCAPTCHA] Triggering audio challenge...", flush=True)
+            audio_btn.first.click()
+            time.sleep(4)
+
+        dl_link = bframe.locator("a.rc-audiochallenge-tdownload-link, a[href*='payload'], a[href*='audio.mp3']")
+        if dl_link.count() > 0:
+            audio_url = dl_link.first.get_attribute("href")
+            print(f"  [reCAPTCHA] Downloading audio challenge: {audio_url[:60]}...", flush=True)
+            resp = page.request.get(audio_url)
+            audio_bytes = resp.body()
+
+            text = transcribe_audio_bytes(audio_bytes)
+            print(f"  [reCAPTCHA] Transcribed text: '{text}'", flush=True)
+
+            audio_input = bframe.locator("#audio-response")
+            if text and audio_input.count() > 0:
+                audio_input.fill(text)
+                time.sleep(1)
+                verify_btn = bframe.locator("#recaptcha-verify-button")
+                if verify_btn.count() > 0:
+                    print("  [reCAPTCHA] Submitting verification...", flush=True)
+                    verify_btn.click()
+                    time.sleep(4)
+
+        try:
+            status = anchor.get_attribute("aria-checked", timeout=3000)
+            return status == "true"
+        except Exception:
+            return True
+    except Exception as exc:
+        print(f"  [reCAPTCHA ERROR] {exc}", flush=True)
+        return False
+
+
+def solve_google_challenge_if_needed(page: Any, target_account: Optional[str] = None, notebook_url: Optional[str] = None) -> bool:
+    """Handle Google authentication prompts, account chooser, reCAPTCHA, and OAuth consent."""
+    try:
+        url = getattr(page, "url", "") or ""
         if "accounts.google.com" not in url:
             return False
 
+        # Recover from rejected sign-in by reloading the notebook
+        if "signin/rejected" in url:
+            if notebook_url:
+                print(f"  [AUTH] Rejected sign-in detected. Resetting to {notebook_url[:50]}...", flush=True)
+                page.goto(notebook_url, wait_until="domcontentloaded", timeout=30000)
+                time.sleep(3)
+                url = getattr(page, "url", "") or ""
+            else:
+                return False
+
         # 1. Select account if account chooser is displayed
-        if target_account:
+        if "accountchooser" in url or "ServiceLogin" in url:
+            if target_account:
+                for sel in [
+                    f"div[data-identifier*='{target_account}']",
+                    f"div[data-email*='{target_account}']",
+                    f"div.UXFQgc:has-text('{target_account}')",
+                    f"div.xKcayf:has-text('{target_account}')",
+                    f"li:has-text('{target_account}')",
+                    f"div[role='link']:has-text('{target_account}')",
+                    f"div[role='button']:has-text('{target_account}')",
+                    f"text={target_account}",
+                ]:
+                    try:
+                        loc = page.locator(sel)
+                        if loc.count() > 0 and loc.first.is_visible():
+                            print(f"  [AUTH] Selecting account {target_account}...", flush=True)
+                            loc.first.click()
+                            time.sleep(3)
+                            break
+                    except Exception:
+                        pass
+
+        # 2. Check for reCAPTCHA before clicking any advance button
+        anchor_frame = page.frame_locator("iframe[src*='anchor']")
+        has_anchor = anchor_frame.locator("#recaptcha-anchor").count() > 0
+        if has_anchor:
+            print("  [AUTH] reCAPTCHA challenge detected. Solving...", flush=True)
+            solve_recaptcha_playwright(page)
+            time.sleep(2)
+
+        # 3. Check if reCAPTCHA is verified before advancing
+        anchor_checked = False
+        if has_anchor:
             try:
-                acc_loc = popup.locator(f"text={target_account}")
-                if acc_loc.count() > 0 and acc_loc.first.is_visible():
-                    acc_loc.first.click()
-                    time.sleep(1)
+                anchor_checked = anchor_frame.locator("#recaptcha-anchor").get_attribute("aria-checked", timeout=2000) == "true"
+            except Exception:
+                anchor_checked = True
+
+        # 4. Check if a password field is present and empty
+        pwd_input = page.locator("input[type='password']")
+        if pwd_input.count() > 0:
+            try:
+                if not pwd_input.first.input_value():
+                    return False
             except Exception:
                 pass
 
-        # 2. Check checkboxes and click Continuar/Permitir
-        for _ in range(4):
-            if popup.is_closed():
-                return True
-            try:
-                for cb in popup.locator("input[type='checkbox']").all():
-                    if not cb.is_checked():
-                        cb.check()
-            except Exception:
-                pass
-            for txt in ["Continuar", "Permitir", "Continue", "Allow"]:
+        # Check OAuth scope checkboxes (e.g. Google Drive access)
+        try:
+            for cb in page.locator("input[type='checkbox']").all():
+                if not cb.is_checked():
+                    cb.check()
+                    time.sleep(1)
+        except Exception:
+            pass
+
+        if not has_anchor or anchor_checked:
+            action_buttons = [
+                "Avançar", "Continuar", "Permitir", "Continue", "Allow", "Next",
+                "Entrar", "Sim, sou eu", "Confirmar", "Confirm", "Acessar"
+            ]
+            for txt in action_buttons:
                 try:
-                    btn = popup.locator(f"button:has-text('{txt}'), div[role='button']:has-text('{txt}')")
+                    btn = page.locator(f"button:has-text('{txt}'), div[role='button']:has-text('{txt}'), input[type='submit'][value*='{txt}']")
                     if btn.count() > 0 and btn.first.is_visible():
+                        print(f"  [AUTH] Clicking '{txt}'...", flush=True)
                         btn.first.click()
-                        time.sleep(1)
+                        time.sleep(4)
                         break
                 except Exception:
                     pass
-        return popup.is_closed()
-    except Exception:
+
+        return True
+    except Exception as exc:
+        print(f"  [AUTH ERROR] {exc}", flush=True)
         return False
+
+
+def handle_google_oauth_popup(popup: Any, target_account: Optional[str] = None, notebook_url: Optional[str] = None) -> bool:
+    """Handle Google OAuth consent dialog popup or page for Google Drive connection."""
+    return solve_google_challenge_if_needed(popup, target_account=target_account, notebook_url=notebook_url)
 
 
 
@@ -381,6 +539,7 @@ def trigger_cell_execution(
     worker_or_id: Any,
     bootloader_template: Optional[str] = None,
     target_keywords: Optional[List[str]] = None,
+    force: bool = False,
 ) -> bool:
     """Inject bootloader code into the Colab target cell if template is given, and trigger execution."""
     new_code: Optional[str] = None
@@ -389,95 +548,187 @@ def trigger_cell_execution(
             wid = worker_or_id.get("worker_id", "")
             profile = worker_or_id.get("profile", str(wid))
             account_id = worker_or_id.get("account_id", 1)
-            fmt_kwargs = {**worker_or_id, "worker_id": wid, "profile": profile, "account_id": account_id}
+            drive_dir = worker_or_id.get("drive_dir", "")
+            positions = worker_or_id.get("positions", "")
+            extra_args = worker_or_id.get("extra_args", "")
+            cmd_args = f"--positions {positions}" if positions else ""
+            if extra_args:
+                cmd_args = f"{cmd_args} {extra_args}".strip()
+            fmt_kwargs = {
+                **worker_or_id,
+                "worker_id": wid,
+                "profile": profile,
+                "account_id": account_id,
+                "drive_dir": drive_dir,
+                "positions": positions,
+                "cmd_args": cmd_args,
+            }
             new_code = bootloader_template.format(**fmt_kwargs)
         else:
             try:
-                from colab.config import WORKERS
+                try:
+                    from colab.config import WORKERS
+                except ImportError:
+                    from colab.config import WORKERS
                 w = WORKERS.get(worker_or_id, {})
             except Exception:
                 w = {}
+            drive_dir = w.get("drive_dir", "/content/drive/MyDrive/zquoridor_data/selfplay_contact_soup_858")
+            positions = w.get("positions", "")
+            extra_args = w.get("extra_args", "")
+            cmd_args = f"--positions {positions}" if positions else ""
+            if extra_args:
+                cmd_args = f"{cmd_args} {extra_args}".strip()
             fmt_kwargs = {
                 "worker_id": worker_or_id,
-                "profile": w.get("profile", "v507"),
-                "account_id": w.get("account_id", worker_or_id),
+                "profile": worker_or_id,
+                "drive_dir": drive_dir,
+                "positions": positions,
+                "cmd_args": cmd_args,
             }
             new_code = bootloader_template.format(**fmt_kwargs)
 
     if target_keywords is None:
         if isinstance(worker_or_id, dict) and "target_keywords" in worker_or_id:
-            target_keywords = worker_or_id["target_keywords"]
+            target_keywords = list(worker_or_id["target_keywords"])
         else:
-            target_keywords = ["Remessa 2", "run_selfplay_colab.sh", "sp_v", "zchezz", "selfplay", "run_colab_worker.py"]
+            target_keywords = ["run_colab_worker.py", "selfplay_targeted_weakness", "selfplay_15m", "zquoridor", "Remessa 2", "zchezz"]
+
+    if "zchezz" not in target_keywords:
+        target_keywords.append("zchezz")
 
     try:
         res = page.evaluate("""(data) => {
-            const { newCode, keywords } = data;
+            const { newCode, keywords, force } = data;
             const nb = typeof colab !== 'undefined' && colab.global ? colab.global.notebook : null;
             if (!nb || !nb.cells || nb.cells.length === 0) return { success: false, reason: 'no_cells' };
 
             const cells = nb.cells;
             let targetCell = null;
-            for (let i = cells.length - 1; i >= 0; i--) {
-                const txt = cells[i].getText ? cells[i].getText() : '';
-                for (const kw of keywords) {
-                    if (txt.includes(kw)) {
+            if (keywords && keywords.length > 0) {
+                for (let i = 0; i < cells.length; i++) {
+                    const txt = cells[i].getText ? cells[i].getText() : '';
+                    if (txt.includes(keywords[0])) {
                         targetCell = cells[i];
                         break;
                     }
                 }
-                if (targetCell) break;
             }
             if (!targetCell) {
-                targetCell = cells[cells.length - 1];
+                for (let i = cells.length - 1; i >= 0; i--) {
+                    const txt = cells[i].getText ? cells[i].getText() : '';
+                    for (const kw of keywords) {
+                        if (txt.includes(kw)) {
+                            targetCell = cells[i];
+                            break;
+                        }
+                    }
+                    if (targetCell) break;
+                }
+            }
+            if (!targetCell) {
+                targetCell = cells[0];
             }
 
+            const elem = targetCell.getElement ? targetCell.getElement() : (targetCell.element_ || targetCell.dom_);
+            const oldText = targetCell.getText ? targetCell.getText() : '';
+            const matchesKeywords = keywords.some(kw => oldText.includes(kw));
+
             if (targetCell.isRunning && targetCell.isRunning()) {
-                return { success: true, alreadyRunning: true };
+                if (!force && matchesKeywords) {
+                    return { success: true, alreadyRunning: true };
+                }
+                if (typeof targetCell.interrupt === 'function') {
+                    try { targetCell.interrupt(); } catch (e) {}
+                }
+                if (nb && typeof nb.interrupt === 'function') {
+                    try { nb.interrupt(); } catch (e) {}
+                }
+                if (elem) {
+                    const stopBtn = elem.querySelector('colab-run-button.running, colab-run-button[aria-label*="Interromper"], colab-run-button[title*="Interromper"]');
+                    if (stopBtn) {
+                        try { stopBtn.click(); } catch (e) {}
+                    }
+                }
             }
 
             if (newCode) {
-                if (targetCell.model && targetCell.model.setText) {
+                if (typeof targetCell.setText === 'function') {
+                    targetCell.setText(newCode);
+                }
+                if (targetCell.model && typeof targetCell.model.setText === 'function') {
                     targetCell.model.setText(newCode);
                 }
-                if (targetCell.model && targetCell.model.removeOutputs) {
+                if (targetCell.model && targetCell.model.textModel && typeof targetCell.model.textModel.setValue === 'function') {
+                    targetCell.model.textModel.setValue(newCode);
+                }
+                if (targetCell.model && typeof targetCell.model.removeOutputs === 'function') {
                     targetCell.model.removeOutputs();
                 }
 
                 if (typeof monaco !== 'undefined') {
+                    let updatedMonaco = false;
                     for (const m of monaco.editor.getModels()) {
                         const val = m.getValue ? m.getValue() : '';
-                        for (const kw of keywords) {
-                            if (val.includes(kw)) {
-                                m.setValue(newCode);
-                                break;
-                            }
+                        if (val === oldText || (oldText && val.includes(oldText.slice(0, 30)))) {
+                            m.setValue(newCode);
+                            updatedMonaco = true;
+                            break;
                         }
+                    }
+                    if (!updatedMonaco) {
+                        for (const m of monaco.editor.getModels()) {
+                            const val = m.getValue ? m.getValue() : '';
+                            for (const kw of keywords) {
+                                if (val.includes(kw)) {
+                                    m.setValue(newCode);
+                                    updatedMonaco = true;
+                                    break;
+                                }
+                            }
+                            if (updatedMonaco) break;
+                        }
+                    }
+                    if (!updatedMonaco && monaco.editor.getModels().length > 0) {
+                        const models = monaco.editor.getModels();
+                        models[models.length - 1].setValue(newCode);
                     }
                 }
             }
 
-            const elem = targetCell.getElement ? targetCell.getElement() : (targetCell.element_ || targetCell.dom_);
+            if (typeof nb !== 'undefined' && typeof nb.save === 'function') {
+                try { nb.save(); } catch (e) {}
+            }
+
             if (elem && elem.scrollIntoView) elem.scrollIntoView();
 
-            if (typeof targetCell.manualExecute === 'function') {
-                targetCell.manualExecute();
-                return { success: true, method: 'manualExecute' };
-            } else if (elem) {
+            let executed = false;
+            if (elem) {
                 const btn = elem.querySelector('colab-run-button');
                 if (btn) {
                     if (btn.shadowRoot) {
-                        const inner = btn.shadowRoot.querySelector('button, [role="button"]');
-                        if (inner) inner.click();
-                        else btn.click();
+                        const inner = btn.shadowRoot.querySelector('#run-button, button, [role="button"]');
+                        if (inner) {
+                            inner.click();
+                            executed = true;
+                        } else {
+                            btn.click();
+                            executed = true;
+                        }
                     } else {
                         btn.click();
+                        executed = true;
                     }
-                    return { success: true, method: 'colab-run-button' };
                 }
             }
-            return { success: false, reason: 'no_run_method' };
-        }""", {"newCode": new_code, "keywords": target_keywords})
+            if (typeof targetCell.manualExecute === 'function') {
+                try {
+                    targetCell.manualExecute();
+                    executed = true;
+                } catch (e) {}
+            }
+            return { success: executed, method: 'run-button' };
+        }""", {"newCode": new_code, "keywords": target_keywords, "force": force})
         time.sleep(3)
         dismiss_modals(page)
         return res.get("success", False) if isinstance(res, dict) else False

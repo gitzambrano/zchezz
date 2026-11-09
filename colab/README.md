@@ -13,6 +13,23 @@ its entry point. Credentials stay outside Git. Reports stay under `artifacts/col
 | `config.py` | Share the account registry and project bootloaders. |
 | `monitoring.py` | Classify progress and write monitor reports. |
 | `control.py` | Prevent concurrent managed controllers for one account across both projects. |
+| `launch.py` | Unified worker launcher supporting CLI (default) and Playwright transports. |
+| `watchdog.py` | Unified multi-account watchdog (single process, CLI default, auto-recovery). |
+
+## Canonical launch and watchdog
+
+Both projects provide standardized operational entry points:
+
+```powershell
+# Launch workers (defaults to CLI backend)
+python -m colab.launch
+python -m colab.launch --backend cli --worker-ids 6 7
+python -m colab.launch --backend playwright
+
+# Watchdog across all 7 accounts (single lightweight process, ~50 MB RAM)
+python -m colab.watchdog
+python -m colab.watchdog --once
+```
 
 ## Accounts
 

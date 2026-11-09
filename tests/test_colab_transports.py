@@ -3,6 +3,10 @@ import os
 import subprocess
 import sys
 
+_repo_root = Path(__file__).resolve().parents[1]
+if str(_repo_root) not in sys.path:
+    sys.path.insert(0, str(_repo_root))
+
 from colab.config import WORKERS
 from colab.cli.settings import CONFIG, account_environment, command, session_file
 from colab.playwright.monitor import progress_from_text
@@ -38,5 +42,9 @@ def test_public_inspection_modes_do_not_require_cli_dependencies():
     root = Path(__file__).resolve().parents[1]
     for module in ("accounts", "run", "login", "monitor", "recover"):
         result = subprocess.run([sys.executable, "-m", f"colab.cli.{module}", "--show-config"],
+                                cwd=root, capture_output=True, text=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+    for module in ("launch", "watchdog"):
+        result = subprocess.run([sys.executable, "-m", f"colab.{module}", "--show-config"],
                                 cwd=root, capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, result.stderr

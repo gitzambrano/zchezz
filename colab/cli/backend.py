@@ -1,7 +1,14 @@
 """Read runtime metadata through the official Colab client."""
 import base64
+import json
 from pathlib import Path
+import site
 from urllib.parse import quote
+
+import sys
+_venv_site = Path(__file__).resolve().parents[2] / "artifacts/colab/cli/venv/Lib/site-packages"
+if _venv_site.is_dir():
+    sys.path.insert(0, str(_venv_site))
 
 from colab.cli.settings import CONFIG, account_directory, session_file
 
@@ -24,12 +31,25 @@ def credentials(worker_id):
             kwargs["timeout"] = CONFIG["request_timeout"]
             return transport(*args, **kwargs)
         result.refresh(bounded_request)
+        try:
+            creds_data = json.loads(result.to_json())
+            creds_data["type"] = "authorized_user"
+            path.write_text(json.dumps(creds_data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
     return result
 
 
 def client(worker_id):
     """Create a separate HTTP session for each account."""
-    from colab_cli.client import Client, Prod
+    try:
+        from colab_cli.client import Client, Prod
+    except ModuleNotFoundError:
+        import site
+        _venv_site = Path(__file__).resolve().parents[2] / "artifacts/colab/cli/venv/Lib/site-packages"
+        if _venv_site.is_dir():
+            site.addsitedir(str(_venv_site))
+        from colab_cli.client import Client, Prod
     from google.auth.transport.requests import AuthorizedSession
 
     class BoundedSession(AuthorizedSession):
@@ -59,7 +79,7 @@ def contents(assignment, path, content=True):
     return proxy_request(assignment, "GET", "/api/contents/" + quote(path.strip("/"), safe="/") + suffix)
 
 
-def attach(worker_id, endpoint=None):
+def attach(worker_id, endpoint=None, name=None):
     """Register an existing VM without allocation or kernel changes."""
     from colab_cli.state import SessionState, StateStore
     assignments = client(worker_id).list_assignments()
@@ -68,7 +88,8 @@ def attach(worker_id, endpoint=None):
         raise AccountError("Specify one endpoint when the account has zero or multiple runtimes.")
     assignment = selected[0]
     store = StateStore(str(session_file(worker_id)))
-    name = f"zq-worker-{worker_id}"
+    if not name:
+        name = f"worker-{worker_id}"
     previous = store.get(name)
     proxy = assignment.runtime_proxy_info
     state = SessionState(name=name, token=proxy.token, url=proxy.url, endpoint=assignment.endpoint,

@@ -20,18 +20,25 @@ from typing import Dict, Any, List
 # Ensure colab root is in path
 CURRENT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CURRENT_DIR.parent.parent
-if str(CURRENT_DIR) not in sys.path:
-    sys.path.insert(0, str(CURRENT_DIR))
+colab_dir = str(CURRENT_DIR.parent)
+while colab_dir in sys.path:
+    sys.path.remove(colab_dir)
+while str(CURRENT_DIR) in sys.path:
+    sys.path.remove(str(CURRENT_DIR))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from colab.config import WORKERS, BOOTLOADER_TEMPLATE
 from colab.playwright.browser_utils import (
     is_cdp_reachable,
     is_profile_in_use,
+    find_profile_process,
     dismiss_modals,
     connect_runtime_if_needed,
     get_notebook_dom_state,
     trigger_cell_execution,
     launch_stealth_context,
+    solve_google_challenge_if_needed,
 )
 
 CONFIG: Dict[str, Any] = {
@@ -80,7 +87,11 @@ def launch_worker(
     }
 
     cdp_active = is_cdp_reachable(cdp_port)
-    in_use, proc_pid = is_profile_in_use(profile)
+    in_use, proc_pid, detected_cdp_port = find_profile_process(profile)
+
+    if in_use and not cdp_active and detected_cdp_port and is_cdp_reachable(detected_cdp_port):
+        cdp_port = detected_cdp_port
+        cdp_active = True
 
     if in_use and not cdp_active:
         msg = f"Profile directory is actively locked by process PID {proc_pid}. Skipping launch to prevent corruption."
@@ -96,8 +107,15 @@ def launch_worker(
                 print(f"  Attaching to live browser session via CDP on port {cdp_port}...")
                 browser = p.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
                 ctx = browser.contexts[0] if browser.contexts else browser.new_context()
-                page = ctx.pages[0] if ctx.pages else ctx.new_page()
-                browser_to_close = browser
+                page = None
+                for p_cand in ctx.pages:
+                    if url in getattr(p_cand, "url", ""):
+                        page = p_cand
+                        break
+                if not page:
+                    page = ctx.new_page()
+                    page.goto(url, wait_until="commit", timeout=timeout_ms)
+                browser_to_close = None
             else:
                 ctx = launch_stealth_context(
                     p,
@@ -111,6 +129,8 @@ def launch_worker(
                 browser_to_close = ctx
 
             time.sleep(delay_s)
+            solve_google_challenge_if_needed(page, target_account=worker.get("account"), notebook_url=url)
+            time.sleep(4)
 
             # Step 1: Connect runtime if disconnected
             connect_runtime_if_needed(page)
@@ -127,7 +147,7 @@ def launch_worker(
                 return result
 
             # Step 3: Trigger cell execution
-            ok = trigger_cell_execution(page, worker, BOOTLOADER_TEMPLATE, target_keywords=keywords)
+            ok = trigger_cell_execution(page, worker, worker.get("bootloader_template", BOOTLOADER_TEMPLATE), target_keywords=keywords, force=not skip_if_running)
             if not ok:
                 result["error"] = "Failed to trigger execution"
                 if not cdp_active and browser_to_close:

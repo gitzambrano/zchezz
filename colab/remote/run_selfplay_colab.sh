@@ -115,8 +115,7 @@ if [[ ! -f "${WEIGHTS_PATH}" ]]; then
 fi
 
 if [[ "${DRIVE_DIR}" == /content/drive/* && ! -d /content/drive/MyDrive ]]; then
-    echo "ERRO: Google Drive não montado em /content/drive. Rode a célula de montagem do Drive." >&2
-    exit 1
+    echo "[AVISO] Google Drive FUSE não detectado em /content/drive/MyDrive. Criando diretório local de persistência..." >&2
 fi
 mkdir -p "${DRIVE_DIR}" "${LOCAL_DIR}"
 
