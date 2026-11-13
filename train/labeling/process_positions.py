@@ -1584,6 +1584,12 @@ def run_pipeline(in_spec: str, out_spec: str, cfg) -> int:
         flush_pending(force=True)
 
     sink.close()
+    if dir_mode and not cfg.dry_run and os.path.isdir(out_spec):
+        try:
+            from labeling.manifest import write_manifest
+            write_manifest(pathlib.Path(out_spec))
+        except Exception as e:
+            print(f"  [Manifest warning] Could not write manifest.json: {e}")
     elapsed = time.time() - t_start
     print(f'\n  DONE — read {current_consumed[0] - resume_consumed:,} | '
           f'kept {saved_this_run:,} '

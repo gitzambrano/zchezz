@@ -28,7 +28,7 @@
 - Use UCI process boundaries for cross-family matches and generic engine-vs-engine tooling.
 - Do not make a generic runner depend on NNU3 or NNU4 binary layout.
 - Do not duplicate runners for individual versions or experimental rounds. Never create ad-hoc, version-specific, match-specific, or round-specific Python runner scripts (e.g., `run_vXXX_vs_vYYY.py` or temporary tournament scripts).
-- Keep operational and test runners general and parameter-driven. All tournament formats, time controls (e.g. `--movetime`, `--depth`, `--nodes`), concurrency levels, engine binaries, and profile pairings must be configurable via CLI arguments or top-of-file constants in existing canonical scripts (`tests/run_tournament.py`, `tests/run_tournament_quick.py`, `train/run_selfplay.py`).
+- Keep operational and test runners general and parameter-driven. All tournament formats, time controls (e.g. `--movetime`, `--depth`, `--nodes`), concurrency levels, engine binaries, and profile pairings must be configurable via CLI arguments or top-of-file constants in existing canonical scripts (`tests/run_tournament.py`, `tests/run_tournament_quick.py`, `tests/run_selfplay.py`, `experiments/run_experiment.py`).
 - Implement any new search effort, evaluation mode, or tournament feature as an option within the canonical runners, never as an isolated one-off script.
 
 ## Stockfish

@@ -20,7 +20,9 @@ engine/c/tools/          native v510-host self-play/arena/GA tooling
 engine/c/tests/          C invariant harness
 train/                   architecture-neutral data + family-specific NNUE code
 tests/                   correctness/UCI/game/benchmark harnesses
-tools/                   repository checks and historical migration utilities
+experiments/             declarative experiment specifications and runners
+tools/                   repository checks, build verification, and publishing tools
+tools/historical/        archived migration scripts, legacy campaigns, and training variants
 utils/engine_profiles.py canonical profile + Stockfish resolution
 utils/cliconf.py         small optional-override helper
 artifacts/               generated test/evidence output

@@ -1,0 +1,24 @@
+{
+  "id": "v335_vs_stockfish_2900",
+  "description": "Benchmark evaluation match: default released v335 against Stockfish capped at 2900 Elo",
+  "engine_a": {
+    "profile": "v335",
+    "label": "v335"
+  },
+  "engine_b": {
+    "target": "stockfish",
+    "label": "Stockfish_2900",
+    "options": {
+      "UCI_LimitStrength": true,
+      "UCI_Elo": 2900
+    }
+  },
+  "protocol": {
+    "movetime_ms": 200,
+    "threads": 1,
+    "games": 50,
+    "concurrency": 2,
+    "color_swap": true,
+    "max_plies": 400
+  }
+}

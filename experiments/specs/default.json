@@ -1,0 +1,20 @@
+{
+  "id": "v335_vs_v328_baseline",
+  "description": "Baseline verification match: default released v335 against frozen NNU3 baseline v328",
+  "engine_a": {
+    "profile": "v335",
+    "label": "v335"
+  },
+  "engine_b": {
+    "profile": "v328",
+    "label": "v328"
+  },
+  "protocol": {
+    "movetime_ms": 200,
+    "threads": 1,
+    "games": 10,
+    "concurrency": 2,
+    "color_swap": true,
+    "max_plies": 400
+  }
+}

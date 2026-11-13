@@ -8,7 +8,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = {"root": ROOT, "output": ROOT / "artifacts/repository_organization/audit.json", "max_file_bytes": 2_000_000}
 SOURCE_SUFFIXES = {".py", ".sh", ".bat", ".ps1", ".md", ".ipynb"}
-HISTORY_PREFIXES = ("experimental/", "engine/old/", "engine/c/zchezz_v3")
+HISTORY_PREFIXES = ("experimental/", "engine/old/", "engine/c/zchezz_v3", "tools/historical/")
 AGENT_PREFIXES = (".agents/", ".claude/", "skills/")
 
 

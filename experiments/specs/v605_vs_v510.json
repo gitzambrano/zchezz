@@ -1,0 +1,20 @@
+{
+  "id": "v605_vs_v510",
+  "description": "Cross-lineage evaluation: active NNU5 profile v605 against supported NNU4 line v510",
+  "engine_a": {
+    "profile": "v605",
+    "label": "v605"
+  },
+  "engine_b": {
+    "profile": "v510",
+    "label": "v510"
+  },
+  "protocol": {
+    "movetime_ms": 200,
+    "threads": 1,
+    "games": 20,
+    "concurrency": 2,
+    "color_swap": true,
+    "max_plies": 400
+  }
+}
