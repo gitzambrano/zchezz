@@ -38,6 +38,19 @@ CONFIG: Dict[str, Any] = {
 }
 
 
+def _subprocess_kwargs() -> Dict[str, Any]:
+    """Provide windowless execution flags on Windows."""
+    if os.name == "nt":
+        kwargs: Dict[str, Any] = {"creationflags": subprocess.CREATE_NO_WINDOW}
+        startupinfo_cls = getattr(subprocess, "STARTUPINFO", None)
+        if startupinfo_cls is not None:
+            si = startupinfo_cls()
+            si.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 1)
+            si.wShowWindow = getattr(subprocess, "SW_HIDE", 0)
+            kwargs["startupinfo"] = si
+        return kwargs
+    return {}
+
 def build_bootstrap_script(worker: Dict[str, Any], project: str, force_restart: bool = False) -> str:
     """Generate remote Python bootstrap code executed inside the Colab VM."""
     wid = worker.get("worker_id", 1)
@@ -265,6 +278,7 @@ def launch_worker_cli(worker_id: int, gpu: str = "T4", force_restart: bool = Fal
         return False
 
     env = account_environment(worker_id)
+    sub_kw = _subprocess_kwargs()
     with account_lease([worker_id], f"CLI launch ({PROJECT_NAME})"):
         # 1. Check active runtime on server
         assignments = client(worker_id).list_assignments()
@@ -278,11 +292,11 @@ def launch_worker_cli(worker_id: int, gpu: str = "T4", force_restart: bool = Fal
             else:
                 print(f"Worker {worker_id} ({account}): Allocating new Colab session...")
                 new_cmd = command(worker_id, ["new", "-s", session_name])
-            res = subprocess.run(new_cmd, env=env)
+            res = subprocess.run(new_cmd, env=env, **sub_kw)
             if res.returncode != 0 and gpu and gpu.lower() not in ("none", "cpu"):
                 print(f"Worker {worker_id}: GPU allocation timed out or unavailable. Falling back to CPU session...")
                 cpu_cmd = command(worker_id, ["new", "-s", session_name])
-                res = subprocess.run(cpu_cmd, env=env)
+                res = subprocess.run(cpu_cmd, env=env, **sub_kw)
             if res.returncode != 0:
                 print(f"Worker {worker_id}: Failed to allocate new session.")
                 return False
@@ -297,7 +311,7 @@ def launch_worker_cli(worker_id: int, gpu: str = "T4", force_restart: bool = Fal
         print(f"Worker {worker_id} ({account}): Ensuring Google Drive is mounted...")
         dm_cmd = command(worker_id, ["drivemount", "-s", session_name])
         try:
-            dm_proc = subprocess.run(dm_cmd, env=env, input="", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=25)
+            dm_proc = subprocess.run(dm_cmd, env=env, input="", capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=25, **sub_kw)
             if "Credentials propagated" in dm_proc.stdout or "already mounted" in dm_proc.stdout:
                 print(f"Worker {worker_id}: Google Drive mounted via CLI.")
             elif "Drive Authorization needed" in dm_proc.stdout:
@@ -318,8 +332,12 @@ def launch_worker_cli(worker_id: int, gpu: str = "T4", force_restart: bool = Fal
         try:
             print(f"Worker {worker_id} ({account}): Executing bootstrap on session '{session_name}'...")
             exec_cmd = command(worker_id, ["exec", "-s", session_name, "-f", tmp_path, "--timeout", str(timeout)])
-            res = subprocess.run(exec_cmd, env=env)
-            return res.returncode == 0
+            try:
+                res = subprocess.run(exec_cmd, env=env, timeout=timeout + 30, **sub_kw)
+                return res.returncode == 0
+            except subprocess.TimeoutExpired:
+                print(f"Worker {worker_id}: Bootstrap command timed out after {timeout + 30} seconds.")
+                return False
         finally:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
