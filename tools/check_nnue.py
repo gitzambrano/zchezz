@@ -21,8 +21,10 @@ def inspect(path: Path, expected_format: str | None = None) -> dict[str, object]
     return {"path":str(path),"format":magic,"bytes":len(data),"epoch":epoch,"dims":dims,"scales":scales,"sha256":hashlib.sha256(data).hexdigest()}
 
 def main() -> int:
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument("path",nargs="?",default=""); p.add_argument("--profile","--version",dest="profile_name",default="")
+    p=argparse.ArgumentParser(description=__doc__); p.add_argument("path",nargs="?",default=""); p.add_argument("--profile","--version",dest="profile_name",default=""); p.add_argument("--show-config",action="store_true")
     a=p.parse_args(); selected=profile(a.profile_name or None); path=Path(a.path) if a.path else selected.weights
+    if a.show_config:
+        print(f"profile={selected.name}\nformat={selected.network_format}\nweights={path}"); return 0
     try: result=inspect(path,selected.network_format)
     except (OSError,ValueError) as exc: print(f"FAIL: {exc}"); return 1
     for k,v in result.items(): print(f"{k}: {v}")

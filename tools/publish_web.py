@@ -59,10 +59,14 @@ def sync_page(bundle: Path, index: Path, *, write: bool) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--mode", required=True, choices=("check", "sync", "validate"))
+    ap.add_argument("--mode", default="check", choices=("check", "sync", "validate"))
     ap.add_argument("--bundle", type=Path, default=BUNDLE)
     ap.add_argument("--index", type=Path, default=PUBLISHED)
+    ap.add_argument("--show-config", action="store_true", help="Print configuration and exit")
     args = ap.parse_args()
+    if args.show_config:
+        print(f"mode={args.mode}\nbundle={args.bundle}\nindex={args.index}")
+        return 0
     try:
         if args.mode == "validate":
             data = args.bundle.read_bytes()

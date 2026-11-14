@@ -71,9 +71,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="")
     parser.add_argument("--regression-run", default="")
+    parser.add_argument("--show-config", action="store_true", help="Print configuration and exit")
     args = parser.parse_args()
 
     version = args.version or active_version()
+    if args.show_config:
+        print(f"version={version}\nengine={engine_executable(version)}\noutput_dir={artifact_dir('releases')}")
+        return 0
     now = dt.datetime.now(dt.timezone.utc)
     edir = engine_dir(version)
     status = command_text(["git", "status", "--porcelain"])

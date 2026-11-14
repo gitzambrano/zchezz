@@ -59,11 +59,15 @@ def scan(path: Path) -> tuple[int, list[str]]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", help="EPD files; default scans repository *.epd outside artifacts")
+    parser.add_argument("--show-config", action="store_true", help="Print configuration and exit")
     args = parser.parse_args()
     if args.paths:
         files = [Path(value) for value in args.paths]
     else:
         files = [path for path in ROOT.rglob("*.epd") if "artifacts" not in path.parts and ".git" not in path.parts]
+    if args.show_config:
+        print(f"default_epd_count={len(files)}")
+        return 0
     failures: list[str] = []
     total = 0
     for path in files:

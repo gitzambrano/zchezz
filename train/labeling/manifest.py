@@ -315,6 +315,28 @@ def generate_all_manifests(data_root: Optional[Path] = None) -> List[Path]:
     return written
 
 
+def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-root", default="", help="Path to datasets root (default: repository data/)")
+    parser.add_argument("--show-config", action="store_true", help="Print configuration and exit non-destructively")
+    parser.add_argument("--generate", action="store_true", help="Scan and generate manifest.json files in data-root")
+    args = parser.parse_args()
+
+    repo_root = Path(__file__).resolve().parents[2]
+    data_root = Path(args.data_root) if args.data_root else (repo_root / "data")
+
+    if args.show_config:
+        print(f"data_root={data_root}")
+        print(f"schema_version={SCHEMA_VERSION}")
+        print(f"valid_formats={sorted(VALID_FORMATS)}")
+        print(f"point_of_view={WHITE_RELATIVE}")
+        return 0
+
+    written_paths = generate_all_manifests(data_root)
+    print(f"Generated {len(written_paths)} manifest.json files in {data_root}.")
+    return 0
+
+
 if __name__ == "__main__":
-    written_paths = generate_all_manifests()
-    print(f"Generated {len(written_paths)} manifest.json files in data directory.")
+    raise SystemExit(main())

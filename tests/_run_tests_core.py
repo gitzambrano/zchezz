@@ -257,7 +257,7 @@ def main() -> int:
     )
     parser.add_argument("--version", default=DEFAULT_VERSION, help="candidate engine version")
     parser.add_argument("--baseline", default=DEFAULT_BASELINE, help="comparison engine version")
-    parser.add_argument("--list", action="store_true", help="print the selected profile")
+    parser.add_argument("--list", "--show-config", dest="list", action="store_true", help="print the selected profile")
     parser.add_argument("--keep-going", action="store_true", help="continue after a required failure")
     args = parser.parse_args()
 
