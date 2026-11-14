@@ -1,11 +1,12 @@
 """Dataset manifest generation and validation for Zchezz training datasets.
 
 Every dataset directory in data/ maintains a manifest.json file containing
-machine-readable provenance, schema details, and row counts.
+machine-readable provenance, schema details, row counts, and outcome statistics.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -15,7 +16,7 @@ WHITE_RELATIVE = "white_relative"
 
 
 def scan_dataset_files(dataset_path: Path) -> Dict[str, Any]:
-    """Scan dataset directory to determine file counts, formats, and columns."""
+    """Scan dataset directory to determine file counts, formats, columns, and result statistics."""
     dataset_path = Path(dataset_path)
     if not dataset_path.is_dir():
         raise NotADirectoryError(f"Dataset path is not a directory: {dataset_path}")
@@ -29,6 +30,8 @@ def scan_dataset_files(dataset_path: Path) -> Dict[str, Any]:
     positions = 0
     format_name = "unknown"
     files_count = 0
+    res_rate: Optional[float] = None
+    res_dist: Optional[Dict[str, Any]] = None
 
     if parquets:
         format_name = "parquet"
@@ -38,31 +41,65 @@ def scan_dataset_files(dataset_path: Path) -> Dict[str, Any]:
             schema = pq.read_schema(parquets[0])
             columns = list(schema.names)
             positions = sum(pq.read_metadata(p).num_rows for p in parquets)
+
+            if "result" in columns:
+                tot_rows = 0
+                val_rows = 0
+                w, d, l = 0, 0, 0
+                sample_p = parquets[:10] if len(parquets) > 10 else parquets
+                for p in sample_p:
+                    t = pq.read_table(p, columns=["result"])
+                    col = t["result"]
+                    tot_rows += len(col)
+                    if col.type == "string" or col.type == "large_string":
+                        vals = col.to_pylist()
+                        for v in vals:
+                            if v in ("1-0", "1.0", 1.0):
+                                w += 1
+                                val_rows += 1
+                            elif v in ("0-1", "0.0", 0.0):
+                                l += 1
+                                val_rows += 1
+                            elif v in ("1/2-1/2", "0.5", 0.5):
+                                d += 1
+                                val_rows += 1
+                    else:
+                        import numpy as np
+                        arr = col.to_numpy()
+                        finite = np.isfinite(arr)
+                        val_rows += int(np.sum(finite))
+                        sub = arr[finite]
+                        w += int(np.sum(sub == 1.0))
+                        d += int(np.sum(sub == 0.5))
+                        l += int(np.sum(sub == 0.0))
+                res_rate = round(val_rows / tot_rows, 4) if tot_rows else 0.0
+                res_dist = {"wins": w, "draws": d, "losses": l, "sampled_rows": tot_rows}
         except Exception:
-            # Fall back to progress.json if pyarrow reading fails
             pass
     elif bins:
         format_name = "bin"
         files_count = len(bins)
         columns = ["sample_struct"]
-        # SAMPLE_DTYPE itemsize is 75 bytes
         positions = sum(f.stat().st_size // 75 for f in bins)
+        res_rate = 1.0
+        res_dist = {"note": "game_result packed inside 75-byte SAMPLE struct"}
     elif epds:
         format_name = "epd"
         files_count = len(epds)
         columns = ["epd_record"]
-        # Count lines across epds
         for epd in epds:
             with open(epd, "rb") as f:
                 positions += sum(1 for _ in f)
 
-    # Check progress.json for supplementary metadata
+    # Check progress.json for supplementary metadata and raw input provenance
     progress_file = dataset_path / "progress.json"
+    raw_source = None
     if progress_file.is_file():
         try:
             pj = json.loads(progress_file.read_text(encoding="utf-8"))
             if not positions:
                 positions = pj.get("total_positions", pj.get("positions", pj.get("total_rows", 0)))
+            raw_source = list(pj.keys())[0] if pj else None
         except Exception:
             pass
 
@@ -72,79 +109,112 @@ def scan_dataset_files(dataset_path: Path) -> Dict[str, Any]:
         "size_bytes": total_bytes,
         "columns": columns,
         "positions_count": positions,
+        "result_rate": res_rate,
+        "result_distribution": res_dist,
+        "raw_source_input": raw_source,
     }
 
 
 def infer_metadata_from_name(name: str) -> Dict[str, Any]:
-    """Infer source, evaluator, budget, filters, and date from standard directory name."""
+    """Infer source, played_by, engine_version, evaluator, budget, filters, and date from name."""
     source = "unknown"
-    evaluator = "unrecorded"
-    eval_budget = "unrecorded"
-    date_val = "unrecorded"
+    played_by = "unknown"
+    engine_ver = "not_applicable"
     stage = "finetune"
 
     if name.startswith("extraquiet_"):
         source = "human"
+        played_by = "humans"
         stage = "warmup" if "sf5k" in name else "finetune"
     elif name.startswith("lichess_"):
         source = "lichess"
+        played_by = "humans"
         stage = "warmup" if ("sf_" in name or "sfdb" in name) else "finetune"
     elif name.startswith("selfplay"):
         source = "selfplay"
+        if "v331" in name:
+            engine_ver = "v331"
+            played_by = "Zchezz v331"
+        elif "v507" in name:
+            engine_ver = "v507"
+            played_by = "Zchezz v507"
+        elif "lichess" in name:
+            engine_ver = "zchezz_dev"
+            played_by = "Zchezz (from Lichess endgames)"
+        else:
+            engine_ver = "zchezz_dev"
+            played_by = "Zchezz"
         stage = "finetune"
     elif name.startswith("synthetic_endgame_"):
         source = "synthetic"
+        played_by = "procedural_generator"
+        engine_ver = "none"
         stage = "finetune"
     elif name.startswith("lc0_"):
         source = "lc0"
+        played_by = "Leela Chess Zero"
+        engine_ver = "lc0_t91"
         stage = "finetune"
     elif name.startswith("viriformat_"):
         source = "virichess"
+        played_by = "Virichess"
+        engine_ver = "virichess_engine"
         stage = "excluded"
     elif name.startswith("miscelaneous_"):
         source = "mixed"
+        played_by = "mixed"
         stage = "finetune"
 
+    evaluator = "unrecorded"
+    eval_budget = "unrecorded"
     if "_sfdb" in name:
         evaluator = "Stockfish DB"
         eval_budget = "varies"
     elif "_sf" in name:
         evaluator = "Stockfish"
-        # Extract budget if present: e.g. sf5k, sf60k, sf50k, sf100k, sf400k, sf500k, sf1M, sfd12, sfd14
-        import re
         m = re.search(r"_sf([0-9]+[kM]?|d[0-9]+)", name)
         if m:
             b = m.group(1)
             eval_budget = f"depth {b[1:]}" if b.startswith("d") else f"{b} nodes"
     elif "_zchezz" in name:
-        evaluator = "Zchezz search"
+        evaluator = f"Zchezz search ({engine_ver})"
         eval_budget = "search-time"
     elif "v331" in name:
-        evaluator = "Zchezz v331"
+        evaluator = "Zchezz v331 search"
         eval_budget = "search-time"
     elif "v507" in name:
-        evaluator = "Zchezz v507"
+        evaluator = "Zchezz v507 search"
         eval_budget = "search-time"
+    elif name.startswith("lc0_"):
+        evaluator = "Leela / Stockfish"
+        eval_budget = "mixed"
 
-    import re
+    date_val = "unrecorded"
     date_match = re.search(r"_data(\d{8})", name)
     if date_match:
         d = date_match.group(1)
         date_val = f"{d[:4]}-{d[4:6]}-{d[6:]}"
 
+    is_filtered = "_filter" in name or "_q" in name
+    filter_type = "endgame+quiet" if "endgame" in name and is_filtered else ("quiet" if is_filtered else "none")
+
     return {
         "source": source,
+        "played_by": played_by,
+        "engine_version": engine_ver,
         "evaluator": evaluator,
         "eval_budget": eval_budget,
         "date": date_val,
         "stage": stage,
+        "is_filtered": is_filtered,
+        "filter_type": filter_type,
     }
 
 
 def build_manifest(
     dataset_path: Path,
     *,
-    engine_version: str = "v335",
+    engine_version: Optional[str] = None,
     engine_commit: str = "unrecorded",
     overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -156,15 +226,15 @@ def build_manifest(
 
     cols = scanned["columns"]
     has_cp = "cp" in cols or "_cp" in name
-    has_result = "result" in cols or "_res" in name
-    is_filtered = "_filter" in name or "_q" in name
+    has_result = "result" in cols or scanned["result_rate"] is not None
 
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "name": name,
         "format": scanned["format"],
         "source": inferred["source"],
-        "engine_version": engine_version,
+        "played_by": inferred["played_by"],
+        "engine_version": engine_version if engine_version is not None else inferred["engine_version"],
         "engine_commit": engine_commit,
         "evaluator": inferred["evaluator"],
         "eval_budget": inferred["eval_budget"],
@@ -175,10 +245,13 @@ def build_manifest(
         "columns": cols,
         "has_cp": has_cp,
         "has_result": has_result,
-        "is_filtered": is_filtered,
-        "filter_type": "quiet" if is_filtered else "none",
+        "result_rate": scanned["result_rate"],
+        "result_distribution": scanned["result_distribution"],
+        "is_filtered": inferred["is_filtered"],
+        "filter_type": inferred["filter_type"],
         "date": inferred["date"],
         "stage": inferred["stage"],
+        "raw_source_input": scanned["raw_source_input"],
     }
 
     if overrides:

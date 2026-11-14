@@ -64,4 +64,8 @@ def test_all_local_datasets_have_valid_manifest_and_are_documented():
         validate_manifest(data)
         assert data["name"] == d.name
         assert data["point_of_view"] == "white_relative"
+        assert "played_by" in data
+        assert "stage" in data
+        assert data["positions_count"] > 0
+        assert data["files_count"] > 0
         assert d.name in doc_text, f"Dataset {d.name} not documented in docs/datasets.md"

@@ -44,7 +44,7 @@ Directory names append tags in this canonical order:
 
 ## 2. Dataset Manifest Schema (`manifest.json`)
 
-Every dataset directory on disk must contain a machine-readable `manifest.json` file. The schema version is `1`.
+Every dataset directory on disk contains a machine-readable `manifest.json` file. The schema version is `1`.
 
 ```json
 {
@@ -52,21 +52,30 @@ Every dataset directory on disk must contain a machine-readable `manifest.json` 
   "name": "selfplay_cp_sf50k_res_filter_data20260410",
   "format": "parquet",
   "source": "selfplay",
-  "engine_version": "v335",
+  "played_by": "Zchezz",
+  "engine_version": "zchezz_dev",
   "engine_commit": "unrecorded",
-  "evaluator": "stockfish",
+  "evaluator": "Stockfish",
   "eval_budget": "50k nodes",
   "point_of_view": "white_relative",
   "positions_count": 16063299,
   "files_count": 1607,
-  "size_bytes": 322338816,
+  "size_bytes": 322366881,
   "columns": ["fen", "cp", "result"],
   "has_cp": true,
   "has_result": true,
+  "result_rate": 1.0,
+  "result_distribution": {
+    "wins": 18202,
+    "draws": 17678,
+    "losses": 14120,
+    "sampled_rows": 50000
+  },
   "is_filtered": true,
   "filter_type": "quiet",
   "date": "2026-04-10",
-  "stage": "finetune"
+  "stage": "finetune",
+  "raw_source_input": "c:\\nnue_checkpoints\\data\\selfplay_raw_10-04_wdl|epd"
 }
 ```
 
@@ -74,32 +83,32 @@ Every dataset directory on disk must contain a machine-readable `manifest.json` 
 
 ## 3. Active Dataset Catalog (Local Disk)
 
-This table lists all datasets currently present in local storage (`data/`).
+This table lists all 22 datasets currently present in local storage (`data/`).
 
-| # | Dataset Directory | Format | Files | Positions | Size (MB) | Source | Evaluator | Budget | Columns | Lambda | Stage |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `extraquiet_cp_sf5k_res_filter` | parquet | 21 | 40,098,183 | 1377.2 | human | Stockfish | 5k nodes | fen, cp, result, source | Active | warmup |
-| 2 | `extraquiet_cp_sf60k_filter` | parquet | 30 | 1,500,000 | 49.8 | human | Stockfish | 60k nodes | fen, cp | Inert | finetune |
-| 3 | `extraquiet_cp_sfd12_endgames_filter` | parquet | 6 | 262,101 | 5.8 | human | Stockfish | depth 12 | fen, cp | Inert | finetune |
-| 4 | `extraquiet_cp_sfd14_endgames_filter` | parquet | 56 | 2,800,000 | 70.1 | human | Stockfish | depth 14 | fen, cp | Inert | finetune |
-| 5 | `lc0_t91_big_res4_filter` | parquet | 105 | 20,917,923 | 567.6 | lc0 | Leela / SF | mixed | fen, cp, result | Active | finetune |
-| 6 | `lc0_test91_res_q` | bin | 25 | 244,375 | 17.5 | lc0 | Leela | network | sample struct | Active | finetune |
-| 7 | `lichess_cp_sf400k_filter` | parquet | 3 | 150,000 | 4.5 | lichess | Stockfish | 400k nodes | fen, cp | Inert | finetune |
-| 8 | `lichess_cp_sf_filter` | parquet | 305 | 15,223,769 | 460.0 | lichess | Stockfish | unrecorded | fen, cp | Inert | warmup |
-| 9 | `lichess_cp_sfdb_filter` | parquet | 1,460 | 18,558,222 | 597.9 | lichess | Stockfish DB | varies | fen, cp | Inert | warmup |
-| 10 | `miscelaneous_cp_sf1M_res_filter` | parquet | 1 | 34,103 | 1.1 | mixed | Stockfish | 1M nodes | fen, cp, result, id | Active | finetune |
-| 11 | `selfplay-lichess_cp_sf500k_res_filter_endgames` | parquet | 54 | 2,700,000 | 42.4 | selfplay | Stockfish | 500k nodes | fen, cp, result, id | Active | finetune |
-| 12 | `selfplay_cp_sf100k_res_endgames_filter_data20260414` | parquet | 566 | 5,657,835 | 93.2 | selfplay | Stockfish | 100k nodes | fen, cp, result | Active | finetune |
-| 13 | `selfplay_cp_sf50k_res_filter_data20260404` | parquet | 749 | 7,475,000 | 135.7 | selfplay | Stockfish | 50000 nodes | fen, cp, result | Active | finetune |
-| 14 | `selfplay_cp_sf50k_res_filter_data20260410` | parquet | 1,607 | 16,063,299 | 307.4 | selfplay | Stockfish | 50000 nodes | fen, cp, result | Active | finetune |
-| 15 | `selfplay_cp_zchezz_res_filter_data20260401` | parquet | 915 | 9,140,226 | 174.2 | selfplay | Zchezz search | search-time | fen, cp, result | Active | finetune |
-| 16 | `selfplay_cp_zchezz_res_filter_data20260404` | parquet | 879 | 8,789,380 | 159.1 | selfplay | Zchezz search | search-time | fen, cp, result | Active | finetune |
-| 17 | `selfplay_cp_zchezz_res_filter_data20260410` | parquet | 85 | 850,000 | 16.3 | selfplay | Zchezz search | search-time | fen, cp, result | Active | finetune |
-| 18 | `selfplay_lookahead_filter` | parquet | 118 | 20,857,338 | 389.5 | selfplay | Zchezz / SF | lookahead | fen, cp, result | Active | finetune |
-| 19 | `selfplay_v331_filter` | parquet | 107 | 1,065,780 | 23.8 | selfplay | Zchezz v331 | search-time | fen, cp, result | Active | finetune |
-| 20 | `selfplay_v507_filter` | parquet | 1,756 | 17,559,218 | 393.7 | selfplay | Zchezz v507 | search-time | fen, cp, result | Active | finetune |
-| 21 | `synthetic_endgame_cp_sf_filter_data20260413` | parquet | 53 | 521,158 | 10.5 | synthetic | Stockfish | unrecorded | fen, cp, id | Inert | finetune |
-| 22 | `synthetic_endgame_cp_sf_filter_data20260414` | parquet | 61 | 1,220,000 | 24.7 | synthetic | Stockfish | unrecorded | fen, cp, id | Inert | finetune |
+| # | Dataset Directory | Format | Positions | MB | Played By | Evaluator | Budget | Result % | Raw Input Provenance | Stage |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `extraquiet_cp_sf5k_res_filter` | parquet | 40,098,183 | 1377.2 | humans | Stockfish | 5k nodes | 100.0% | unrecorded | warmup |
+| 2 | `extraquiet_cp_sf60k_filter` | parquet | 1,500,000 | 49.8 | humans | Stockfish | 60k nodes | — | extra_quiet_sf_nodes5000_wdl | finetune |
+| 3 | `extraquiet_cp_sfd12_endgames_filter` | parquet | 262,101 | 5.8 | humans | Stockfish | depth 12 | — | unrecorded | finetune |
+| 4 | `extraquiet_cp_sfd14_endgames_filter` | parquet | 2,800,000 | 70.1 | humans | Stockfish | depth 14 | — | unrecorded | finetune |
+| 5 | `lc0_t91_big_res4_filter` | parquet | 20,917,923 | 567.6 | Leela Chess Zero | Leela / SF | mixed | 100.0% | data/lc0_t91_big_res4 | finetune |
+| 6 | `lc0_test91_res_q` | bin | 244,375 | 17.5 | Leela Chess Zero | Leela | network | 100.0% | data/lc0_test91_res | finetune |
+| 7 | `lichess_cp_sf400k_filter` | parquet | 150,000 | 4.5 | humans | Stockfish | 400k nodes | — | lichess_quiet_wdl | finetune |
+| 8 | `lichess_cp_sf_filter` | parquet | 15,223,769 | 460.0 | humans | Stockfish | unrecorded | — | lichess_quiet_wdl | warmup |
+| 9 | `lichess_cp_sfdb_filter` | parquet | 18,558,222 | 597.9 | humans | Stockfish DB | varies | — | unrecorded | warmup |
+| 10 | `miscelaneous_cp_sf1M_res_filter` | parquet | 34,103 | 1.1 | mixed | Stockfish | 1M nodes | 11.6% | unrecorded | finetune |
+| 11 | `selfplay-lichess_cp_sf500k_res_filter_endgames` | parquet | 2,700,000 | 42.4 | Zchezz (Lichess endgames) | Stockfish | 500k nodes | 83.9% | unrecorded | finetune |
+| 12 | `selfplay_cp_sf100k_res_endgames_filter_data20260414` | parquet | 5,657,835 | 93.2 | Zchezz | Stockfish | 100k nodes | 100.0% | selfplay_endgame_raw_14-04_wdl | finetune |
+| 13 | `selfplay_cp_sf50k_res_filter_data20260404` | parquet | 7,475,000 | 135.7 | Zchezz | Stockfish | 50k nodes | 100.0% | selfplay-raw_04-04_wdl | finetune |
+| 14 | `selfplay_cp_sf50k_res_filter_data20260410` | parquet | 16,063,299 | 307.4 | Zchezz | Stockfish | 50k nodes | 100.0% | selfplay_raw_10-04_wdl | finetune |
+| 15 | `selfplay_cp_zchezz_res_filter_data20260401` | parquet | 9,140,226 | 174.2 | Zchezz | Zchezz search | search-time | 87.7% | selfplay_raw_01-04_wdl | finetune |
+| 16 | `selfplay_cp_zchezz_res_filter_data20260404` | parquet | 8,789,380 | 159.1 | Zchezz | Zchezz search | search-time | 100.0% | selfplay_raw_04-04_wdl | finetune |
+| 17 | `selfplay_cp_zchezz_res_filter_data20260410` | parquet | 850,000 | 16.3 | Zchezz | Zchezz search | search-time | 100.0% | selfplay_raw_10-04_wdl | finetune |
+| 18 | `selfplay_lookahead_filter` | parquet | 20,857,338 | 389.5 | Zchezz | Zchezz / SF | lookahead | 100.0% | unrecorded | finetune |
+| 19 | `selfplay_v331_filter` | parquet | 1,065,780 | 23.8 | Zchezz v331 | Zchezz v331 | search-time | 100.0% | data/selfplay_v331 | finetune |
+| 20 | `selfplay_v507_filter` | parquet | 17,559,218 | 393.7 | Zchezz v507 | Zchezz v507 | search-time | 100.0% | data/selfplay_v507 | finetune |
+| 21 | `synthetic_endgame_cp_sf_filter_data20260413` | parquet | 521,158 | 10.5 | procedural generator | Stockfish | unrecorded | — | unrecorded | finetune |
+| 22 | `synthetic_endgame_cp_sf_filter_data20260414` | parquet | 1,220,000 | 24.7 | procedural generator | Stockfish | unrecorded | — | unrecorded | finetune |
 
 **Total local active volume**: 22 datasets, 233,488,422 positions across 4,964.7 MB.
 

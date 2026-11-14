@@ -1238,6 +1238,18 @@ def main():
         if fp: fp.close()
         if fb: fb.close()
 
+    try:
+        from pathlib import Path
+        _res_dir = Path(RESULTS_DIR)
+        if _res_dir.is_dir():
+            _repo_root = Path(__file__).resolve().parents[1]
+            if str(_repo_root) not in sys.path:
+                sys.path.insert(0, str(_repo_root))
+            from train.labeling.manifest import write_manifest
+            write_manifest(_res_dir)
+    except Exception as _e:
+        log(f"[Manifest warning] Could not write manifest: {_e}")
+
     log("\nTORNEIO FINALIZADO!")
     print_status(True)
 
