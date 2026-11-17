@@ -1,6 +1,9 @@
 # Data & training artifacts
 /data/*
 !/data/Data.md
+!/data/*/
+/data/*/*
+!/data/*/manifest.json
 checkpoints/
 train/logs/
 

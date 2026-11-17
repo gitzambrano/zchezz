@@ -1,0 +1,21 @@
+{
+  "id": "v510_vs_v335",
+  "description": "Cross-lineage: NNU4 v510 against NNU3 v335",
+  "engine_a": {
+    "profile": "v510",
+    "label": "v510"
+  },
+  "engine_b": {
+    "profile": "v335",
+    "label": "v335"
+  },
+  "protocol": {
+    "movetime_ms": 200,
+    "threads": 1,
+    "games": 20,
+    "concurrency": 1,
+    "color_swap": true,
+    "max_plies": 400,
+    "seed": 0
+  }
+}

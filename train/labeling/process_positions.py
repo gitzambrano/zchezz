@@ -1378,6 +1378,47 @@ def resolve_output(dest: str, out_formats: List[str],
     return False, [ext_fmt]
 
 
+def _manifest_provenance(in_spec: str, cfg) -> dict:
+    """Provenance this run knows for certain, for train/labeling/manifest.py.
+
+    When Stockfish relabels ``cp`` the evaluator and node budget are recorded.
+    Otherwise ``cp`` passes through from the input, and the input directory's
+    own manifest (if any) supplies the evaluator with its original evidence.
+    """
+    import subprocess
+    prov = {"raw_source_input": str(in_spec)}
+    try:
+        prov["engine_commit"] = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=5,
+            cwd=os.path.dirname(os.path.abspath(__file__))).stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    if cfg.use_stockfish:
+        prov["evaluator"] = f"Stockfish ({os.path.basename(str(cfg.sf_path or 'stockfish'))})"
+        prov["eval_budget"] = f"{cfg.sf_nodes} nodes"
+    src_manifest = pathlib.Path(str(in_spec).split("|")[0]) / "manifest.json"
+    inherited = {}
+    if src_manifest.is_file():
+        import json as _json
+        try:
+            m = _json.loads(src_manifest.read_text(encoding="utf-8"))
+            for k in ("source", "played_by", "engine_version", "date"):
+                if m.get(k) not in (None, "unknown"):
+                    inherited[k] = m[k]
+            if not cfg.use_stockfish:
+                for k in ("evaluator", "eval_budget"):
+                    if m.get(k) not in (None, "unknown"):
+                        inherited[k] = m[k]
+        except (OSError, ValueError):
+            pass
+    prov.update({k: v for k, v in inherited.items() if k not in prov})
+    producer = {"tool": "train/labeling/process_positions.py", "input": str(in_spec),
+                "use_stockfish": bool(cfg.use_stockfish), "sf_nodes": getattr(cfg, "sf_nodes", None),
+                "seed": getattr(cfg, "seed", None), "limit": getattr(cfg, "limit", None),
+                "filters": {k: getattr(cfg, k) for k in dir(cfg) if k.startswith("filter_")}}
+    return {"provenance": prov, "evidence": "recorded", "producer": producer}
+
+
 def run_pipeline(in_spec: str, out_spec: str, cfg) -> int:
     files = collect_input_files(in_spec, cfg.in_format)
     dir_mode, formats = resolve_output(out_spec, cfg.out_formats, cfg.explicit_out_formats)
@@ -1587,7 +1628,7 @@ def run_pipeline(in_spec: str, out_spec: str, cfg) -> int:
     if dir_mode and not cfg.dry_run and os.path.isdir(out_spec):
         try:
             from labeling.manifest import write_manifest
-            write_manifest(pathlib.Path(out_spec))
+            write_manifest(pathlib.Path(out_spec), **_manifest_provenance(in_spec, cfg))
         except Exception as e:
             print(f"  [Manifest warning] Could not write manifest.json: {e}")
     elapsed = time.time() - t_start

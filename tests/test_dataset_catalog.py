@@ -1,71 +1,89 @@
-"""Tests for dataset catalog documentation and manifest integrity."""
+"""Contract tests for dataset manifests and the generated catalog in docs/datasets.md.
+
+The manifests are tracked, so these checks run without the (ignored) data files.
+"""
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from train.labeling import manifest as mf  # noqa: E402
+
+MANIFESTS = sorted((ROOT / "data").glob("*/manifest.json"))
 
 
-def test_datasets_documentation_exists_and_covers_conventions():
-    doc_path = ROOT / "docs" / "datasets.md"
-    assert doc_path.is_file(), "docs/datasets.md must exist and be tracked"
-    text = doc_path.read_text(encoding="utf-8")
-    assert "white_relative" in text.lower() or "white-relative" in text.lower()
-    for token in ("`cp`", "`result`", "`wdl`", "`target`", "320", "manifest.json"):
-        assert token in text, f"Missing token in docs/datasets.md: {token}"
+def test_datasets_doc_covers_conventions():
+    text = (ROOT / "docs" / "datasets.md").read_text(encoding="utf-8")
+    for token in ("`cp`", "`result`", "`wdl`", "`target`", "320", "manifest.json",
+                  "recorded", "owner", "inferred", mf.CATALOG_BEGIN, mf.CATALOG_END):
+        assert token in text, f"docs/datasets.md lacks {token}"
 
 
-def test_manifest_module_contract():
-    import sys
-    sys.path.insert(0, str(ROOT))
-    from train.labeling.manifest import (
-        SCHEMA_VERSION,
-        build_manifest,
-        validate_manifest,
-        scan_dataset_files,
-    )
-    assert SCHEMA_VERSION == 1
-    sample_manifest = {
-        "schema_version": 1,
-        "name": "test_dataset",
-        "format": "parquet",
-        "point_of_view": "white_relative",
-        "positions_count": 100,
-        "columns": ["fen", "cp", "result"],
-        "has_cp": True,
-        "has_result": True,
-    }
-    assert validate_manifest(sample_manifest) is True
-
-    with pytest.raises(ValueError, match="white_relative"):
-        bad = dict(sample_manifest, point_of_view="black_relative")
-        validate_manifest(bad)
+@pytest.mark.parametrize("path", MANIFESTS, ids=lambda p: p.parent.name)
+def test_tracked_manifest_is_valid(path):
+    m = json.loads(path.read_text(encoding="utf-8"))
+    mf.validate_manifest(m)
+    assert m["name"] == path.parent.name
+    assert m["positions_count"] > 0 and m["files_count"] > 0
+    for field in mf.PROVENANCE_FIELDS:
+        assert field in m["evidence"], f"{m['name']}: no evidence level for {field}"
+    for field, lvl in m["evidence"].items():
+        if m.get(field) in (None, "unknown"):
+            assert lvl in ("unknown", "measured"), f"{m['name']}.{field}: empty value claims {lvl}"
 
 
-def test_all_local_datasets_have_valid_manifest_and_are_documented():
-    import sys
-    sys.path.insert(0, str(ROOT))
-    from train.labeling.manifest import validate_manifest
+def test_manifests_are_tracked():
+    assert MANIFESTS, "expected tracked data/*/manifest.json files"
 
-    data_dir = ROOT / "data"
-    if not data_dir.is_dir():
-        pytest.skip("data directory not present locally")
 
-    doc_text = (ROOT / "docs" / "datasets.md").read_text(encoding="utf-8")
-    dataset_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
-    assert len(dataset_dirs) > 0, "Expected at least one local dataset in data/"
+def test_catalog_matches_manifests():
+    expected = mf.render_catalog([json.loads(p.read_text(encoding="utf-8")) for p in MANIFESTS])
+    assert mf.catalog_in_doc() == expected.strip(), \
+        "docs/datasets.md catalog is stale; run python train/labeling/manifest.py --catalog"
 
-    for d in dataset_dirs:
-        manifest_file = d / "manifest.json"
-        assert manifest_file.is_file(), f"Dataset directory {d.name} missing manifest.json"
-        data = json.loads(manifest_file.read_text(encoding="utf-8"))
-        validate_manifest(data)
-        assert data["name"] == d.name
-        assert data["point_of_view"] == "white_relative"
-        assert "played_by" in data
-        assert "stage" in data
-        assert data["positions_count"] > 0
-        assert data["files_count"] > 0
-        assert d.name in doc_text, f"Dataset {d.name} not documented in docs/datasets.md"
+
+def _parquet(tmp: Path, name: str, rows):
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+    d = tmp / name
+    d.mkdir()
+    pq.write_table(pa.table({"fen": [r[0] for r in rows], "cp": [r[1] for r in rows],
+                             "result": [r[2] for r in rows]}), d / "chunk_0000.parquet")
+    return d
+
+
+def test_refresh_keeps_stronger_evidence(tmp_path):
+    fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    d = _parquet(tmp_path, "selfplay_cp_sf50k_res_filter_data20260101", [(fen, 10.0, 1.0), (fen, -5.0, None)])
+    mf.write_manifest(d, provenance={"evaluator": "Stockfish 17", "played_by": "v335"}, evidence="recorded")
+    m = mf.write_manifest(d)  # plain refresh must not downgrade recorded values
+    m = json.loads(m.read_text(encoding="utf-8"))
+    assert m["evaluator"] == "Stockfish 17" and m["evidence"]["evaluator"] == "recorded"
+    assert m["played_by"] == "v335"
+    assert m["eval_budget"] == "50k nodes" and m["evidence"]["eval_budget"] == "inferred"
+    assert m["date"] == "2026-01-01"
+    assert m["result_rate"] == 0.5
+    assert m["result_distribution"] == {"white_wins": 1, "draws": 0, "black_wins": 0, "rows": 2}
+
+
+def test_inference_never_invents_evaluator(tmp_path):
+    fen = "8/8/8/8/8/8/8/K6k w - - 0 1"
+    d = _parquet(tmp_path, "selfplay_v507_filter", [(fen, 0.0, 0.5)])
+    m = mf.build_manifest(d, previous={})
+    assert m["evaluator"] == "unknown" and m["evidence"]["evaluator"] == "unknown"
+    assert m["engine_version"] == "v507" and m["evidence"]["engine_version"] == "inferred"
+
+
+def test_bare_run_is_read_only(tmp_path):
+    import subprocess
+    before = {p: p.stat().st_mtime_ns for p in MANIFESTS}
+    res = subprocess.run([sys.executable, str(ROOT / "train" / "labeling" / "manifest.py")],
+                         cwd=str(ROOT), capture_output=True, text=True, timeout=60)
+    assert res.returncode == 0, res.stderr
+    assert before == {p: p.stat().st_mtime_ns for p in MANIFESTS}

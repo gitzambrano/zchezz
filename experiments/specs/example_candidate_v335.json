@@ -1,0 +1,27 @@
+{
+  "id": "example_candidate_v335",
+  "description": "Template: v335 + a source patch, built natively, against unpatched v335",
+  "engine_a": {
+    "label": "cand",
+    "candidate": {
+      "base_profile": "v335",
+      "patch": "experiments/patches/example_noop.diff"
+    }
+  },
+  "engine_b": {
+    "profile": "v335",
+    "label": "v335"
+  },
+  "build": {
+    "arch_flags": "-march=native"
+  },
+  "protocol": {
+    "movetime_ms": 200,
+    "threads": 1,
+    "games": 20,
+    "concurrency": 1,
+    "color_swap": true,
+    "max_plies": 400,
+    "seed": 0
+  }
+}

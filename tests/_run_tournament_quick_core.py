@@ -163,8 +163,10 @@ ENGINE_A_PATH  = ""    # "" = keep MY_ENGINES[0]["path"]
 ENGINE_A_LABEL = ""    # "" = keep MY_ENGINES[0]["label"]
 ENGINE_B_PATH  = ""    # "" = keep MY_ENGINES[1]["path"]
 ENGINE_B_LABEL = ""    # "" = keep MY_ENGINES[1]["label"]
+ENGINE_A_OPTIONS = ""  # "" = keep MY_ENGINES[0]["options"] or comma-separated "K=V,K2=V2"
 ENGINE_B_OPTIONS = ""  # "" = keep MY_ENGINES[1]["options"] or comma-separated "K=V,K2=V2"
 THREADS        = 0     # 0 = keep each engine's own Threads option; >0 = set both
+SEED           = 0     # 0 = draw a fresh seed (logged); >0 = reproducible opening order/schedule
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  COMMAND LINE — every constant above is also a flag (CLAUDE.md rule 8)
@@ -199,7 +201,9 @@ CLI = [
     ("ENGINE_A_LABEL",       "--label-a",         str,   "override MY_ENGINES[0] label"),
     ("ENGINE_B_PATH",        "--engine-b",        str,   "override MY_ENGINES[1] path"),
     ("ENGINE_B_LABEL",       "--label-b",         str,   "override MY_ENGINES[1] label"),
+    ("ENGINE_A_OPTIONS",     "--options-a",       str,   "comma-separated Key=Val options for Engine A"),
     ("ENGINE_B_OPTIONS",     "--options-b",       str,   "comma-separated Key=Val options for Engine B"),
+    ("SEED",                 "--seed",            int,   "RNG seed for opening order and schedule (0 = fresh, logged)"),
     ("THREADS",              "--threads",         int,   "set the Threads UCI option on BOTH engines (0 = leave as configured)"),
     ("NODES",                "--nodes",           int,   "fixed nodes per move (overrides movetime)"),
 ]
@@ -218,11 +222,12 @@ if __name__ == "__main__":
             _eng["tc_value"] = NODES
         elif _eng.get("tc_mode") == "movetime":
             _eng["tc_value"] = MOVETIME_MS
-    if ENGINE_B_OPTIONS and len(MY_ENGINES) > 1:
-        for _opt in ENGINE_B_OPTIONS.split(","):
-            if "=" in _opt:
-                _k, _v = _opt.split("=", 1)
-                MY_ENGINES[1].setdefault("options", {})[_k.strip()] = _v.strip()
+    for _i, _opts in ((0, ENGINE_A_OPTIONS), (1, ENGINE_B_OPTIONS)):
+        if _opts and len(MY_ENGINES) > _i:
+            for _opt in _opts.split(","):
+                if "=" in _opt:
+                    _k, _v = _opt.split("=", 1)
+                    MY_ENGINES[_i].setdefault("options", {})[_k.strip()] = _v.strip()
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  LOGGING — All output goes to both console and log file
@@ -641,6 +646,8 @@ def play_game(game_id, white_cfg, black_cfg, results_queue, opening=None):
     pgn_game = chess.pgn.Game()
     pgn_game.headers["Event"]   = "Tournament Complete"
     pgn_game.headers["Round"]   = str(game_id)
+    if game_id in PAIR_OF:
+        pgn_game.headers["PairId"] = str(PAIR_OF[game_id])
     pgn_game.headers["White"]   = w_eng.label
     pgn_game.headers["Black"]   = b_eng.label
     pgn_game.headers["WhiteTC"] = f"{w_eng.tc_mode} {w_eng.tc_value}"
@@ -870,6 +877,11 @@ def print_cross_table(is_final=False):
 #  then shuffles for fair concurrency distribution.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# game id -> color-swap pair id; written as the PGN "PairId" tag so paired
+# (pentanomial) statistics can be computed from the PGN alone.
+PAIR_OF = {}
+
+
 def build_schedule(op_idx):
     my_cfgs     = MY_ENGINES
     anchor_cfgs = ANCHORS
@@ -889,18 +901,21 @@ def build_schedule(op_idx):
                 pairs.append((my_cfgs[i], my_cfgs[j], GAMES_SELF_PLAY))
 
     max_games = max((p[2] for p in pairs), default=0)
+    pair_id = 0
     for round_num in range(max_games):
         round_matches = []
         for w_cfg, b_cfg, total_games in pairs:
             if round_num < total_games:
                 idx = random.randrange(len(op_idx)) if op_idx and len(op_idx) > 0 else None
-                round_matches.append((w_cfg, b_cfg, idx))
+                pair_id += 1
+                round_matches.append((w_cfg, b_cfg, idx, pair_id))
                 if COLOR_SWAP:
-                    round_matches.append((b_cfg, w_cfg, idx))
+                    round_matches.append((b_cfg, w_cfg, idx, pair_id))
         
         random.shuffle(round_matches)
-        for w_cfg, b_cfg, idx in round_matches:
+        for w_cfg, b_cfg, idx, pid in round_matches:
             schedule.append((gid, w_cfg, b_cfg, idx))
+            PAIR_OF[gid] = pid
             gid += 1
 
     return schedule
@@ -1046,6 +1061,11 @@ def main():
 
     start_time = time.time()
 
+    global SEED
+    if not SEED:
+        SEED = random.SystemRandom().randrange(1, 2**31)
+    random.seed(SEED)
+
     # Build label lists
     _my_labels  = [e["label"] for e in MY_ENGINES]
     _anc_labels = [a["label"] for a in ANCHORS]
@@ -1073,6 +1093,7 @@ def main():
     log(f"  Self-play     : {SELF_PLAY}")
     log(f"  Color swap    : {COLOR_SWAP}")
     log(f"  Concorrência  : {CONCURRENCY}")
+    log(f"  Seed          : {SEED}")
     log("="*60)
 
     op_idx = load_all_openings(OPENING_FOLDER, OPENING_FILES or None)

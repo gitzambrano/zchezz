@@ -1,0 +1,13 @@
+diff --git a/search.c b/search.c
+index d218184..9ed66ff 100644
+--- a/search.c
++++ b/search.c
+@@ -156,7 +156,7 @@ static inline void tt_prefetch(uint64_t hash) {
+  * real continuation over repeating, while still accepting a draw when
+  * actually behind.  Raise to increase aversion to draws; lower to 0
+  * to disable (reverts to flat-draw behaviour). */
+-#define CONTEMPT 15
++#define CONTEMPT 15  /* example patch: comment-only change */
+ 
+ /* ── LMR table ───────────────────────────────────────────────── */
+ #define LMR_D 64

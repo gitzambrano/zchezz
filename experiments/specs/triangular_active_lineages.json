@@ -1,0 +1,9 @@
+{
+  "id": "triangular_active_lineages",
+  "description": "All pairings of the three supported lines (v605, v510, v335)",
+  "suite": [
+    "v605_vs_v510",
+    "v605_vs_v335",
+    "v510_vs_v335"
+  ]
+}

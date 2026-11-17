@@ -1246,7 +1246,23 @@ def main():
             if str(_repo_root) not in sys.path:
                 sys.path.insert(0, str(_repo_root))
             from train.labeling.manifest import write_manifest
-            write_manifest(_res_dir)
+            _labels = sorted({c["label"] for c in ENGINES_CFG})
+            _paths = sorted({c["path"] for c in ENGINES_CFG})
+            write_manifest(_res_dir, evidence="recorded", provenance={
+                "source": "selfplay",
+                "played_by": ", ".join(_labels),
+                "engine_version": ", ".join(_paths),
+                "evaluator": "Zchezz search during self-play" if len(_paths) == 1
+                             else "mixed Zchezz engines (see producer)",
+                "eval_budget": "search-time",
+                "date": datetime.date.today().isoformat(),
+            }, producer={
+                "tool": "tests/run_selfplay.py",
+                "engines": ENGINES_CFG, "movetime_ms": MOVETIME_MS, "seed": SEED,
+                "opening_mode": OPENING_MODE, "opening_folder": OPENING_FOLDER,
+                "multipv": MULTIPV, "temperature": TEMPERATURE, "max_plies": MAX_PLIES,
+                "note": "manifest covers every file in RESULTS_DIR; use one directory per run",
+            })
     except Exception as _e:
         log(f"[Manifest warning] Could not write manifest: {_e}")
 

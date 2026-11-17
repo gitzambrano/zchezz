@@ -20,12 +20,17 @@ engine/c/tools/          native v510-host self-play/arena/GA tooling
 engine/c/tests/          C invariant harness
 train/                   architecture-neutral data + family-specific NNUE code
 tests/                   correctness/UCI/game/benchmark harnesses
-experiments/             declarative experiment specifications and runners
+experiments/run_experiment.py  canonical experiment runner (specs -> artifacts/experiments/<id>/<run>/)
+experiments/specs/       declarative experiment specs (one JSON per experiment or suite)
+experiments/patches/     candidate source patches applied to a base profile by specs
 tools/                   repository checks, build verification, and publishing tools
 tools/historical/        archived migration scripts, legacy campaigns, and training variants
 utils/engine_profiles.py canonical profile + Stockfish resolution
 utils/cliconf.py         small optional-override helper
-artifacts/               generated test/evidence output
+data/<dataset>/manifest.json  tracked dataset provenance (data files are ignored)
+artifacts/               generated test/evidence output (ignored)
+artifacts/experiments/   one directory per experiment run; legacy_campaigns/ holds pre-runner output
+artifacts/aux_head/      fast-head fits from train/train_aux_head.py
 ```
 
 Operational entry points must work with no required CLI arguments and default safely to v335 unless the file is explicitly family-specific. `v328` and `v327` remain selectable only for explicit frozen-baseline regression work. Cross-family orchestration selects a profile and uses UCI process boundaries; `v510` remains the supported NNU4 line and `v605` the supported NNU5 line.
