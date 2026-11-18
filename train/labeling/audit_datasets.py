@@ -187,8 +187,8 @@ def audit_file(path: str) -> dict:
         return {"file": path, "problems": [f"unreadable: {exc!r}"]}
 
 
-def dataset_files(name: str):
-    d = DATA_ROOT / name
+def dataset_files(name: str, root: Path | None = None):
+    d = (root or DATA_ROOT) / name
     return sorted(str(p) for p in d.iterdir() if p.suffix in (".parquet", ".bin"))
 
 
@@ -196,22 +196,25 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dataset", action="append", help="dataset directory name (repeatable; default: all)")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    ap.add_argument("--data-root", type=Path, default=DATA_ROOT,
+                    help="directory that holds the dataset directories (for example a mounted Google Drive)")
     ap.add_argument("--show-config", action="store_true", help="print settings and exit")
     args = ap.parse_args()
+    data_root = args.data_root
     def is_dataset(p: Path) -> bool:
         return (p.is_dir() and not p.name.startswith("_")
                 and (any(p.glob("*.parquet")) or any(p.glob("*.bin"))))
     if args.dataset:
         names = [n for n in args.dataset if not n.startswith("_")]
     else:
-        names = sorted(p.name for p in DATA_ROOT.iterdir() if is_dataset(p)) if DATA_ROOT.is_dir() else []
+        names = sorted(p.name for p in data_root.iterdir() if is_dataset(p)) if data_root.is_dir() else []
     if args.show_config:
-        print(f"data_root={DATA_ROOT}\ndatasets={names}\nworkers={args.workers}\n"
+        print(f"data_root={data_root}\ndatasets={names}\nworkers={args.workers}\n"
               f"material_min={MATERIAL_MIN} cp_min={CP_MIN} material_agree_min={MATERIAL_AGREE_MIN} "
               f"corr_min={CORR_MIN} min_rows={MIN_ROWS}\noutput={OUT_ROOT}/<UTC>/report.json")
         return 0
     if not names:
-        print(f"No datasets under {DATA_ROOT}; nothing to audit.")
+        print(f"No datasets under {data_root}; nothing to audit.")
         return 0
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = OUT_ROOT / stamp
@@ -219,7 +222,7 @@ def main() -> int:
     report, failed = {}, 0
     with ProcessPoolExecutor(max_workers=args.workers) as ex:
         for name in names:
-            files = dataset_files(name)
+            files = dataset_files(name, data_root)
             results = list(ex.map(audit_file, files, chunksize=4))
             bad = [r for r in results if r.get("problems")]
             failed += len(bad)
