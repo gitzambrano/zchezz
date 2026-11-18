@@ -105,7 +105,12 @@ def main() -> int:
         action="store_true",
         help="verify the promoted shared template instead of creating it",
     )
+    parser.add_argument('--show-config', action='store_true', help='print configuration and exit')
     args = parser.parse_args()
+    if args.show_config:
+        for k, v in sorted(vars(args).items()):
+            print(f'  {k} = {v}')
+        return 0
 
     if args.check:
         return verify_target()

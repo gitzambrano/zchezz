@@ -14,7 +14,8 @@ PROFILE="${PROFILE:-}"                        # v331 (NNU3) | v507 (NNU4) | v600
 EPOCHS="${EPOCHS:-100}"                            # Épocas de fine-tuning (padrão 100)
 LR="${LR:-1e-5}"                                   # Learning rate inicial de fine-tuning (10^-5)
 ETA_MIN="${ETA_MIN:-1e-7}"                         # Learning rate final via CosineAnnealing (10^-7)
-K="${K:-0.1}"                                      # Peso WDL (0.1 = target denso TD(λ) com lookahead)
+K="${K:-0.1}"                                      # Peso WDL; K<1 em shards .bin usa o target denso por jogo
+                                                   # (train/dataset.py: dense_lookahead_target_indexed)
 BATCH_SIZE="${BATCH_SIZE:-0}"                      # 0 = auto por arquitetura (16384 v331, 65536 v507/v600)
 DEVICE="${DEVICE:-auto}"                           # auto | cuda | cpu
 SHARDS_DIR="${SHARDS_DIR:-/content/shards}"        # Cache local de alta vazão NVMe

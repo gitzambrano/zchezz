@@ -294,8 +294,8 @@ DATASETS = [
 #   big   : ~9M rows    (run `import_lc0.py --big --go` first — see its docstring)
 BIN_DATASETS = [
     # {"path": "C:/nnue_checkpoints/selfplay/gen1/*.bin", "pct": 1.00, "k": 1.0, "name": "gen1"},
-    # {"path": "C:/Zchezz/data/lc0_test91_res_q/*.bin",   "pct": 1.00, "k": 1.0, "name": "lc0_t91_q_smoke"},
-    # {"path": "C:/Zchezz/data/lc0_t91_big_q/*.bin",      "pct": 1.00, "k": 1.0, "name": "lc0_t91_big"},
+    # {"path": "data/lc0_test91_res_q/*.bin",   "pct": 1.00, "k": 1.0, "name": "lc0_t91_q_smoke"},
+    # {"path": "data/lc0_t91_big_q/*.bin",      "pct": 1.00, "k": 1.0, "name": "lc0_t91_big"},
 ]
 
 
@@ -980,8 +980,12 @@ def iter_bin_rows(source: SourceSpec, chunk_rows: int, split: Literal["train", "
     for start in range(0, len(idx), chunk_rows):
         chunk_idx = idx[start:start + chunk_rows]
         records = ds.get_batch(chunk_idx)
-        # Dense lookahead target (or classical wl_target if disabled)
-        y = dataset.dense_lookahead_target(records["eval_cp"], records["game_result"], k_res=source.k)
+        # k < 1: dense lookahead over later plies of the same game (by global
+        # index, so the sampled subset does not matter); k = 1: game result.
+        if source.k < 1.0:
+            y = dataset.dense_lookahead_target_indexed(ds, chunk_idx, k_res=source.k)
+        else:
+            y = dataset.wl_target(records["eval_cp"], records["game_result"], k=source.k)
         yield records["board"], records["stm"], y
 
 

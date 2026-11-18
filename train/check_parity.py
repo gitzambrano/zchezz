@@ -3,7 +3,7 @@ train/check_parity.py — Python/C HalfKP-4Bucket feature parity check
 
 APPROACH TAKEN: **compile and invoke the real C code**, not a JSON hand-off.
 
-engine/c/zchezz_v400/nnue.c is self-contained (it defines its own
+engine/c/zchezz_v510/nnue.c (the configured NNU4 engine) is self-contained (it defines its own
 PC_COLOR/PC_TYPE/COL_W/COL_B macros and only includes nnue.h + the C
 standard library — no dependency on board.h/board.c), and it already
 exposes exactly the three functions this parity check needs as public API
@@ -76,7 +76,7 @@ from encoding import king_bucket, halfkp_active_indices, NN_FEAT_IN
 HERE = Path(__file__).resolve().parent
 
 # ═══════════════ CONFIGURATION ═══════════════
-ENGINE_DIR  = "zchezz_v403"  # engine folder whose nnue.c is compiled for the C side
+ENGINE_DIR  = "zchezz_v510"  # NNU4 (HalfKP-4Bucket) engine whose nnue.c is compiled for the C side
 N_POSITIONS = 300            # random positions compared between the C engine and PyTorch
 POSITION_SEED = 42           # RNG seed for _random_positions(), so runs are reproducible
 # ════════════════════════════════════════════

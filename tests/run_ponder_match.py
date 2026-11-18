@@ -12,10 +12,18 @@ import json
 import time
 from pathlib import Path
 
+import sys
+
 import chess
 import chess.engine
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from utils import engine_profiles  # noqa: E402
+
+PROFILES = ("v331", "v332", "v333", "v334", "v335", "v507", "v508", "v509", "v510",
+            "v601", "v602", "v603", "v604", "v605")
+DEFAULT_OPENING_INDEX = 0
 
 OPENINGS = [
     ["e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6"],
@@ -152,14 +160,19 @@ def candidate_score(game: dict) -> float:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--profile", required=True, choices=("v331", "v332", "v333", "v334", "v335", "v507", "v508", "v509", "v510", "v601", "v602", "v603", "v604", "v605"))
-    ap.add_argument("--opening-index", type=int, required=True)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--profile", default=engine_profiles.normalize_profile(None), choices=PROFILES)
+    ap.add_argument("--opening-index", type=int, default=DEFAULT_OPENING_INDEX)
     ap.add_argument("--base-seconds", type=float, default=180.0)
     ap.add_argument("--increment", type=float, default=2.0)
     ap.add_argument("--max-plies", type=int, default=400)
-    ap.add_argument("--output", default="")
+    ap.add_argument("--output", default="", help="result JSON (default: artifacts/ponder/ponder_result_<profile>_<index>.json)")
+    ap.add_argument("--show-config", action="store_true", help="print configuration and exit")
     args = ap.parse_args()
+    if args.show_config:
+        for k, v in sorted(vars(args).items()):
+            print(f"  {k} = {v}")
+        return 0
 
     opening = OPENINGS[args.opening_index % len(OPENINGS)]
     exe = engine_path(args.profile)
@@ -193,7 +206,8 @@ def main() -> int:
         "score": score,
         "games": games,
     }
-    out = Path(args.output or f"ponder_result_{args.profile}_{args.opening_index}.json")
+    out = Path(args.output) if args.output else ROOT / "artifacts" / "ponder" / f"ponder_result_{args.profile}_{args.opening_index}.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2), encoding="utf-8")
     print("PONDER_RESULT " + json.dumps(result, separators=(",", ":")))
     return 0

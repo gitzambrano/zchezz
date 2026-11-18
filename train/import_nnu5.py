@@ -74,7 +74,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--src', type=Path, default=DEFAULT_SRC)
     p.add_argument('--dst', type=Path, default=DEFAULT_DST)
+    p.add_argument('--show-config', action='store_true', help='print configuration and exit')
     a = p.parse_args()
+    if a.show_config:
+        for k, v in sorted(vars(a).items()):
+            print(f'  {k} = {v}')
+        return 0
     convert(a.src, a.dst)
     return 0
 

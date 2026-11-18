@@ -9,7 +9,7 @@ engine/c/zchezz_v334/    previous released engine; NNU3
 engine/c/zchezz_v332/    previous released engine; NNU3
 engine/c/zchezz_v331/    retained comparison baseline; NNU3
 engine/c/zchezz_v328/    frozen NNU3 regression/comparison baseline (pre-v3.29)
-engine/c/zchezz_v327/    frozen NNU3 regression/comparison baseline
+engine/c/zchezz_v327/    frozen NNU3 regression/comparison baseline (uses posix_memalign: does not build with MinGW on Windows)
 engine/c/zchezz_v510/    secondary supported engine; NNU4
 engine/c/zchezz_v508/    previous secondary engine; NNU4
 engine/c/zchezz_v605/    secondary supported engine; NNU5
@@ -24,7 +24,7 @@ experiments/run_experiment.py  canonical experiment runner (specs -> artifacts/e
 experiments/specs/       declarative experiment specs (one JSON per experiment or suite)
 experiments/patches/     candidate source patches applied to a base profile by specs
 tools/                   repository checks, build verification, and publishing tools
-tools/historical/        archived migration scripts, legacy campaigns, and training variants
+tools/historical/        archived migration scripts, legacy campaigns, training variants, and the v402 checkpoint rebuilder
 utils/engine_profiles.py canonical profile + Stockfish resolution
 utils/cliconf.py         small optional-override helper
 utils/uci_score.py       UCI score parsing; converts every engine's score to White-relative

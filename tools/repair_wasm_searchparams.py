@@ -145,7 +145,12 @@ def validate(path: Path, text: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
+    parser.add_argument('--show-config', action='store_true', help='print configuration and exit')
     args = parser.parse_args()
+    if args.show_config:
+        for k, v in sorted(vars(args).items()):
+            print(f'  {k} = {v}')
+        return 0
 
     failed = False
     for path in FILES:

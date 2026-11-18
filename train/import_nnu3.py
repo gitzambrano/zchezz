@@ -5,8 +5,8 @@ import argparse, struct
 from pathlib import Path
 import numpy as np, torch
 ROOT=Path(__file__).resolve().parents[1]
-DEFAULT_SRC=ROOT/'engine/c/zchezz_v325/nnue_weights.bin'
-DEFAULT_DST=ROOT/'checkpoints/v325/latest.pt'
+DEFAULT_SRC=ROOT/'engine/c/zchezz_v335/nnue_weights.bin'
+DEFAULT_DST=ROOT/'checkpoints/v335/latest.pt'
 QA=255.0; QB=64.0
 EXPECTED_DIMS=(799,256,256,64,64); EXPECTED_SIZE=426_864
 
@@ -29,9 +29,19 @@ def read_nnu3(path:Path):
 
 def convert(src:Path,dst:Path):
     state,arch,epoch=read_nnu3(src); dst.parent.mkdir(parents=True,exist_ok=True); tmp=dst.with_suffix(dst.suffix+'.tmp')
-    torch.save({'format':'zchezz_nnu3_checkpoint_v1','arch':arch,'dataset_name':'bootstrap_v325','epoch':epoch,'lr':1e-3,'model':state,'optimizer':None,'metrics':{},'bootstrap':{'source':str(src)}},tmp)
+    torch.save({'format':'zchezz_nnu3_checkpoint_v1','arch':arch,'dataset_name':'bootstrap_'+src.parent.name.replace('zchezz_',''),'epoch':epoch,'lr':1e-3,'model':state,'optimizer':None,'metrics':{},'bootstrap':{'source':str(src)}},tmp)
     tmp.replace(dst); print(f'NNU3 checkpoint: {src} -> {dst}')
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--src',type=Path,default=DEFAULT_SRC); p.add_argument('--dst',type=Path,default=DEFAULT_DST); a=p.parse_args(); convert(a.src,a.dst); return 0
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--src',type=Path,default=DEFAULT_SRC)
+    p.add_argument('--dst',type=Path,default=DEFAULT_DST)
+    p.add_argument('--show-config', action='store_true', help='print configuration and exit')
+    a = p.parse_args()
+    if a.show_config:
+        for k, v in sorted(vars(a).items()):
+            print(f'  {k} = {v}')
+        return 0
+    convert(a.src,a.dst)
+    return 0
 if __name__=='__main__': raise SystemExit(main())

@@ -36,6 +36,7 @@
 - Use Stockfish as the canonical external teacher and benchmark opponent.
 - Resolve Stockfish through `ZCHEZZ_STOCKFISH`, repository-local `engine/stockfish/`, or PATH.
 - Teacher output must normalize scores to a documented common point of view before writing training data.
+- Parse UCI scores through `utils/uci_score.py`. Zchezz engines print `score cp` White-relative; standard UCI engines such as Stockfish print it relative to the side to move. Never assume one convention for every engine.
 - Benchmark defaults are `movetime=200 ms`, engine `Threads=1`, one concurrent game, paired openings with colors reversed, and tablebases disabled unless the test explicitly targets tablebases.
 - Fixed-node (`go nodes`) runs may be used for deterministic search-effort or labeling work, but they are not equivalent to the standard movetime strength protocol and must not replace it for promotion evidence.
 - Do not use a hosted CI timing result as promotion evidence.

@@ -319,7 +319,16 @@ def dense_lookahead_target(eval_cp: np.ndarray,
         Target = k_res * result_prob + (1 - k_res) * sum_m(w_m * v_m)
 
     where v_m is the evaluation m plies ahead (or terminal game outcome if game finishes).
+
+    Precondition: the arrays are the consecutive plies of ONE game. Rows sampled
+    from a dataset are not; use :func:`dense_lookahead_target_indexed` for them.
+    The check below rejects input whose game_result does not alternate; it
+    cannot detect two joined games whose outcomes happen to alternate.
     """
+    gr = np.asarray(game_result)
+    if len(gr) > 1 and np.any(gr[1:] != -gr[:-1]):
+        raise ValueError("dense_lookahead_target: records are not consecutive plies of one game "
+                         "(game_result does not alternate); use dense_lookahead_target_indexed")
     eval_cp = eval_cp.astype(np.float32)
     game_result = game_result.astype(np.float32)
     res_prob = (game_result + 1.0) / 2.0
@@ -344,6 +353,61 @@ def dense_lookahead_target(eval_cp: np.ndarray,
             v_m = res_prob
         v_blend += norm_w * v_m
 
+    k_res = np.float32(k_res)
+    return (k_res * res_prob + (1.0 - k_res) * v_blend).astype(np.float32)
+
+
+LOOKAHEAD_WEIGHTS: tuple[tuple[int, float], ...] = ((0, 0.50), (4, 0.25), (8, 0.15), (12, 0.10))
+
+
+def _piece_count(boards: np.ndarray) -> np.ndarray:
+    return (np.asarray(boards) != 0).sum(axis=1)
+
+
+def dense_lookahead_target_indexed(ds: "MultiShardSelfplay", idx: np.ndarray, k_res: float,
+                                   weights: tuple[tuple[int, float], ...] = LOOKAHEAD_WEIGHTS,
+                                   cp_scale: float = CP_TO_PROB_TEMPERATURE) -> np.ndarray:
+    """Dense lookahead target for rows ``idx`` of ``ds``, side-to-move relative.
+
+        Target = k_res * result_prob + (1 - k_res) * sum_m(w_m * v_m)
+
+    v_m is sigmoid(eval_cp / cp_scale) of the record m plies later in the SAME
+    game, read by global index (so ``idx`` may be any subset, in any order),
+    flipped for odd m. When the game ends before m plies, v_m is the game
+    outcome. Record j+1 continues the game of record j when both are in the
+    same shard, the side to move alternates, game_result alternates, and the
+    piece count does not grow.
+    """
+    idx = np.asarray(idx, dtype=np.int64)
+    n = len(ds)
+    base = ds.get_batch(idx)
+    res_prob = (base["game_result"].astype(np.float32) + 1.0) / 2.0
+    max_m = max(m for m, _ in weights)
+    starts = ds._cum_starts
+    shard0 = np.searchsorted(starts, idx, side="right") - 1
+    prev = base
+    alive = np.ones(len(idx), dtype=bool)
+    ev_at = {0: 1.0 / (1.0 + np.exp(-base["eval_cp"].astype(np.float32) / cp_scale))}
+    alive_at = {0: alive.copy()}
+    for m in range(1, max_m + 1):
+        j = idx + m
+        inside = j < n
+        jc = np.minimum(j, n - 1)
+        cur = ds.get_batch(jc)
+        same_shard = (np.searchsorted(starts, jc, side="right") - 1) == shard0
+        cont = (inside & same_shard
+                & (cur["stm"] != prev["stm"])
+                & (cur["game_result"] == -prev["game_result"])
+                & (_piece_count(cur["board"]) <= _piece_count(prev["board"])))
+        alive &= cont
+        ev_at[m] = 1.0 / (1.0 + np.exp(-cur["eval_cp"].astype(np.float32) / cp_scale))
+        alive_at[m] = alive.copy()
+        prev = cur
+    total_w = sum(w for _, w in weights) or 1.0
+    v_blend = np.zeros(len(idx), dtype=np.float32)
+    for m, w in weights:
+        v = ev_at[m] if m % 2 == 0 else 1.0 - ev_at[m]
+        v_blend += (w / total_w) * np.where(alive_at[m], v, res_prob)
     k_res = np.float32(k_res)
     return (k_res * res_prob + (1.0 - k_res) * v_blend).astype(np.float32)
 
@@ -449,8 +513,13 @@ class MultiShardSelfplay:
         return [(s.path, s.provenance) for s in self._shards]
 
 
-def records_to_fens_and_targets(records: np.ndarray, k: float, use_lookahead: bool = True) -> tuple[list[str], np.ndarray]:
-    """Convert a batch of raw SAMPLE_DTYPE records into (fens, targets)."""
+def records_to_fens_and_targets(records: np.ndarray, k: float, use_lookahead: bool = False) -> tuple[list[str], np.ndarray]:
+    """Convert a batch of raw SAMPLE_DTYPE records into (fens, targets).
+
+    Targets are ``wl_target(k)``. ``use_lookahead=True`` is valid only when
+    ``records`` are the consecutive plies of ONE game; for rows sampled from a
+    dataset use :func:`dense_lookahead_target_indexed`.
+    """
     _TYPE_LETTER = {1: "p", 2: "n", 3: "b", 4: "r", 5: "q", 6: "k"}
 
     fens: list[str] = []

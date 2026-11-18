@@ -143,8 +143,9 @@ DEFAULT_TARS = [
     "test91/training-run2-test91-20260820-0217.tar",
     "test91/training-run2-test91-20260820-0317.tar",
 ]
-RAW_DIR = "C:/Zchezz/data_raw/lc0"                # downloaded .tar cache (gitignored)
-OUT_DIR = "C:/Zchezz/data/lc0_test91_res"         # trainer-visible DATASETS dir
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+RAW_DIR = os.path.join(_ROOT, "data_raw", "lc0")                # downloaded .tar cache (gitignored)
+OUT_DIR = os.path.join(_ROOT, "data", "lc0_test91_res")       # trainer-visible DATASETS dir
 SAMPLE_EVERY = 10                                 # keep every Nth record; positions inside a
                                                   # game are highly correlated, N=10 keeps ~10%
 MAX_TOTAL_ROWS = 1_000_000                        # stop converting once this many rows are kept
@@ -174,7 +175,7 @@ BIG_DATE_FROM    = "20260801"                     # inclusive YYYYMMDD window
 BIG_DATE_TO      = "20260831"                     # inclusive
 BIG_BUDGET_GB    = 20.0                           # compressed tar volume to pull
 BIG_SAMPLE_EVERY = 10                             # keep every Nth record
-BIG_OUT_DIR      = "C:/Zchezz/data/lc0_t91_big_res"
+BIG_OUT_DIR      = os.path.join(_ROOT, "data", "lc0_t91_big_res")
 BIG_GO           = False                          # False = plan only; --go flips this
 DL_WORKERS       = 6                              # parallel tar downloads (server allows it;
                                                   # measured ~2 MB/s per connection)
@@ -747,7 +748,13 @@ def main() -> None:
                    help="output dir used by --big when --out-dir is left at its default")
     g.add_argument("--dl-workers", type=int, default=DL_WORKERS,
                    help=f"parallel tar downloads (default: {DL_WORKERS})")
+    p.add_argument("--show-config", action="store_true", help="print configuration and exit")
     args = p.parse_args()
+
+    if args.show_config:
+        for k, v in sorted(vars(args).items()):
+            print(f"  {k} = {v}")
+        return
 
     if args.self_test:
         self_test()

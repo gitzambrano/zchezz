@@ -1,12 +1,21 @@
 import subprocess, time, re, sys, os
 
+if __name__ != "__main__":                 # a script, not a pytest module: run it directly
+    import pytest
+    pytest.skip("script; run `python tests/test_uci.py`", allow_module_level=True)
+
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, _ROOT)
+from utils import engine_profiles  # noqa: E402
+_PROFILE = engine_profiles.profile()                # v335 unless ZCHEZZ_ENGINE overrides it
+
 # ═══════════════ CONFIGURATION ═══════════════
 # Edit these and run with no arguments; every one is also a CLI flag that
 # overrides it (CLAUDE.md rule 8, see the COMMAND LINE block below).
-REPO_DIR = r"c:\Zchezz"                          # working directory the engine is launched from
-ENGINE_EXE = r"engine\c\zchezz_v400\zchezz.exe"  # engine binary under test (relative to REPO_DIR)
-NNUE_WEIGHTS = r"C:\Zchezz\engine\c\zchezz_v400\nnue_weights.bin"  # NNUE weights loaded via setoption
-SYZYGY_PATH = r"C:\Zchezz\tablebases"   # Syzygy tablebase directory loaded via setoption
+REPO_DIR = _ROOT                                 # working directory the engine is launched from
+ENGINE_EXE = str(_PROFILE.engine_dir / "zchezz.exe")  # engine binary under test (absolute, or relative to REPO_DIR)
+NNUE_WEIGHTS = str(_PROFILE.weights)  # NNUE weights loaded via setoption
+SYZYGY_PATH = os.path.join(_ROOT, "tablebases")   # Syzygy tablebase directory loaded via setoption
 READYOK_TIMEOUT_S = 5   # seconds to wait for "readyok"/"uciok" before giving up
 MOVETIME_MS = 500       # per-search budget for the main search / TB tests
 MOVES_MOVETIME_MS = 100 # per-search budget while replaying the move sequence
@@ -63,6 +72,8 @@ def read_until(keyword, timeout=READYOK_TIMEOUT_S):
 
 PASS = 0
 FAIL = 0
+
+SKIPPED = []   # missing evidence, reported separately; not a pass
 
 def check(name, condition):
     global PASS, FAIL
@@ -166,7 +177,16 @@ if tb_lines:
 bm_line = [l for l in lines if "bestmove" in l]
 if bm_line:
     print(f"  Best move: {bm_line[0].split()[1]}")
-check("TB probed (tbhits > 0)", tbhits > 0)
+_engine_dir = os.path.dirname(os.path.abspath(exe))
+if not os.path.isfile(os.path.join(_engine_dir, "tbprobe.c")):
+    # The build matrix compiles Fathom only when tbprobe.c/.h exist in the engine dir.
+    SKIPPED.append("TB probed (engine built without Fathom: no tbprobe.c in engine dir)")
+    print(f"  [SKIP] {SKIPPED[-1]}")
+elif not os.path.isdir(SYZYGY_PATH):
+    SKIPPED.append(f"TB probed (no tablebase directory at {SYZYGY_PATH})")
+    print(f"  [SKIP] {SKIPPED[-1]}")
+else:
+    check("TB probed (tbhits > 0)", tbhits > 0)
 print()
 
 # Test 6: Auto-load NNUE (no setoption, just isready)
@@ -220,7 +240,7 @@ print()
 
 # Summary
 print("=" * 50)
-print(f"RESULTS: {PASS} passed, {FAIL} failed")
+print(f"RESULTS: {PASS} passed, {FAIL} failed, {len(SKIPPED)} skipped")
 if FAIL > 0:
     print("*** SOME TESTS FAILED ***")
     sys.exit(1)

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Export a v506 HalfKP-4-Bucket checkpoint to NNU4."""
+"""Export an NNU4 (HalfKP-4-Bucket) checkpoint; the bare default is the v510 checkpoint."""
 from __future__ import annotations
 import argparse, struct
 from pathlib import Path
 import numpy as np, torch
 ROOT=Path(__file__).resolve().parents[1]; L1_IN=2560; L1_OUT=48; L2_IN=96; L2_OUT=20; L3_IN=20
 QA=255.0; QB=64.0; SHIFT=8.0; QA_EFF=254.0; OUT_SCALE=320.0/(QB*QB); EXPECTED_SIZE=248_020
-DEFAULT_CKPT=ROOT/'checkpoints/v506/latest.pt'; DEFAULT_DST=ROOT/'artifacts/nnu4/nnue_weights.bin'
+DEFAULT_CKPT=ROOT/'checkpoints/v510/latest.pt'; DEFAULT_DST=ROOT/'artifacts/nnu4/nnue_weights.bin'
 def _q(a,scale,limit,dtype,name):
     q=np.rint(a*scale); n=int((np.abs(q)>limit).sum())
     if n: print(f'WARNING: clipping {n} {name} values')
@@ -25,5 +25,15 @@ def convert(ckpt_path:Path,dst:Path):
     if dst.stat().st_size!=EXPECTED_SIZE: dst.unlink(missing_ok=True); raise ValueError('NNU4 size mismatch')
     print(f'NNU4 export: {ckpt_path} -> {dst} ({EXPECTED_SIZE} bytes)')
 def main():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--checkpoint',type=Path,default=DEFAULT_CKPT); p.add_argument('--output',type=Path,default=DEFAULT_DST); a=p.parse_args(); convert(a.checkpoint,a.output); return 0
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--checkpoint',type=Path,default=DEFAULT_CKPT)
+    p.add_argument('--output',type=Path,default=DEFAULT_DST)
+    p.add_argument('--show-config', action='store_true', help='print configuration and exit')
+    a = p.parse_args()
+    if a.show_config:
+        for k, v in sorted(vars(a).items()):
+            print(f'  {k} = {v}')
+        return 0
+    convert(a.checkpoint,a.output)
+    return 0
 if __name__=='__main__': raise SystemExit(main())

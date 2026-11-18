@@ -233,14 +233,17 @@ def iter_bin_source(source: infra.SourceSpec, split: str, epoch: int,
     idx = _bin_indices(source, len(ds), split, epoch, args)
     step = min(args.parquet_chunk_rows, args.max_positions_chunk)
     for start in range(0, len(idx), step):
-        records = ds.get_batch(idx[start:start + step])
+        chunk_idx = idx[start:start + step]
+        records = ds.get_batch(chunk_idx)
         fens, y = dataset.records_to_fens_and_targets(records, k=source.k)
+        if source.k < 1.0:   # dense lookahead over later plies of the same game
+            y = dataset.dense_lookahead_target_indexed(ds, chunk_idx, k_res=source.k)
         legal = _legal_mask(fens)
         if not legal.all():
-            records = records[legal]
-            if len(records) == 0:
+            fens = [f for f, ok in zip(fens, legal) if ok]
+            y = y[legal]
+            if not fens:
                 continue
-            fens, y = dataset.records_to_fens_and_targets(records, k=source.k)
         # dataset.wl_target is already STM-relative. The encoder normalizes the
         # board to STM perspective, so do NOT flip y a second time.
         x, _ = encode_positions(fens, workers=args.workers)

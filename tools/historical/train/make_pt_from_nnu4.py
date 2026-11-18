@@ -1,5 +1,5 @@
 """
-train/make_pt_from_nnu4.py — NNU4 binary -> train_nnue.py checkpoint (.pt)
+tools/historical/train/make_pt_from_nnu4.py — v402 NNU4 binary -> train_nnue.py checkpoint (.pt)
 
 Inverse of export_nnu4.py. Exists because the ORIGINAL v402 training
 checkpoint is not on disk anymore (only its exported nnue_weights.bin),
@@ -10,8 +10,11 @@ float. The round-trip is exact to within float rounding (quantize(
 dequantize(q)) == q), verified by --verify below.
 
 USAGE
-    python train/make_pt_from_nnu4.py                     # CONFIGURATION block
-    python train/make_pt_from_nnu4.py --verify            # round-trip check
+    python tools/historical/train/make_pt_from_nnu4.py                     # CONFIGURATION block
+    python tools/historical/train/make_pt_from_nnu4.py --verify            # round-trip check
+
+Historical snapshot for the v402 layout (2560-input L1). Current NNU4
+profiles use train/import_nnu4.py, which reads the selected profile.
 """
 
 import argparse
@@ -29,8 +32,9 @@ OUT_SCALE = 320.0 / (QB * QB)
 MAGIC = b"NNU4"
 
 # ═══════════════ CONFIGURATION ═══════════════
-SRC_NNU4 = Path("C:/Zchezz/engine/c/zchezz_v402/nnue_weights.bin")  # input NNU4 binary
-DST_PT   = Path("C:/Zchezz/checkpoints/v402/v402_from_nnu4.pt")     # output .pt path
+ROOT = Path(__file__).resolve().parents[3]
+SRC_NNU4 = ROOT / "engine/c/zchezz_v402/nnue_weights.bin"  # input NNU4 binary
+DST_PT   = ROOT / "checkpoints/v402/v402_from_nnu4.pt"                # output .pt path
 TAG      = "v402_restored"                                          # dataset-name stored in ckpt
 EPOCH    = 0                                                        # epoch number to record
 # ═════════════════════════════════════════════

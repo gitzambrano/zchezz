@@ -33,8 +33,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #  Set the two engine versions here, ONCE. Every engine name, dict key and
 #  printed label below is derived from them.
 # ═══════════════════════════════════════════════════════════════════════════════
-HEAD_VERSION = "v400"    # engine under test
-BASE_VERSION = "v314"    # previous stable, the NPS baseline to compare against
+HEAD_VERSION = "v335"    # engine under test (repository default)
+BASE_VERSION = "v334"    # previous frozen NNU3 baseline, the NPS baseline to compare against
 NPS_FAIL_PCT = 5.0       # fail the run if head is more than this % slower than
                          # base on opening+middlegame (endgame NPS is NOT
                          # comparable: TB prunes subtrees, so fewer nodes are

@@ -1,7 +1,8 @@
 """Contract: every runner that records engine scores stores them White-relative.
 
-Zchezz engines report ``score cp`` White-relative and print ``score mate`` with
-no usable sign; standard UCI engines report the side to move. The runners must
+Zchezz engines report ``score cp`` White-relative. The active lines (v335,
+v510, v605) print ``score mate`` White-relative too; older builds print it with
+no usable sign. Standard UCI engines report the side to move. The runners must
 store the same White-relative value for the same position whichever engine
 searched it. The integration cases use decisive positions (one side a queen
 up) with both sides to move. A missing binary skips its case, which is missing
@@ -156,3 +157,33 @@ def test_stockfish_teachers_refuse_zchezz(module):
         else:
             mod.SF_PATH = str(exe)
             mod.StockfishEngine()
+
+
+MATE_IN_1 = [  # (fen, White-relative sign of the mate)
+    ("6k1/5ppp/8/8/8/8/8/R5K1 w - - 0 1", +1),      # Ra8#
+    ("r5k1/8/8/8/8/8/5PPP/6K1 b - - 0 1", -1),      # Ra1#
+]
+
+
+@pytest.mark.parametrize("prof", ["v335", "v510", "v605"])
+def test_active_engines_print_white_relative_mate(prof):
+    """main.c uci_info_cb: mate_in > 0 when White mates, < 0 when Black mates."""
+    import re
+    import subprocess
+    exe = ROOT / "engine" / "c" / f"zchezz_{prof}" / "zchezz.exe"
+    if not exe.is_file():
+        pytest.skip(f"{prof} binary not built: {exe}")
+    for fen, sign in MATE_IN_1:
+        cmds = f"uci\nisready\nposition fen {fen}\ngo depth 6\n"
+        p = subprocess.Popen([str(exe)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.DEVNULL, text=True, cwd=str(exe.parent))
+        p.stdin.write(cmds); p.stdin.flush()
+        mates = []
+        for line in p.stdout:
+            m = re.search(r"score mate (-?\d+)", line)
+            if m:
+                mates.append(int(m.group(1)))
+            if line.startswith("bestmove"):
+                break
+        p.stdin.write("quit\n"); p.stdin.flush(); p.wait(timeout=10)
+        assert mates and mates[-1] == sign, f"{prof} {fen}: mate scores {mates}, expected {sign:+d}"

@@ -412,9 +412,12 @@ static void uci_info_cb(int depth, int score, long nodes, const char *pv, int tu
     int hf = tt_hashfull();
     extern long s_tb_hits;
     pthread_mutex_lock(&g_io_mutex);
-    int is_mate = (score > 9000 || score < -9000);
+    /* score is White-relative. Mate scores are +-(19000 - ply) with
+     * ply <= MAX_PLY; tablebase wins are +-(18000 - ply) and print as cp.
+     * mate_in is positive when White mates, negative when Black mates. */
+    int is_mate = (score > 18500 || score < -18500);
     if (is_mate) {
-        int plies = score > 0 ? (19000 - score) : -(19000 + score);
+        int plies = score > 0 ? (19000 - score) : (19000 + score);
         int mate_in = (plies + 1) / 2;
         if (score < 0) mate_in = -mate_in;
         printf("info depth %d seldepth %d", depth, depth);

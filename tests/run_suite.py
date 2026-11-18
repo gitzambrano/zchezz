@@ -98,7 +98,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # directory it is launched from — the same convention run_arena.py and
 # run_selfplay_native.py use (they call this REPO_ROOT too).
 REPO_ROOT  = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENGINE_DIR = os.path.join(REPO_ROOT, "engine", "c", "zchezz_v402")
+sys.path.insert(0, REPO_ROOT)
+from utils import engine_profiles  # noqa: E402
+ENGINE_DIR = str(engine_profiles.profile().engine_dir)   # v335 unless ZCHEZZ_ENGINE overrides it
 
 # ── Engines ───────────────────────────────────────────────────────────────────
 # ENGINE_2 = None  →  modo single-engine (sem tabela comparativa).

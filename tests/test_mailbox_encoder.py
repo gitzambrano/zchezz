@@ -46,7 +46,8 @@ BIN_PATH = None                 # path to an existing .bin fixture; None = gener
 SELFPLAY_GAMES = 8              # games to generate when BIN_PATH is None
 SELFPLAY_THREADS = 2            # worker threads for the generator run
 SELFPLAY_MOVETIME_MS = 40       # per-move budget, milliseconds
-SELFPLAY_NNUE = os.path.join(os.path.dirname(__file__), "random_nnu4.bin")
+SELFPLAY_NNUE = os.path.join(os.path.dirname(__file__), "random_nnu4.bin")  # optional; see _resolve_selfplay_nnue
+TOOLS_FALLBACK_PROFILE = "v510"      # default TOOLS_ENGINE in engine/build/Makefile
 SELFPLAY_EXE = os.path.join(os.path.dirname(__file__), "..", "engine", "build", "selfplay.exe")
 BATCH_SIZE = 50_000              # rows encoded per encode_mailbox_batch() call
 BIN_PATH_DEFAULT = ""            # "" keeps BIN_PATH = None (generate a fixture);
@@ -72,6 +73,23 @@ CLI = [
 ]
 
 
+def _resolve_selfplay_nnue() -> str:
+    """Return SELFPLAY_NNUE, or the installed weights of TOOLS_FALLBACK_PROFILE.
+
+    The fallback is correct only when selfplay.exe was built with the default
+    TOOLS_ENGINE (engine/build/Makefile). Pass --nnue for any other build.
+    """
+    if os.path.isfile(SELFPLAY_NNUE):
+        return SELFPLAY_NNUE
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    w = os.path.join(root, "engine", "c", f"zchezz_{TOOLS_FALLBACK_PROFILE}", "nnue_weights.bin")
+    if not os.path.isfile(w):
+        raise SystemExit(f"{SELFPLAY_NNUE} and {w} not found; pass --nnue")
+    print(f"[mailbox] {SELFPLAY_NNUE} not found; using {w} (selfplay.exe must be built with "
+          f"TOOLS_ENGINE={TOOLS_FALLBACK_PROFILE})")
+    return w
+
+
 def _generate_fixture() -> str:
     """Runs engine/build/selfplay.exe to produce a small real .bin fixture,
     exercising real search output (not synthetic boards) — the same
@@ -79,7 +97,7 @@ def _generate_fixture() -> str:
     if not os.path.isfile(SELFPLAY_EXE):
         raise FileNotFoundError(
             f"selfplay.exe not found at {SELFPLAY_EXE!r} — build it first: "
-            f"cd engine/build && mingw32-make ENGINE=v400 selfplay")
+            f"cd engine/build && make selfplay (TOOLS_ENGINE=v510)")
     tmp_dir = tempfile.mkdtemp(prefix="zchezz_mailbox_parity_")
     out_path = os.path.join(tmp_dir, "p.bin")
     cmd = [
@@ -87,7 +105,7 @@ def _generate_fixture() -> str:
         "--games", str(SELFPLAY_GAMES),
         "--threads", str(SELFPLAY_THREADS),
         "--movetime", str(SELFPLAY_MOVETIME_MS),
-        "--nnue", SELFPLAY_NNUE,
+        "--nnue", _resolve_selfplay_nnue(),
         "--out", out_path,
     ]
     print(f"[fixture] generating: {' '.join(cmd)}")
@@ -104,12 +122,13 @@ def _fen_reference_indices(fen: str) -> tuple[set[int], set[int]]:
 
 def main() -> int:
     bin_path = BIN_PATH_DEFAULT or BIN_PATH or _generate_fixture()
-    size = os.path.getsize(bin_path)
+    header_size, _prov = dataset.read_bin_header(bin_path)   # 0 for headerless v1 files
+    size = os.path.getsize(bin_path) - header_size
     assert size % dataset.SAMPLE_DTYPE.itemsize == 0, (
-        f"{bin_path}: size {size} is not a multiple of record size "
+        f"{bin_path}: payload size {size} is not a multiple of record size "
         f"{dataset.SAMPLE_DTYPE.itemsize}")
     n_rows = size // dataset.SAMPLE_DTYPE.itemsize
-    records = np.fromfile(bin_path, dtype=dataset.SAMPLE_DTYPE, count=n_rows)
+    records = np.fromfile(bin_path, dtype=dataset.SAMPLE_DTYPE, count=n_rows, offset=header_size)
     print(f"[parity] {bin_path}: {n_rows} records")
     assert n_rows > 0, "fixture produced zero records — nothing to test"
 

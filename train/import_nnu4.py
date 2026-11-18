@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse, math, struct
 from pathlib import Path
 import numpy as np, torch
-ROOT=Path(__file__).resolve().parents[1]; DEFAULT_SRC=ROOT/'engine/c/zchezz_v506/nnue_weights.bin'; DEFAULT_DST=ROOT/'checkpoints/v506/latest.pt'
+ROOT=Path(__file__).resolve().parents[1]; DEFAULT_SRC=ROOT/'engine/c/zchezz_v510/nnue_weights.bin'; DEFAULT_DST=ROOT/'checkpoints/v510/latest.pt'
 QA=255.0; QB=64.0; SHIFT=8.0; OUT_SCALE=320.0/(QB*QB)
 
 def read_nnu4(path: Path):
@@ -28,8 +28,18 @@ def read_nnu4(path: Path):
 
 def convert(src:Path,dst:Path):
     weights,arch,epoch=read_nnu4(src); dst.parent.mkdir(parents=True,exist_ok=True); tmp=dst.with_suffix(dst.suffix+'.tmp')
-    torch.save({'epoch':epoch,'dataset':'bootstrap_v506','arch':arch,'qat':True,'qa':QA,'qb':QB,'weights':weights,'bootstrap':{'source':str(src)}},tmp); tmp.replace(dst); print(f'NNU4 checkpoint: {src} -> {dst}')
+    torch.save({'epoch':epoch,'dataset':'bootstrap_'+src.parent.name.replace('zchezz_',''),'arch':arch,'qat':True,'qa':QA,'qb':QB,'weights':weights,'bootstrap':{'source':str(src)}},tmp); tmp.replace(dst); print(f'NNU4 checkpoint: {src} -> {dst}')
 
 def main():
-    p=argparse.ArgumentParser(description=__doc__); p.add_argument('--src',type=Path,default=DEFAULT_SRC); p.add_argument('--dst',type=Path,default=DEFAULT_DST); a=p.parse_args(); convert(a.src,a.dst); return 0
+    p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--src',type=Path,default=DEFAULT_SRC)
+    p.add_argument('--dst',type=Path,default=DEFAULT_DST)
+    p.add_argument('--show-config', action='store_true', help='print configuration and exit')
+    a = p.parse_args()
+    if a.show_config:
+        for k, v in sorted(vars(a).items()):
+            print(f'  {k} = {v}')
+        return 0
+    convert(a.src,a.dst)
+    return 0
 if __name__=='__main__': raise SystemExit(main())

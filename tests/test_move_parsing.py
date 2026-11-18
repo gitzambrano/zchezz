@@ -1,12 +1,21 @@
 """Test: verify Zchezz correctly applies long move sequences"""
-import subprocess, time, os, threading
+import subprocess, time, os, sys, threading
+
+if __name__ != "__main__":                 # a script, not a pytest module: run it directly
+    import pytest
+    pytest.skip("script; run `python tests/test_move_parsing.py`", allow_module_level=True)
+
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+sys.path.insert(0, _ROOT)
+from utils import engine_profiles  # noqa: E402
+_PROFILE = engine_profiles.profile()                # v335 unless ZCHEZZ_ENGINE overrides it
 
 # ═══════════════ CONFIGURATION ═══════════════
 # Edit these and run with no arguments; every one is also a CLI flag that
 # overrides it (CLAUDE.md rule 8, see the COMMAND LINE block below).
-REPO_DIR = r"c:\Zchezz"                          # working directory the engine is launched from
-ENGINE_EXE = r"engine\c\zchezz_v400\zchezz.exe"  # engine binary under test
-NNUE_WEIGHTS = r"C:\Zchezz\engine\c\zchezz_v400\nnue_weights.bin"  # NNUE weights loaded via setoption
+REPO_DIR = _ROOT                                 # working directory the engine is launched from
+ENGINE_EXE = str(_PROFILE.engine_dir / "zchezz.exe")  # engine binary under test
+NNUE_WEIGHTS = str(_PROFILE.weights)  # NNUE weights loaded via setoption
 DISPLAY_READ_TIMEOUT_S = 2   # seconds to read the "d" board-display output
 SEARCH_TIMEOUT_S = 10        # seconds to wait for "bestmove"
 # The exact moves from the failed game this test was written for. Replace it
@@ -18,7 +27,6 @@ MOVES = "e2e4 c7c5 d2d4 c5d4 g1f3 g7g6 f3d4 g8f6 b1c3 b8c6 d4c6 b7c6 e4e5 f6h5 f
 # `python tests/test_move_parsing.py` runs exactly what the block above says;
 # the flags only override it. See utils/cliconf.py.
 # ════════════════════════════════════════════
-import sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils"))
 from cliconf import override_from_cli  # noqa: E402
 

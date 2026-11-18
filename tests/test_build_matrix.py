@@ -2,15 +2,26 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "engine" / "build" / "build_matrix.py"
 
 sys.path.insert(0, str(ROOT / "utils"))
 from engine_profiles import DEFAULT_PROFILE, PROFILES  # noqa: E402
+
+
+def _make() -> str:
+    """GNU make on PATH: `make`, or MinGW's `mingw32-make` on Windows."""
+    exe = shutil.which("make") or shutil.which("mingw32-make")
+    if not exe:
+        pytest.skip("GNU make not found (make or mingw32-make)")
+    return exe
 
 
 def _matrix():
@@ -67,7 +78,7 @@ def test_host_native_and_portable_makefiles_have_distinct_outputs():
     assert "zchezz$(OUTPUT_SUFFIX).exe" in shared
     assert '"--output-suffix=$(OUTPUT_SUFFIX)"' in shared
     for mk, suffix, flag_expected in (("Makefile.native", "zchezz.exe", True), ("Makefile.portable", "zchezz.portable.exe", False)):
-        run = subprocess.run(["make", "-C", str(build), "-f", mk, "-n", "-B", "native"],
+        run = subprocess.run([_make(), "-C", str(build), "-f", mk, "-n", "-B", "native"],
                              text=True, capture_output=True, check=True)
         assert suffix in run.stdout
         assert ("-march=native" in run.stdout) is flag_expected

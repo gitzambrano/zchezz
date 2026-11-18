@@ -21,7 +21,7 @@ zchezz.exe instead of selfplay.exe): before every run, this script
 mtime-checks selfplay.exe against every source file the Makefile's
 `selfplay` target actually depends on (SELFPLAY_SRCS — see
 BUILD_DEPS below, kept in sync BY HAND with engine/build/Makefile)
-and rebuilds via `mingw32-make`/`make ENGINE=v403 selfplay` whenever
+and rebuilds via `mingw32-make`/`make TOOLS_ENGINE=v510 selfplay` whenever
 any of them is newer. This is the "auto-compile every time we start
 a selfplay run" behavior requested for this tool. Everything else —
 game playing, temperature move selection, TT policy, opening
@@ -110,7 +110,10 @@ import argparse
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD_DIR = os.path.join(REPO_ROOT, "engine", "build")
 TOOLS_DIR = os.path.join(REPO_ROOT, "engine", "c", "tools")
-ENGINE_DIR = os.path.join(REPO_ROOT, "engine", "c", "zchezz_v403")
+# Engine sources linked into the shared tool binaries. Must equal the default
+# TOOLS_ENGINE in engine/build/Makefile so `make` and the gcc fallback agree.
+TOOLS_ENGINE = "v510"
+ENGINE_DIR = os.path.join(REPO_ROOT, "engine", "c", f"zchezz_{TOOLS_ENGINE}")
 # selfplay.exe is a SHARED tool binary, built in engine/build/ (NOT inside
 # any engine/c/zchezz_vXXX/ folder) — see header comment above and
 # README.md's engine/c/tools/ file inventory.
@@ -139,17 +142,17 @@ BUILD_DEPS += glob.glob(os.path.join(ENGINE_DIR, "*.h"))
 # target verbatim (see that Makefile and engine/c/tools/selfplay.c's own
 # header "BUILD" section for the exact same command spelled out).
 DIRECT_GCC_BUILD_CMD = [
-    "gcc", "-O3", "-ffast-math", "-D_GNU_SOURCE", "-std=c11", "-mavx2",
-    "-I" + os.path.join("..", "c", "zchezz_v403"), "-DNO_TABLEBASES", "-DNO_BOOK",
+    "gcc", "-O3", "-ffast-math", "-D_GNU_SOURCE", "-std=c11", "-march=native", f"-DSAMPLE_ENGINE_VERSION={TOOLS_ENGINE[1:]}",
+    "-I" + os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}"), "-DNO_TABLEBASES", "-DNO_BOOK",
     "-Wno-unused-variable", "-Wno-unused-but-set-variable",
     "-Wno-maybe-uninitialized", "-Wno-misleading-indentation",
     "-Wno-sign-compare", "-Wno-unused-function", "-Wno-parentheses",
     "-o", "selfplay.exe",
     os.path.join("..", "c", "tools", "selfplay.c"),
     os.path.join("..", "c", "tools", "opening_pool.c"),
-    os.path.join("..", "c", "zchezz_v402", "board.c"),
-    os.path.join("..", "c", "zchezz_v402", "search.c"),
-    os.path.join("..", "c", "zchezz_v402", "nnue.c"),
+    os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}", "board.c"),
+    os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}", "search.c"),
+    os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}", "nnue.c"),
     "-static", "-lm", "-pthread",
 ]
 
@@ -265,7 +268,7 @@ def ensure_selfplay_built():
         log(f"selfplay.exe is up to date, reusing {SELFPLAY_EXE}")
         return True
 
-    for make_cmd in (["make", "ENGINE=v402", "selfplay"], ["mingw32-make", "ENGINE=v402", "selfplay"]):
+    for make_cmd in (["make", f"TOOLS_ENGINE={TOOLS_ENGINE}", "selfplay"], ["mingw32-make", f"TOOLS_ENGINE={TOOLS_ENGINE}", "selfplay"]):
         try:
             r = run(make_cmd, cwd=BUILD_DIR)
         except FileNotFoundError:

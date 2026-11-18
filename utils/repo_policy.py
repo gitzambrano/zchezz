@@ -5,15 +5,9 @@ import ast
 import re
 from pathlib import Path
 
-LEGACY_ABSOLUTE_ROOT_ALLOWLIST = {
-    "tests/run_tournament.py",
-    "tests/test_move_parsing.py",
-    "tests/test_uci.py",
-    "train/export_nnu4.py",
-    "train/make_pt_from_nnu4.py",
-    "train/train_nnue.py",
-    "train/labeling/import_lc0.py",
-}
+# Files that may still contain an absolute C:\Zchezz path. Keep it empty:
+# tracked paths must be repository-relative.
+LEGACY_ABSOLUTE_ROOT_ALLOWLIST: set[str] = set()
 
 ABSOLUTE_ZCHEZZ_RE = re.compile(r"(?i)c:[\\/]+zchezz")
 

@@ -7,7 +7,7 @@ arena.exe already knows how to play two IN-PROCESS kinds of player
 ("net:<weights.nnu4>" and "uci:<already-built .exe>") against each
 other or in a round-robin/gauntlet — see engine/c/tools/arena.c's
 header comment for the full design (Appendix F.4 of
-docs/v400_implementation_plan.md).
+docs/).
 
 NOTE ON THE BUILD LAYOUT: engine/c/tools/arena.c is SHARED across
 engine versions (it tracks the current engine API only, see
@@ -262,7 +262,7 @@ DEFAULT_PLAYERS: list[str] = [
 # own docs say a release build uses — no drift between "how a human
 # builds v3.14" and "how this script builds v3.14".
 BUILD_CMD_TEMPLATE = [
-    "gcc", "-O3", "-ffast-math", "-D_GNU_SOURCE", "-std=c11", "-mavx2",
+    "gcc", "-O3", "-ffast-math", "-D_GNU_SOURCE", "-std=c11", "-march=native",
     "-I.", "-Wno-unused-variable", "-Wno-unused-but-set-variable",
     "-Wno-maybe-uninitialized", "-Wno-misleading-indentation",
     "-Wno-sign-compare", "-Wno-unused-function", "-Wno-parentheses",
@@ -438,20 +438,22 @@ def resolve_player_spec(spec):
 # `mingw32-make` is on PATH (observed on at least one dev machine in this
 # project: MSYS2/MinGW ships `mingw32-make`, not a `make` alias, and plain
 # `gcc`-only setups may have neither). Paths are relative to BUILD_DIR,
-# matching how the Makefile itself invokes gcc (ENGINE=v400 baked in here
-# since this fallback only serves resolve_head()'s HEAD-in-place case).
+# matching how the Makefile itself invokes gcc with TOOLS_ENGINE below.
+# Engine sources linked into the shared tool binaries. Must equal the default
+# TOOLS_ENGINE in engine/build/Makefile so `make` and the gcc fallback agree.
+TOOLS_ENGINE = "v510"
 ARENA_BUILD_CMD_TEMPLATE = [
-    "gcc", "-O3", "-ffast-math", "-D_GNU_SOURCE", "-std=c11", "-mavx2",
-    "-I" + os.path.join("..", "c", "zchezz_v403"), "-DNO_TABLEBASES", "-DNO_BOOK",
+    "gcc", "-O3", "-ffast-math", "-D_GNU_SOURCE", "-std=c11", "-march=native",
+    "-I" + os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}"), "-DNO_TABLEBASES", "-DNO_BOOK",
     "-Wno-unused-variable", "-Wno-unused-but-set-variable",
     "-Wno-maybe-uninitialized", "-Wno-misleading-indentation",
     "-Wno-sign-compare", "-Wno-unused-function", "-Wno-parentheses",
     "-o", "arena.exe",
     os.path.join("..", "c", "tools", "arena.c"),
     os.path.join("..", "c", "tools", "opening_pool.c"),
-    os.path.join("..", "c", "zchezz_v403", "board.c"),
-    os.path.join("..", "c", "zchezz_v403", "search.c"),
-    os.path.join("..", "c", "zchezz_v403", "nnue.c"),
+    os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}", "board.c"),
+    os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}", "search.c"),
+    os.path.join("..", "c", f"zchezz_{TOOLS_ENGINE}", "nnue.c"),
     "-static", "-lm", "-pthread",
 ]
 
@@ -463,7 +465,7 @@ def ensure_arena_built():
             return True
         log("arena.exe is older than engine/c/tools/arena.c — rebuilding")
 
-    for make_cmd in (["make", "ENGINE=v403", "arena"], ["mingw32-make", "ENGINE=v403", "arena"]):
+    for make_cmd in (["make", f"TOOLS_ENGINE={TOOLS_ENGINE}", "arena"], ["mingw32-make", f"TOOLS_ENGINE={TOOLS_ENGINE}", "arena"]):
         try:
             r = run(make_cmd, cwd=BUILD_DIR)
         except FileNotFoundError:
