@@ -90,9 +90,11 @@ echo "[1/4] Agrupando shards de self-play em ${SHARDS_DIR}..."
 SHARDS_COUNT=0
 
 # Busca em subpastas conhecidas do Google Drive
+AUDIT_ARGS=()
 for sub in "selfplay_v507" "selfplay_v507_r2" "selfplay_v331" "selfplay_v331_r2" "v507_shards" "v331_shards"; do
     SRC_PATH="${DRIVE_DIR}/${sub}"
     if [[ -d "${SRC_PATH}" ]]; then
+        AUDIT_ARGS+=(--dataset "${sub}")
         echo "  Localizando shards em ${SRC_PATH}..."
         for f in "${SRC_PATH}"/*.bin; do
             if [[ -f "${f}" ]]; then
@@ -120,6 +122,16 @@ if [[ -d "/content/zchezz_shards" ]]; then
 fi
 
 echo "  Total de shards consolidados: ${SHARDS_COUNT}"
+
+# Auditoria obrigatória do sinal do cp antes de treinar (docs/datasets.md, regra 6).
+# Um shard com cp invertido para um dos lados interrompe o treino.
+if [[ "${#AUDIT_ARGS[@]}" -gt 0 && "${SKIP_AUDIT:-0}" != "1" ]]; then
+    echo "  Auditando os shards do Drive (train/labeling/audit_datasets.py)..."
+    if ! python3 "${REPO_ROOT}/train/labeling/audit_datasets.py" --data-root "${DRIVE_DIR}" "${AUDIT_ARGS[@]}"; then
+        echo "ERRO: a auditoria reprovou shards em ${DRIVE_DIR}. Corrija ou mova-os para _quarantine antes de treinar." >&2
+        exit 1
+    fi
+fi
 
 if [[ "${SHARDS_COUNT}" -eq 0 ]]; then
     echo "ERRO: Nenhum shard .bin encontrado para treinamento em ${DRIVE_DIR} ou /content/zchezz_shards." >&2
