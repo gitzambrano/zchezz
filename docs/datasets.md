@@ -19,6 +19,9 @@ Zchezz uses a closed vocabulary for evaluation and target values. Every score is
 2. `lambda` blending requires both `cp` and `result`. If a dataset contains only `cp`, `lambda` is inert.
 3. `result` uses only `0.0`, `0.5`, or `1.0`. Blanks remain missing; they are not imputed as draws.
 4. Scale constant `320` matches `CP_TO_WDL_T` in training and `_nnL3B * 320.0f` in C runtime evaluation.
+5. Engine scores reach `cp` through `utils/uci_score.py`. Zchezz engines (all profiles) print `score cp` White-relative and `score mate` without a usable sign. Standard UCI engines such as Stockfish print scores relative to the side to move. The runners detect the convention from `id name`; override it with `--score-pov white|stm`. `tests/test_uci_score_pov.py` checks known positions for each built engine.
+6. Run `python train/labeling/audit_datasets.py` before you train on new or changed data. It reads every file of every dataset; `--dataset NAME` limits it to one. It checks FEN syntax, the `cp` and `result` ranges, and the sign of `cp` for each side to move, against both the material balance and `result`. A dataset whose `cp` is relative to the side to move fails with Black to move. The report goes to `artifacts/data_audit/<UTC>/report.json`, and the exit code is 1 when a file fails. Chess960 FENs (Shredder castling letters) and EPD FENs without move counters are valid. A row without `cp` but with a `result` is a warning, because the trainers use the result alone for it.
+7. The generators that write `.bin` shards (`engine/build/selfplay.exe`, `engine/build/arena.exe`, `tests/run_selfplay.py --bin`, `tests/run_tournament_quick.py --bin`) store `eval_cp` and `game_result` relative to the side to move. Before the Colab self-play job (`colab/remote/run_selfplay_colab.sh`) persists a shard, it refuses the shard if `eval_cp` contradicts `game_result` for either side to move.
 
 ### Dataset Directory Naming Standard
 
@@ -106,8 +109,8 @@ fails when this table and the tracked manifests disagree.
 | `extraquiet_cp_sf60k_filter` | parquet | 1,500,000 | 52 | humans [O] | Stockfish [I] | 60k nodes [I] | — | ? [?] | finetune [O] |
 | `extraquiet_cp_sfd12_endgames_filter` | parquet | 262,101 | 6 | humans [O] | Stockfish [I] | depth 12 [I] | — | ? [?] | finetune [O] |
 | `extraquiet_cp_sfd14_endgames_filter` | parquet | 2,800,000 | 74 | humans [O] | Stockfish [I] | depth 14 [I] | — | ? [?] | finetune [O] |
-| `lc0_t91_big_res4_filter` | parquet | 20,917,923 | 595 | Leela Chess Zero [I] | ? [?] | ? [?] | 100.0% | ? [?] | ? [?] |
-| `lc0_test91_res_q` | bin | 244,375 | 18 | Leela Chess Zero [I] | ? [?] | ? [?] | — | ? [?] | ? [?] |
+| `lc0_t91_big_res4_filter` | parquet | 20,917,923 | 595 | Leela Chess Zero [I] | Leela Chess Zero search (root_q), cp = 320*logit((q+1)/2) [M] | lc0 training-game visits (not recorded per position) [I] | 100.0% | 2026-08-01..2026-08-31 (test91 tars) [I] | ? [?] |
+| `lc0_test91_res_q` | bin | 244,375 | 18 | Leela Chess Zero [I] | Leela Chess Zero search (root_q), cp = 320*logit((q+1)/2) [M] | lc0 training-game visits (not recorded per position) [I] | — | 2026-08-20 (test91 tars 0017-0317) [I] | ? [?] |
 | `lichess_cp_sf400k_filter` | parquet | 150,000 | 5 | humans [O] | Stockfish [I] | 400k nodes [I] | — | ? [?] | finetune [O] |
 | `lichess_cp_sf_filter` | parquet | 15,223,769 | 482 | humans [O] | Stockfish [I] | ? [?] | — | ? [?] | warmup [O] |
 | `lichess_cp_sfdb_filter` | parquet | 18,558,222 | 627 | humans [O] | Stockfish (bundled with lichess database, several versions) [O] | varies [I] | — | ? [?] | warmup [O] |
@@ -119,14 +122,23 @@ fails when this table and the tracked manifests disagree.
 | `selfplay_cp_zchezz_res_filter_data20260401` | parquet | 9,140,226 | 183 | Zchezz [O] | Zchezz search during self-play [I] | search-time [I] | 86.8% | 2026-04-01 [I] | finetune [O] |
 | `selfplay_cp_zchezz_res_filter_data20260404` | parquet | 8,789,380 | 167 | Zchezz [O] | Zchezz search during self-play [I] | search-time [I] | 100.0% | 2026-04-04 [I] | finetune [O] |
 | `selfplay_cp_zchezz_res_filter_data20260410` | parquet | 850,000 | 17 | Zchezz [O] | Zchezz search during self-play [I] | search-time [I] | 100.0% | 2026-04-10 [I] | finetune [O] |
-| `selfplay_lookahead_filter` | parquet | 20,857,338 | 408 | Zchezz [I] | ? [?] | ? [?] | 100.0% | ? [?] | ? [?] |
-| `selfplay_v331_filter` | parquet | 1,065,780 | 25 | Zchezz [I] | ? [?] | ? [?] | 100.0% | ? [?] | ? [?] |
-| `selfplay_v507_filter` | parquet | 17,559,218 | 413 | Zchezz [I] | ? [?] | ? [?] | 100.0% | ? [?] | ? [?] |
+| `selfplay_lookahead_filter` | parquet | 19,720,741 | 386 | Zchezz [I] | derived target: 0.6/0.2/0.1 sigmoid blend of Zchezz search cp at t, t+2, t+4 plus 0.1 result (train/labeling/process_lookahead.py) [M] | as source v507 self-play (movetime 200->50 ms) [I] | 100.0% | 2026-10-15 [I] | ? [?] |
+| `selfplay_v331_filter` | parquet | 1,065,780 | 16 | Zchezz [I] | Zchezz v331 search during self-play (UCI runner) [M] | movetime 50 ms [I] | 100.0% | <= 2026-10-14 [I] | ? [?] |
+| `selfplay_v507_filter` | parquet | 17,559,218 | 413 | Zchezz [I] | Zchezz v507 search during self-play (native selfplay.exe) [M] | movetime 200->50 ms (linear, 60 plies) [I] | 100.0% | <= 2026-10-14 [I] | ? [?] |
 | `synthetic_endgame_cp_sf_filter_data20260413` | parquet | 521,158 | 11 | none (generated positions) [I] | Stockfish (our pass) [O] | ? [?] | — | 2026-04-13 [I] | finetune [O] |
 | `synthetic_endgame_cp_sf_filter_data20260414` | parquet | 1,220,000 | 26 | none (generated positions) [I] | Stockfish (our pass) [O] | ? [?] | — | 2026-04-14 [I] | finetune [O] |
 
-**22 datasets, 191,687,910 positions, 5,161 MB.** Evidence: [R] recorded by the producing tool, [O] stated by the owner, [M] measured, [I] inferred from the directory name, [?] unknown.
+**22 datasets, 190,551,313 positions, 5,129 MB.** Evidence: [R] recorded by the producing tool, [O] stated by the owner, [M] measured, [I] inferred from the directory name, [?] unknown.
 <!-- END GENERATED CATALOG -->
+
+### Quarantine
+
+`data/_quarantine/` holds files that the trainers and the catalog must not read. Each file stays there with the reason in its directory name:
+
+| Directory | Content | Reason |
+|---|---|---|
+| `selfplay_v331_filter.original_stm_cp/` | The `selfplay_v331_filter` files before the correction | `cp` was relative to the side to move on rows with Black to move |
+| `selfplay_lookahead_filter.v331_inverted_cp/` | Shards `chunk_00000`–`00011` of `selfplay_lookahead_filter` (1,136,597 rows) | Targets come from the inverted v331 `cp` and the result. A sign flip cannot repair them |
 
 ## 4. Archived / Remote Reference Datasets
 

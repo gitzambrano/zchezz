@@ -24,9 +24,9 @@
   "played_by": "Zchezz",
   "engine_version": "v507",
   "engine_commit": "unknown",
-  "evaluator": "unknown",
-  "eval_budget": "unknown",
-  "date": "unknown",
+  "evaluator": "Zchezz v507 search during self-play (native selfplay.exe)",
+  "eval_budget": "movetime 200->50 ms (linear, 60 plies)",
+  "date": "<= 2026-10-14",
   "filter_type": "quiet",
   "raw_source_input": "data/selfplay_v507|auto",
   "stage": "unknown",
@@ -35,9 +35,9 @@
     "played_by": "inferred",
     "engine_version": "inferred",
     "engine_commit": "unknown",
-    "evaluator": "unknown",
-    "eval_budget": "unknown",
-    "date": "unknown",
+    "evaluator": "measured",
+    "eval_budget": "inferred",
+    "date": "inferred",
     "filter_type": "inferred",
     "raw_source_input": "measured",
     "stage": "unknown",
@@ -51,7 +51,11 @@
     "result_rate": "measured",
     "result_distribution": "measured"
   },
-  "producer": null,
-  "notes": null,
-  "scanned_utc": "2026-11-17T17:46:29+00:00"
+  "producer": {
+    "tool": "colab/remote/run_selfplay_colab.sh -> engine/build selfplay.exe, then process_positions.py (auto)",
+    "source": "Google Drive zchezz_data/selfplay_v507 (Colab worker 7)",
+    "settings_basis": "colab/config.py worker 7 bootloader (T 1.2->0.02, MultiPV 4)"
+  },
+  "notes": "cp matches v507 search: corr 0.98, MAE 79 cp vs v507 movetime 50 (Stockfish 50k nodes: MAE 120). Point of view verified white-relative.",
+  "scanned_utc": "2026-11-17T20:25:46+00:00"
 }

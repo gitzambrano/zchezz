@@ -53,6 +53,6 @@
     "result_distribution": "measured"
   },
   "producer": null,
-  "notes": null,
+  "notes": "Measured 2026-11-17 (train/labeling/audit_datasets.py): extra_quiet_merged_part0018-0020 hold 3,392,048 rows without cp; the trainers use their result alone. Point of view verified White-relative on every file.",
   "scanned_utc": "2026-11-17T17:45:33+00:00"
 }

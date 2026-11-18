@@ -7,6 +7,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "utils"))
+import uci_score  # noqa: E402
+
 MATE_CP = 30000
 
 
@@ -27,7 +30,7 @@ class UciBackend:
     """
 
     def __init__(self, path: str | Path, hash_mb: int = 16, threads: int = 1,
-                 static_fallback_nodes: int = 1):
+                 static_fallback_nodes: int = 1, score_pov: str = uci_score.AUTO):
         self.path = str(path)
         self.static_fallback_nodes = max(1, int(static_fallback_nodes))
         self.p = subprocess.Popen(
@@ -35,7 +38,10 @@ class UciBackend:
             stderr=subprocess.STDOUT, text=True, bufsize=1,
             encoding="utf-8", errors="replace")
         self._send("uci")
-        self._drain_until("uciok")
+        handshake = self._drain_until("uciok")
+        id_name = next((l[len("id name "):].strip() for l in handshake if l.startswith("id name ")), None)
+        # Zchezz prints White-relative cp; standard UCI engines print side to move.
+        self.score_pov = uci_score.resolve_pov(score_pov, id_name)
         self._send(f"setoption name Threads value {max(1, int(threads))}")
         self._send(f"setoption name Hash value {max(1, int(hash_mb))}")
         self._send("setoption name UCI_ShowWDL value false")
@@ -70,9 +76,10 @@ class UciBackend:
 
     @staticmethod
     def _mate_to_cp(mate: int) -> int:
-        if mate == 0:
-            return 0
-        return (1 if mate > 0 else -1) * max(25000, MATE_CP - abs(mate) * 10)
+        """Side-to-move cp for a standard UCI ``score mate``; 0 = the mover is mated."""
+        if mate <= 0:
+            return -max(25000, MATE_CP - abs(mate) * 10)
+        return max(25000, MATE_CP - mate * 10)
 
     def static_eval(self, fen: str, white_to_move: bool) -> int:
         if self._static_supported is False:
@@ -88,8 +95,13 @@ class UciBackend:
         # Synchronize with isready afterwards so trailing lines are consumed.
         for _ in range(512):
             line = self._readline()
-            if "Unknown command" in line and "eval" in line:
+            if ("Unknown command" in line and "eval" in line) or "No position loaded" in line:
                 unknown = True
+                break
+            m_z = re.match(r"info string eval (-?\d+) cp \(STM-relative\)", line)
+            if m_z:   # Zchezz static eval, side to move
+                stm = int(m_z.group(1))
+                value = stm if white_to_move else -stm
                 break
             if "Final evaluation" in line:
                 tail = line.split("Final evaluation", 1)[1]
@@ -123,6 +135,7 @@ class UciBackend:
         self._send(go)
 
         latest: dict[int, SearchLine] = {}
+        scores = uci_score.SearchScores(self.score_pov, white_to_move, mate_cp=25000)
         while True:
             line = self._readline()
             if line.startswith("bestmove"):
@@ -138,16 +151,15 @@ class UciBackend:
             try:
                 score_i = toks.index("score")
                 kind, raw = toks[score_i + 1], int(toks[score_i + 2])
-                if kind == "cp":
-                    cp_stm = raw
-                elif kind == "mate":
-                    cp_stm = self._mate_to_cp(raw)
-                else:
-                    continue
                 pv = toks[toks.index("pv") + 1]
             except (ValueError, IndexError):
                 continue
-            cp_white = cp_stm if white_to_move else -cp_stm
+            cp_white = scores.feed(line)
+            if cp_white is None:
+                continue          # no score, or a Zchezz mate whose sign is unknown yet
+            if kind == "mate" and self.score_pov == uci_score.STM:
+                cp_stm = self._mate_to_cp(raw)
+                cp_white = cp_stm if white_to_move else -cp_stm
             latest[idx] = SearchLine(
                 pv, max(-32000, min(32000, cp_white)), idx)
         return [latest[k] for k in sorted(latest)]

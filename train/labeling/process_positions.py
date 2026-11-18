@@ -157,6 +157,7 @@ run WOULD read, filter and write without touching the disk.
 # box characters used above and in the reports below (same guard as
 # tests/bench_nps.py and tests/run_selfplay_native.py).
 import sys as _sys
+
 for _s in (_sys.stdout, _sys.stderr):
     try:
         _s.reconfigure(encoding='utf-8', errors='replace')
@@ -192,6 +193,8 @@ import pandas as pd
 # every .bin read as garbage (see dataset.py's own docstring warning).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from dataset import SAMPLE_DTYPE, read_bin_header  # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "utils"))
+import uci_score  # noqa: E402
 
 # ═══════════════════════════════════════════════════════════════════════════
 #  CONFIGURATION  (CLAUDE.md rule 8)
@@ -998,6 +1001,11 @@ class _StockfishEngine:
             stderr=subprocess.DEVNULL, text=True, bufsize=1,
         )
         self._w("uci")
+        _hs = self._read_until("uciok", 10)
+        _id = next((l.strip()[len("id name "):] for l in _hs if l.startswith("id name ")), None)
+        if uci_score.pov_from_id_name(_id) != uci_score.STM:
+            raise RuntimeError(f"teacher {_id!r} does not report standard UCI (side-to-move) scores; "
+                               "use Stockfish (Zchezz prints White-relative cp)")
         self._w(f"setoption name Hash value {hash_mb}")
         self._w("setoption name Threads value 1")
         self._w("isready")

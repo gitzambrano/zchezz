@@ -5,7 +5,7 @@
   "format": "parquet",
   "files_count": 107,
   "positions_count": 1065780,
-  "size_bytes": 24964315,
+  "size_bytes": 15890409,
   "columns": [
     "fen",
     "cp",
@@ -24,9 +24,9 @@
   "played_by": "Zchezz",
   "engine_version": "v331",
   "engine_commit": "unknown",
-  "evaluator": "unknown",
-  "eval_budget": "unknown",
-  "date": "unknown",
+  "evaluator": "Zchezz v331 search during self-play (UCI runner)",
+  "eval_budget": "movetime 50 ms",
+  "date": "<= 2026-10-14",
   "filter_type": "quiet",
   "raw_source_input": "data/selfplay_v331|auto",
   "stage": "unknown",
@@ -35,9 +35,9 @@
     "played_by": "inferred",
     "engine_version": "inferred",
     "engine_commit": "unknown",
-    "evaluator": "unknown",
-    "eval_budget": "unknown",
-    "date": "unknown",
+    "evaluator": "measured",
+    "eval_budget": "inferred",
+    "date": "inferred",
     "filter_type": "inferred",
     "raw_source_input": "measured",
     "stage": "unknown",
@@ -51,7 +51,12 @@
     "result_rate": "measured",
     "result_distribution": "measured"
   },
-  "producer": null,
-  "notes": null,
-  "scanned_utc": "2026-11-17T17:46:21+00:00"
+  "producer": {
+    "tool": "colab/remote/run_selfplay_colab.sh -> tests/run_selfplay.py --bin, then process_positions.py (auto)",
+    "source": "Google Drive zchezz_data/selfplay_v331 (Colab worker 6)",
+    "settings_basis": "colab/config.py worker 6 bootloader; script defaults",
+    "correction": "cp negated on black-to-move rows (2026-11-17)"
+  },
+  "notes": "CORRECTED 2026-11-17: cp was side-to-move relative on black-to-move rows (Zchezz UCI prints White-relative cp; tests/_run_selfplay_core.py negated it for Black). Those 526,032 rows were negated, so cp is now White-relative (corr with result: +0.71 white / +0.73 black to move; matches v331 search at 50 ms with corr 0.99). Original files: data/_quarantine/selfplay_v331_filter.original_stm_cp/. Residual bias: during the temperature plies Black sampled MultiPV moves ranked by White's score, so the games favour White (62% white wins); labels are correct, the position distribution is not neutral.",
+  "scanned_utc": "2026-11-17T21:44:29+00:00"
 }

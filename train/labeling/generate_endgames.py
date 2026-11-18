@@ -49,6 +49,9 @@ from concurrent.futures import TimeoutError as FuturesTimeoutError
 import subprocess
 from typing import List, Dict, Tuple, Optional
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "utils"))
+import uci_score  # noqa: E402
+
 # ═══════════════════════════════════════════════════════════════════════════
 #  CONFIG  ← edite aqui
 # ═══════════════════════════════════════════════════════════════════════════
@@ -573,6 +576,11 @@ class StockfishEngine:
             stderr=subprocess.DEVNULL, text=True, bufsize=1,
         )
         self._w("uci")
+        _hs = self._read_until("uciok", timeout=10)
+        _id = next((l.strip()[len("id name "):] for l in _hs if l.startswith("id name ")), None)
+        if uci_score.pov_from_id_name(_id) != uci_score.STM:
+            raise RuntimeError(f"teacher {_id!r} does not report standard UCI (side-to-move) scores; "
+                               "use Stockfish (Zchezz prints White-relative cp)")
         self._w(f"setoption name Hash value {SF_HASH_MB}")
         self._w("setoption name Threads value 1")
         self._w("isready")

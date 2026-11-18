@@ -178,6 +178,7 @@ GAMES  = 20000  # opening-slot budget, NOT the final game count — see
 CONCURRENCY  = 14      # parallel worker threads (= persistent engine-pair count)
 MAX_PLIES    = 400     # half-moves before a game is forced to a draw
 MOVE_TIMEOUT_S = 35.0    # seconds to wait for one "bestmove" before declaring TIMEOUT
+SCORE_POV      = "auto"  # UCI score convention: auto (from "id name"; Zchezz = white) | white | stm
 REPORT_EVERY = 10      # print a status block every N completed games
 
 # ── Output ────────────────────────────────────────────────────────────────────
@@ -243,12 +244,15 @@ MOVETIME_DECAY = "linear" # movetime decay schedule: step | linear | exp
 # ═══════════════════════════════════════════════════════════════════════════════
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "utils"))
 from cliconf import override_from_cli  # noqa: E402
+import uci_score  # noqa: E402
 
 CLI = [
     ("GAMES",         "--games",           int,   "opening-slot budget (see header: not the final game count)"),
     ("CONCURRENCY",         "--concurrency",     int,   "parallel worker threads (persistent engine pairs)"),
     ("MAX_PLIES",           "--max-plies",       int,   "half-move cap before a forced draw"),
     ("MOVE_TIMEOUT_S",        "--move-timeout",    float, "seconds to wait for one bestmove"),
+    ("SCORE_POV",           "--score-pov",       str,   "engine UCI score convention (Zchezz reports White-relative cp)",
+     ("auto", "white", "stm")),
     ("REPORT_EVERY",        "--report-every",    int,   "status block every N completed games"),
     ("SAVE_PGN",            "--pgn",             bool,  "save every game as standard PGN"),
     ("SAVE_EPD",            "--epd",             bool,  "save positions + eval as EPD"),
@@ -398,6 +402,8 @@ class EngineInstance:
         self.suppress_nnue = False
         self.start_fen = None  # Set per-game; None means standard startpos
         self.current_multipv = 1
+        self.id_name   = None  # UCI "id name", read during the handshake
+        self.score_pov = uci_score.STM  # resolved in start(); see utils/uci_score.py
 
     def _reader(self):
         try:
@@ -446,10 +452,14 @@ class EngineInstance:
             t0 = time.time()
             while time.time() - t0 < 5:
                 try:
-                    if "uciok" in self.queue.get(timeout=0.1): break
+                    hs_line = self.queue.get(timeout=0.1)
+                    if hs_line.startswith("id name "):
+                        self.id_name = hs_line[len("id name "):].strip()
+                    if "uciok" in hs_line: break
                 except Empty:
                     if self.process.poll() is not None: return False
-            
+            self.score_pov = uci_score.resolve_pov(SCORE_POV, self.id_name)
+
             self._send("isready")
             t0 = time.time()
             while time.time() - t0 < 5:
@@ -522,6 +532,8 @@ class EngineInstance:
         
         move, score, nodes, depth = None, None, 0, 0
         multipv_candidates = {}  # mpv_idx -> {"move": str, "score": int, "depth": int}
+        white_to_move = (board.turn == chess.WHITE)
+        search_scores = uci_score.SearchScores(self.score_pov, white_to_move, mate_cp=19000)
         t_start = time.time()
         while time.time() - t_start < MOVE_TIMEOUT_S:
             try:
@@ -540,18 +552,10 @@ class EngineInstance:
                         try: mpv_idx = int(parts[parts.index("multipv")+1])
                         except: pass
 
-                    cand_score = None
-                    if "score" in parts:
-                        s_idx = parts.index("score")
-                        if s_idx + 2 < len(parts):
-                            s_type = parts[s_idx + 1]
-                            try:
-                                s_val = int(parts[s_idx + 2])
-                                if s_type == "cp":
-                                    cand_score = s_val
-                                elif s_type == "mate":
-                                    cand_score = 19000 if s_val > 0 else -19000
-                            except: pass
+                    # Side-to-move score: temperature sampling below needs
+                    # "higher is better for the mover" whatever the engine's
+                    # own UCI convention is.
+                    cand_score = uci_score.to_stm(search_scores.feed(line), white_to_move)
 
                     cand_move = None
                     if "pv" in parts:

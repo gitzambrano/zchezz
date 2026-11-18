@@ -131,6 +131,7 @@ COLOR_SWAP           = True
 CONCURRENCY          = 14     # 14 concurrent (1T engines)
 MAX_PLIES            = 400
 MOVE_TIMEOUT_S         = 38.0
+SCORE_POV              = "auto"   # UCI score convention: auto (from "id name"; Zchezz = white) | white | stm
 REPORT_PERFORMANCE_METRICS = True
 
 # ── Opening Book ──────────────────────────────────────────────────────────────
@@ -177,6 +178,7 @@ SEED           = 0     # 0 = draw a fresh seed (logged); >0 = reproducible openi
 # ═══════════════════════════════════════════════════════════════════════════════
 sys.path.insert(0, os.path.join(_BASE_DIR, "utils"))
 from cliconf import override_from_cli  # noqa: E402
+import uci_score  # noqa: E402
 
 CLI = [
     ("MOVETIME_MS",          "--movetime",        int,   "ms per move"),
@@ -187,6 +189,8 @@ CLI = [
     ("CONCURRENCY",          "--concurrency",     int,   "concurrent games (worker threads)"),
     ("MAX_PLIES",            "--max-plies",       int,   "half-move cap before a forced draw"),
     ("MOVE_TIMEOUT_S",         "--move-timeout",    float, "seconds to wait for a move before a timeout loss"),
+    ("SCORE_POV",              "--score-pov",       str,   "engine UCI score convention (Zchezz reports White-relative cp)",
+     ("auto", "white", "stm")),
     ("OPENING_FOLDER",       "--openings",        str,   "folder with .epd/.pgn opening files"),
     ("OPENING_FILES",        "--opening-file",    list,  "load ONLY these files from --openings"),
     ("SAVE_PGN",             "--pgn",             bool,  "save all games as PGN"),
@@ -399,6 +403,8 @@ class EngineInstance:
         self.process  = None
         self.queue    = Queue()
         self.start_fen = None
+        self.id_name   = None             # UCI "id name", read during the handshake
+        self.score_pov = uci_score.STM    # resolved in start(); see utils/uci_score.py
 
     def _reader(self):
         try:
@@ -426,10 +432,14 @@ class EngineInstance:
             t0 = time.time(); ok = False
             while time.time() - t0 < 15:
                 try:
-                    if "uciok" in self.queue.get(timeout=0.1).lower(): ok = True; break
+                    hs_line = self.queue.get(timeout=0.1)
+                    if hs_line.startswith("id name "):
+                        self.id_name = hs_line[len("id name "):].strip()
+                    if "uciok" in hs_line.lower(): ok = True; break
                 except Empty:
                     if self.process.poll() is not None: break
             if not ok: return False
+            self.score_pov = uci_score.resolve_pov(SCORE_POV, self.id_name)
 
             for name, val in self.options.items():
                 self._send(f"setoption name {name} value {val}")
@@ -491,6 +501,8 @@ class EngineInstance:
         self._send(self._build_go(wtime, btime))
 
         move = None; score = None; nodes = 0; depth = 0
+        search_scores = uci_score.SearchScores(self.score_pov, board.turn == chess.WHITE,
+                                               mate_cp=MATE_SCORE)
         t0 = time.time()
         while time.time() - t0 < MOVE_TIMEOUT_S:
             try:
@@ -503,23 +515,10 @@ class EngineInstance:
                     if "depth" in parts:
                         try: depth = int(parts[parts.index("depth")+1])
                         except Exception: pass
-                if "score cp" in line:
-                    parts = line.split()
-                    try:
-                        i = parts.index("cp"); score = int(parts[i+1])
-                        # Convert to white's perspective: if it's black's turn, negate
-                        if board.turn == chess.BLACK: score = -score
-                    except Exception: pass
-                elif "score mate" in line:
-                    parts = line.split()
-                    try:
-                        i = parts.index("mate"); m_val = int(parts[i+1])
-                        # positive mate = current side mates; from white's side:
-                        if board.turn == chess.WHITE:
-                            score = MATE_SCORE if m_val > 0 else -MATE_SCORE
-                        else:
-                            score = MATE_SCORE if m_val < 0 else -MATE_SCORE
-                    except Exception: pass
+                if line.startswith("info ") and uci_score.parse_multipv(line) == 1:
+                    white_score = search_scores.feed(line)   # White-relative, any engine convention
+                    if white_score is not None:
+                        score = white_score
                 if line.startswith("bestmove"):
                     parts = line.split()
                     if len(parts) > 1 and parts[1] not in ("(none)", "0000"):

@@ -22,22 +22,22 @@
   },
   "source": "lc0",
   "played_by": "Leela Chess Zero",
-  "engine_version": "unknown",
+  "engine_version": "lc0 training run2 test91",
   "engine_commit": "unknown",
-  "evaluator": "unknown",
-  "eval_budget": "unknown",
-  "date": "unknown",
+  "evaluator": "Leela Chess Zero search (root_q), cp = 320*logit((q+1)/2)",
+  "eval_budget": "lc0 training-game visits (not recorded per position)",
+  "date": "2026-08-01..2026-08-31 (test91 tars)",
   "filter_type": "quiet",
   "raw_source_input": "data/lc0_t91_big_res4|auto",
   "stage": "unknown",
   "evidence": {
     "source": "inferred",
     "played_by": "inferred",
-    "engine_version": "unknown",
+    "engine_version": "inferred",
     "engine_commit": "unknown",
-    "evaluator": "unknown",
-    "eval_budget": "unknown",
-    "date": "unknown",
+    "evaluator": "measured",
+    "eval_budget": "inferred",
+    "date": "inferred",
     "filter_type": "inferred",
     "raw_source_input": "measured",
     "stage": "unknown",
@@ -51,7 +51,10 @@
     "result_rate": "measured",
     "result_distribution": "measured"
   },
-  "producer": null,
-  "notes": null,
-  "scanned_utc": "2026-11-17T17:45:34+00:00"
+  "producer": {
+    "tool": "train/labeling/import_lc0.py --big, then process_positions.py (auto, quiet)",
+    "source": "https://storage.lczero.org/files/training_data/test91/"
+  },
+  "notes": "cp tracks Stockfish 50k nodes with corr 0.96 (MAE 128 cp), consistent with a strong search evaluator. White-relative point of view verified; |cp| capped at 3000.",
+  "scanned_utc": "2026-11-17T20:26:12+00:00"
 }

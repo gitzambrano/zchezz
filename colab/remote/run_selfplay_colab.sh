@@ -26,14 +26,14 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ============================ CONFIGURAÇÃO ============================
-PROFILE="${PROFILE:-}"                        # v507 (NNU4 nativo) ou v331 (NNU3 UCI)
+PROFILE="${PROFILE:-}"                        # v5xx: selfplay nativo; v3xx/v6xx: runner UCI
 PYTHON_BIN="${PYTHON_BIN:-python}"
 PROFILE="$("${PYTHON_BIN}" "${SCRIPT_DIR}/profile.py" "${PROFILE}")"
 ACCOUNT_ID="${ACCOUNT_ID:-1}"                      # 1 ou 2 (faixa de seeds e nome do shard)
 TARGET_POSITIONS="${TARGET_POSITIONS:-5000000}"    # Meta de posições desta conta
-GAMES_PER_SHARD="${GAMES_PER_SHARD:-3000}"        # Jogos por shard (par: v331 joga cada abertura nas duas cores)
+GAMES_PER_SHARD="${GAMES_PER_SHARD:-3000}"        # Jogos por shard (par no runner UCI: cada abertura nas duas cores)
 NODES="${NODES:-0}"                                # Nós por lance, v507 (usado quando MOVETIME=0)
-MOVETIME="${MOVETIME:-50}"                        # ms por lance inicial (v331 e v507)
+MOVETIME="${MOVETIME:-50}"                        # ms por lance inicial (todos os perfis)
 MOVETIME_FINAL="${MOVETIME_FINAL:-0}"              # ms por lance final para decaimento (0 = sem decaimento)
 MOVETIME_PLIES="${MOVETIME_PLIES:-60}"             # Plies horizonte para decaimento de tempo
 MOVETIME_DECAY="${MOVETIME_DECAY:-linear}"         # linear | step | exp
@@ -104,7 +104,7 @@ if [[ "${PROFILE}" == v5* && "${NODES}" -le 0 && "${MOVETIME}" -le 0 ]]; then
     exit 1
 fi
 if [[ "${PROFILE}" != v5* && $((GAMES_PER_SHARD % 2)) -ne 0 ]]; then
-    echo "ERRO: GAMES_PER_SHARD deve ser par para v331 (cada abertura é jogada nas duas cores)." >&2
+    echo "ERRO: GAMES_PER_SHARD deve ser par no runner UCI (cada abertura é jogada nas duas cores)." >&2
     exit 1
 fi
 
@@ -225,13 +225,16 @@ PYEOF
         fi
         "${CMD[@]}"
     else
-        # v331 via runner UCI. --games é o número de aberturas; cada uma vira
-        # 2 jogos (cores invertidas), por isso GAMES_PER_SHARD / 2.
+        # Perfis sem selfplay nativo (v3xx, v6xx) usam o runner UCI.
+        # O runner converte o score UCI de cada engine para o ponto de vista
+        # das brancas (utils/uci_score.py: Zchezz informa cp das brancas).
+        # --games é o número de aberturas; cada uma vira 2 jogos (cores
+        # invertidas), por isso GAMES_PER_SHARD / 2.
         RUNNER_DIR="${LOCAL_DIR}/runner_${SHARD_NAME}"
         rm -rf "${RUNNER_DIR}"
         mkdir -p "${RUNNER_DIR}"
 
-        CMD_V331=(
+        CMD_RUNNER=(
             python3 "${REPO_ROOT}/tests/run_selfplay.py"
             --profile "${PROFILE}"
             --bin
@@ -254,17 +257,17 @@ PYEOF
             --results-dir "${RUNNER_DIR}"
         )
         if [[ "${MOVETIME_FINAL}" -gt 0 ]]; then
-            CMD_V331+=(
+            CMD_RUNNER+=(
                 --movetime-final "${MOVETIME_FINAL}"
                 --movetime-plies "${MOVETIME_PLIES}"
                 --movetime-decay "${MOVETIME_DECAY}"
             )
         fi
-        "${CMD_V331[@]}"
+        "${CMD_RUNNER[@]}"
 
         PRODUCED_BIN=$(find "${RUNNER_DIR}" -name "selfplay_*.bin" | head -n 1)
         if [[ -z "${PRODUCED_BIN}" || ! -f "${PRODUCED_BIN}" ]]; then
-            echo "ERRO: O runner UCI v331 não gerou arquivo .bin em ${RUNNER_DIR}" >&2
+            echo "ERRO: O runner UCI (${PROFILE}) não gerou arquivo .bin em ${RUNNER_DIR}" >&2
             rm -rf "${RUNNER_DIR}"
             exit 1
         fi
@@ -285,6 +288,19 @@ try:
     d = dataset.MultiShardSelfplay([sys.argv[2]])
     if not d.provenance_summary()[0][1].known:
         raise ValueError("shard sem cabeçalho de proveniência")
+    # eval_cp e game_result são do lado a mover: devem concordar em sinal
+    # para os dois lados. Correlação <= 0 para um lado indica score UCI
+    # convertido com o ponto de vista errado.
+    import numpy as np
+    off, _ = dataset.read_bin_header(sys.argv[2])
+    a = np.fromfile(sys.argv[2], dtype=dataset.SAMPLE_DTYPE, offset=off)
+    for stm in (0, 1):
+        m = (a["stm"] == stm) & (a["game_result"] != 0) & (a["eval_cp"] != 0)
+        if m.sum() >= 500:
+            c = np.corrcoef(np.tanh(a["eval_cp"][m] / 400.0), a["game_result"][m])[0, 1]
+            if not c > 0.0:
+                side = "brancas" if stm == 0 else "pretas"
+                raise ValueError(f"eval_cp contradiz o resultado com {side} a mover (corr={c:+.2f})")
     print(f"OK:{len(d)}")
 except Exception as e:
     print(f"FAIL:{e}")

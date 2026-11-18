@@ -27,7 +27,11 @@ tools/                   repository checks, build verification, and publishing t
 tools/historical/        archived migration scripts, legacy campaigns, and training variants
 utils/engine_profiles.py canonical profile + Stockfish resolution
 utils/cliconf.py         small optional-override helper
+utils/uci_score.py       UCI score parsing; converts every engine's score to White-relative
 data/<dataset>/manifest.json  tracked dataset provenance (data files are ignored)
+data/_quarantine/        files withheld from training and the catalog (reason in the directory name)
+train/labeling/audit_datasets.py  read-only label audit of every dataset file
+artifacts/data_audit/    audit reports
 artifacts/               generated test/evidence output (ignored)
 artifacts/experiments/   one directory per experiment run; legacy_campaigns/ holds pre-runner output
 artifacts/aux_head/      fast-head fits from train/train_aux_head.py
