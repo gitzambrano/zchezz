@@ -1,3 +1,10 @@
+"""UCI smoke test: drives the selected engine over stdin/stdout.
+
+Run directly (`python tests/test_uci.py`); it is a script, not a pytest module.
+The engine comes from `utils/engine_profiles.py` (v335 unless ZCHEZZ_ENGINE
+overrides it). The tablebase probe is reported as skipped when the engine is
+built without Fathom.
+"""
 import subprocess, time, re, sys, os
 
 if __name__ != "__main__":                 # a script, not a pytest module: run it directly

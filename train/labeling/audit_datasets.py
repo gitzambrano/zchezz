@@ -99,6 +99,12 @@ def _aggregate(results) -> dict:
 
 
 def audit_parquet(path: str) -> dict:
+    """Audit one parquet shard (columns ``fen``, ``cp``, optional ``result``).
+
+    Returns a dict with ``rows``, per-side ``pov`` statistics and ``problems``
+    (failures) and ``warnings``. A shard without ``cp`` has no point of view to
+    check and passes when it has a ``fen`` column.
+    """
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
     t = pq.read_table(path)
@@ -153,6 +159,14 @@ def audit_parquet(path: str) -> dict:
 
 
 def audit_bin(path: str) -> dict:
+    """Audit one ``.bin`` self-play shard.
+
+    ``eval_cp`` and ``game_result`` in these shards are relative to the side to
+    move (``stm``). The function converts both to White-relative and runs the
+    same point-of-view checks as ``audit_parquet``. A shard whose Black-to-move
+    rows carry the wrong sign fails the Black checks. ``problems`` is also
+    non-empty when the file size is not a multiple of the record size.
+    """
     from train.dataset import SAMPLE_DTYPE, read_bin_header
     off, _ = read_bin_header(path)
     size = os.path.getsize(path) - off
@@ -193,6 +207,11 @@ def dataset_files(name: str, root: Path | None = None):
 
 
 def main() -> int:
+    """Audit the selected datasets in parallel and write ``report.json``.
+
+    Returns 0 when every file passes and 1 when any file fails. ``--show-config``
+    prints the settings and returns 0 without reading data.
+    """
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dataset", action="append", help="dataset directory name (repeatable; default: all)")
     ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))

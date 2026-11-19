@@ -29,7 +29,7 @@ utils/engine_profiles.py canonical profile + Stockfish resolution
 utils/cliconf.py         small optional-override helper
 utils/uci_score.py       UCI score parsing; converts every engine's score to White-relative
 data/<dataset>/manifest.json  tracked dataset provenance (data files are ignored)
-data/_quarantine/        files withheld from training and the catalog (reason in the directory name)
+data/_quarantine/        withheld files, created on demand; directories that start with `_` are never read (see docs/datasets.md)
 train/labeling/audit_datasets.py  read-only label audit of every dataset file
 artifacts/data_audit/    audit reports
 artifacts/               generated test/evidence output (ignored)

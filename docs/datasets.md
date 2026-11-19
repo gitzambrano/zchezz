@@ -134,12 +134,16 @@ fails when this table and the tracked manifests disagree.
 
 ### Quarantine
 
-`data/_quarantine/` holds files that the trainers and the catalog must not read. Each file stays there with the reason in its directory name:
+A directory that starts with `_` is never read by the trainers, the catalog or the audit. `data/_quarantine/` (and `_quarantine/` in the Google Drive data and checkpoint folders) holds files withheld from training. Put the reason in the directory name, for example `<dataset>.original_stm_cp/`. The folders are empty now: the files withheld earlier were deleted after the corrected data was verified.
 
-| Directory | Content | Reason |
-|---|---|---|
-| `selfplay_v331_filter.original_stm_cp/` | The `selfplay_v331_filter` files before the correction | `cp` was relative to the side to move on rows with Black to move |
-| `selfplay_lookahead_filter.v331_inverted_cp/` | Shards `chunk_00000`–`00011` of `selfplay_lookahead_filter` (1,136,597 rows) | Targets come from the inverted v331 `cp` and the result. A sign flip cannot repair them |
+Rules for a correction:
+
+1. Audit first (rule 6). Correct only files whose problems are all `black to move`.
+2. Copy the original to the quarantine before you rewrite a file. Validate the corrected file with the audit before it replaces the original, and add a `pov_correction` note to its sidecar `.json`.
+3. A sign flip repairs `cp` only. A target built from an inverted `cp` (for example the lookahead blend) cannot be repaired. Regenerate it or drop the shard.
+4. A checkpoint trained before a data or target correction is not reproducible from the corrected data. Move it to `_quarantine/` and train again.
+
+Corrections applied: `.bin` shards written by the UCI runner before the White-relative fix (v331 self-play) had `eval_cp` negated on Black-to-move rows. Those shards, in `selfplay_v331_filter` and in the Drive folders `selfplay_v331` and `selfplay_v331_r2`, were corrected. `.bin` shards written by the native `selfplay.exe` (v507 self-play) passed the audit unchanged.
 
 ## 4. Archived / Remote Reference Datasets
 

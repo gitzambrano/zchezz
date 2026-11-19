@@ -281,15 +281,18 @@ def validate_manifest(manifest: Dict[str, Any]) -> bool:
 
 
 def dataset_dirs(data_root: Path = DATA_ROOT) -> List[Path]:
+    """Dataset directories under ``data_root``; a name that starts with ``_`` (``_quarantine``) is skipped."""
     if not data_root.is_dir():
         return []
     def is_dataset(p: Path) -> bool:
-        return p.is_dir() and any(any(p.glob(g)) for g in ("*.parquet", "*.bin", "*.epd"))
+        return (p.is_dir() and not p.name.startswith("_")
+                and any(any(p.glob(g)) for g in ("*.parquet", "*.bin", "*.epd")))
     return sorted(p for p in data_root.iterdir() if is_dataset(p))
 
 
 def load_manifests(data_root: Path = DATA_ROOT) -> List[Dict[str, Any]]:
-    return [_load(p) for p in sorted(data_root.glob("*/manifest.json"))]
+    """Load ``<dataset>/manifest.json`` for every dataset directory; ``_*`` directories are skipped."""
+    return [_load(p) for p in sorted(data_root.glob("*/manifest.json")) if not p.parent.name.startswith("_")]
 
 
 # ── catalog rendering ────────────────────────────────────────────────────────

@@ -143,6 +143,21 @@ The ignore rules cover local account settings, credentials, tokens, cookies,
 browser profiles, traces, screenshots, and reports. Ignore rules do not remove
 information from existing commits.
 
+## Google Drive layout
+
+Each worker account keeps its data in its own Drive. Paths are relative to
+`/content/drive/MyDrive`:
+
+| Path | Content |
+|---|---|
+| `zchezz_data/<dataset>/sp_<profile>_a<account>_s<n>.bin` and `.json` | Self-play shards written by `remote/run_selfplay_colab.sh` and their provenance |
+| `zchezz_checkpoints/<profile>/` | Resumable training checkpoints written by `remote/run_train_colab.sh` |
+| `_quarantine/` inside either folder | Files withheld from training; never read by the trainer |
+
+Before it trains, `remote/run_train_colab.sh` audits the shard folders it reads
+with `train/labeling/audit_datasets.py --data-root` and stops when a file fails
+(`SKIP_AUDIT=1` disables this). See `docs/datasets.md` for the correction rules.
+
 ## Canonical paths and compatibility
 
 `layout.json` records the directory roles and compatibility entry points.

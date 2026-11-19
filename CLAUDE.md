@@ -1,116 +1,109 @@
 # Zchezz Development Instructions
 
-# Supported engine profiles
+## Engine profiles
 
-- Treat `v335` as the repository default and released working line (NNU3).
-- Keep `v334`, `v333`, `v332`, `v331`, `v328` and `v327` available as frozen NNU3 regression/comparison baselines; do not retarget them with current-release changes.
-- Treat `v510` as a supported secondary line (NNU4); `v509`, `v508` and `v507` remain available comparison baselines.
-- Treat `v605` as the supported secondary line representing the NNU5 family (256 neurons, HalfKAv2 32-bucket); `v604`, `v603`, `v602` and `v601` remain available comparison baselines.
-- Keep `engine/ACTIVE_ENGINE` equal to `v335` unless the user explicitly requests a promotion.
-- Maintain the three active lineages (3xx, 5xx, and 60x) documented and accessible via their profile definitions.
-- Do not create or restore `engine/c/zchezz_v4xx` directories.
-- Resolve supported families through `utils/engine_profiles.py`; do not hard-code profile selection in orchestration scripts.
-- Keep NNU3, NNU4, and NNU5 model, encoder, exporter, importer, and runtime code separate behind the profile interface.
-- Treat `v314` through `v327` and version-named migration utilities as historical snapshots; `v328` and `v327` may remain selectable only for explicit regression and comparison work.
+| Profile | Role | Family |
+|---|---|---|
+| `v335` | Default and released line; `engine/ACTIVE_ENGINE` stays `v335` unless the user asks for a promotion | NNU3 |
+| `v334` `v333` `v332` `v331` `v328` `v327` | Frozen regression/comparison baselines; never retarget them with current-release changes | NNU3 |
+| `v510` | Supported secondary line | NNU4 |
+| `v509` `v508` `v507` | Comparison baselines | NNU4 |
+| `v605` | Supported secondary line (256 neurons, HalfKAv2 32-bucket) | NNU5 |
+| `v604` `v603` `v602` `v601` | Comparison baselines | NNU5 |
+
+- Resolve profiles through `utils/engine_profiles.py`; never hard-code a profile in an orchestration script.
+- Keep NNU3, NNU4 and NNU5 model, encoder, exporter, importer and runtime code separate behind the profile interface.
+- Do not create or restore `engine/c/zchezz_v4xx`.
+- `v314`–`v327` and version-named migration utilities are historical snapshots. Select `v328`/`v327` only for explicit regression work.
 
 ## Bare-run contract
 
-- Every public operational script must run with no command-line arguments.
-- A bare run must select `v335` unless the script is a family-specific implementation module whose profile is explicit in its file name.
-- Optional CLI arguments may override defaults; they must not be required for normal execution.
-- `--show-config` or an equivalent non-destructive inspection mode must not build engines, start games, train, delete files, or change repository state.
-- Missing optional external prerequisites must produce a clear diagnostic. Scripts intended for inspection or orchestration must not fail merely because Stockfish, CUDA, tablebases, or an opening corpus is absent.
+- Every public operational script runs with no arguments and selects `v335`, unless its file name states a family.
+- CLI arguments only override defaults; none is required.
+- `--show-config` (or an equivalent mode) must not build, play, train, delete or change repository state.
+- A missing optional prerequisite (Stockfish, CUDA, tablebases, openings) gives a clear diagnostic. Inspection and orchestration scripts do not fail because of it.
 
 ## Generic orchestration
 
-- Build, self-play, data generation, teacher labeling, training orchestration, export orchestration, tournaments, benchmarks, and test orchestration must select behavior from an engine profile.
-- Keep raw training data architecture-neutral. Store positions, side to move, game result, evaluation, move, and provenance; encode NNUE features only inside the selected trainer.
-- Use UCI process boundaries for cross-family matches and generic engine-vs-engine tooling.
-- Do not make a generic runner depend on NNU3 or NNU4 binary layout.
-- Do not duplicate runners for individual versions or experimental rounds. Never create ad-hoc, version-specific, match-specific, or round-specific Python runner scripts (e.g., `run_vXXX_vs_vYYY.py` or temporary tournament scripts).
-- Keep operational and test runners general and parameter-driven. All tournament formats, time controls (e.g. `--movetime`, `--depth`, `--nodes`), concurrency levels, engine binaries, and profile pairings must be configurable via CLI arguments or top-of-file constants in existing canonical scripts (`tests/run_tournament.py`, `tests/run_tournament_quick.py`, `tests/run_selfplay.py`, `experiments/run_experiment.py`).
-- Implement any new search effort, evaluation mode, or tournament feature as an option within the canonical runners, never as an isolated one-off script.
+- Build, self-play, data generation, labeling, training, export, tournament, benchmark and test orchestration select behavior from an engine profile.
+- Use UCI process boundaries for cross-family matches. A generic runner never depends on the NNU3 or NNU4 binary layout.
+- Keep raw training data architecture-neutral (position, side to move, result, evaluation, move, provenance). Encode NNUE features only inside the selected trainer.
+- Never create version-, match- or round-specific runner scripts (`run_vXXX_vs_vYYY.py`, temporary tournament scripts). Add a new search effort, evaluation mode or tournament feature as an option of a canonical runner.
+- Make formats, time controls (`--movetime`, `--depth`, `--nodes`), concurrency, binaries and pairings configurable by CLI argument or top-of-file constant in the canonical scripts: `tests/run_tournament.py`, `tests/run_tournament_quick.py`, `tests/run_selfplay.py`, `experiments/run_experiment.py`.
 
-## Stockfish
+## Stockfish and scores
 
-- Use Stockfish as the canonical external teacher and benchmark opponent.
-- Resolve Stockfish through `ZCHEZZ_STOCKFISH`, repository-local `engine/stockfish/`, or PATH.
-- Teacher output must normalize scores to a documented common point of view before writing training data.
-- Parse UCI scores through `utils/uci_score.py`. Zchezz engines print `score cp` White-relative; standard UCI engines such as Stockfish print it relative to the side to move. Never assume one convention for every engine.
-- Benchmark defaults are `movetime=200 ms`, engine `Threads=1`, one concurrent game, paired openings with colors reversed, and tablebases disabled unless the test explicitly targets tablebases.
-- Fixed-node (`go nodes`) runs may be used for deterministic search-effort or labeling work, but they are not equivalent to the standard movetime strength protocol and must not replace it for promotion evidence.
-- Do not use a hosted CI timing result as promotion evidence.
+- Stockfish is the canonical external teacher and benchmark opponent. Resolve it through `ZCHEZZ_STOCKFISH`, `engine/stockfish/` or PATH.
+- Parse every UCI score through `utils/uci_score.py`. Zchezz engines print `score cp` White-relative; standard engines such as Stockfish print it relative to the side to move. Never assume one convention.
+- Normalize teacher scores to a documented common point of view before they reach training data.
+- Benchmark defaults: `movetime=200 ms`, `Threads=1`, one concurrent game, paired openings with colors reversed, tablebases off unless the test targets them.
+- Fixed-node (`go nodes`) runs suit deterministic search-effort or labeling work. They do not replace the movetime protocol as promotion evidence, and neither does a hosted CI timing.
+
+## Datasets
+
+- Every stored `cp` is White-relative, except `eval_cp` in `.bin` shards, which is relative to the side to move. See `docs/datasets.md`.
+- Run `python train/labeling/audit_datasets.py` before training on new or changed data. The Colab trainer audits the Drive shards it reads and stops on a failure.
+- Withhold untrusted data and checkpoints in a `_quarantine/` directory. Directories that start with `_` are never read by trainers, the catalog or the audit.
+- Never mix evaluation targets from different evaluators in one training column without provenance.
 
 ## Training checkpoints
 
-- Maintain `checkpoints/<profile>/latest.pt` as the canonical resumable checkpoint for every trainable profile.
-- Before training, create `latest.pt` from installed engine weights when no PyTorch checkpoint exists.
-- After every successful training run, atomically refresh `latest.pt` from the newest completed checkpoint.
-- Reject checkpoint architecture mismatches before loading weights.
-- Keep installed engine weights and the corresponding importer sufficient to reconstruct a resumable checkpoint.
-- Do not commit transient optimizer checkpoints unless the user explicitly requests tracked training artifacts.
+- Keep `checkpoints/<profile>/latest.pt` as the resumable checkpoint of every trainable profile.
+- Create it from the installed engine weights when no PyTorch checkpoint exists. After each successful run, refresh it atomically from the newest completed checkpoint.
+- Reject an architecture mismatch before loading weights.
+- Keep installed weights and the importer sufficient to rebuild a resumable checkpoint.
+- Do not commit transient optimizer checkpoints unless the user asks for tracked training artifacts.
 
-## Architecture flags and reproducible builds
+## Builds and flags
 
-- **Always prefer `-march=native` for local native builds when the host compiler supports it.** This automatically enables AVX2 and other supported instructions on CPUs that implement them; never force AVX2 on an unsupported CPU.
-- The bare `make -C engine/build` and explicit `-f Makefile.native` select a host-optimized v335 build using `ARCH_FLAGS=-march=native` by default. Do not silently override it with blank `ARCH_FLAGS` for local performance work.
-- Use `make -C engine/build -f Makefile.portable` when building for distribution, heterogeneous machines, unknown CPUs, CI portability or regression controls. Its `ARCH_FLAGS` is empty and its output is `zchezz.portable.exe`, separate from host `zchezz.exe`.
-- The shared build matrix supports the same two flavors for all supported profiles; preserve the `.portable.exe` suffix in portable multi-engine builds.
-- For native performance comparisons compile BOTH candidates with the same compiler, `-O3`, `-ffast-math`, `ARCH_FLAGS` and CPU; record compiler/host flags. Do not infer CPU speed gains or Elo from portable CI NPS.
-- When `-march=native` is unavailable, use the portable flavor explicitly and record why. Never ship a host-native executable as universally compatible.
-- WebAssembly uses Emscripten `-msimd128`, not `-march=native` or x86 AVX2; retain this separation.
+- Local native builds use `-march=native` when the compiler supports it; never force AVX2 on an unsupported CPU. Bare `make -C engine/build` and `-f Makefile.native` build host-optimized `v335` with `ARCH_FLAGS=-march=native`; do not blank it for local performance work.
+- Use `make -C engine/build -f Makefile.portable` for distribution, unknown CPUs, CI and regression controls. It writes `zchezz.portable.exe`, separate from the host `zchezz.exe`. The build matrix keeps the `.portable.exe` suffix. Never ship a host-native executable as universal.
+- If `-march=native` is unavailable, build portable and record why.
+- Compare native performance with both candidates built with the same compiler, `-O3`, `-ffast-math`, `ARCH_FLAGS` and CPU, and record the flags. Never infer speed or Elo from portable CI NPS.
+- WebAssembly uses Emscripten `-msimd128`, not `-march=native` or x86 AVX2.
 
-## Builds and tests
+## Tests
 
-- Bare native builds use `ENGINE=v335`.
-- `ENGINE=v328` and `ENGINE=v327` remain available for frozen regression comparisons.
-- `ENGINE=v510` must build independently without changing the default marker.
-- `ENGINE=v605` must build independently without changing the default marker.
-- Run deterministic local tests before considering a change complete.
-- Test `v335`, `v510`, and `v605` for changes to shared build, UCI, dataset, training, checkpoint, or profile infrastructure; test `v327` when a change claims backward compatibility with the frozen NNU3 baseline.
-- Run perft, UCI smoke, NNUE artifact validation, C invariants, and Python contract tests when their dependencies are available.
-- Treat skipped tests as missing evidence, not as passes.
-- Keep generated test evidence under `artifacts/`; do not overwrite source files as a test side effect.
+- Bare native builds use `ENGINE=v335`. `ENGINE=v510` and `ENGINE=v605` each build independently without changing the default marker. `ENGINE=v328` and `ENGINE=v327` stay available for frozen comparisons.
+- Run the deterministic local tests before you call a change complete: perft, UCI smoke, NNUE artifact validation, C invariants and Python contract tests, when their dependencies exist.
+- Test `v335`, `v510` and `v605` for changes to build, UCI, dataset, training, checkpoint or profile infrastructure. Test `v327` when a change claims backward compatibility.
+- A skipped test is missing evidence, not a pass.
+- Keep test evidence under `artifacts/`. A test must not overwrite source files.
 
 ## Git and branches
 
-- Do not delete, create, rename, merge, rebase, or force-update unrelated branches as a side effect of testing.
-- Do not make experiment branches depend on workflow files or branch-name patterns.
+- Do not delete, create, rename, merge, rebase or force-update unrelated branches as a side effect of testing.
+- Experiment branches do not depend on workflow files or branch-name patterns. Isolate experimental rounds by branch, output directory or configuration, never by copying workflows.
 - Do not auto-promote experimental code to `main`.
-- Keep experimental rounds isolated by branch, data/output directory, or explicit configuration rather than by copying workflows.
-- Preserve user work that is unrelated to the requested change.
+- Preserve user work that is unrelated to the request.
 
 ## GitHub Actions
 
-- Keep Actions minimal and generic.
-- Automatic CI may run on `main` and pull requests. Do not trigger broad automatic jobs solely because a branch name starts with a version prefix.
-- Generic CI (`.github/workflows/ci.yml`) remains read-only and never writes source, releases or branches.
-- The specifically authorized `.github/workflows/publish-pages.yml` is the **only** source-writing exception: after regenerating v335 WASM and passing real Chromium browser E2E, it may atomically synchronize `index.html` from `engine/c/zchezz_v335/zchezz_bundle.html` and commit just these two web artifacts to `main` (no force pushes).
-- The Pages publisher must never publish untested WASM, advance `ACTIVE_ENGINE`, or merge experimental changes. Request a Pages rebuild via the Pages REST API after a bot-authored commit because `GITHUB_TOKEN` pushes do not trigger Pages. Set its triggers to relevant web/build changes only; prevent self-trigger loops from generated bundles.
-- Do not create version-specific or round-specific workflow files or broaden write permissions in generic CI.
-- Local scripts remain the authoritative way to run tests and experiments; Actions are optional verification.
+- Keep Actions minimal and generic. CI runs on `main` and pull requests, never because a branch name starts with a version prefix.
+- `.github/workflows/ci.yml` is read-only: it never writes source, releases or branches.
+- `.github/workflows/publish-pages.yml` is the only source-writing exception. After it regenerates v335 WASM and passes the Chromium browser E2E, it may atomically sync `index.html` from `engine/c/zchezz_v335/zchezz_bundle.html` and commit those two web artifacts to `main` (no force push). It never publishes untested WASM, advances `ACTIVE_ENGINE` or merges experimental changes. It requests a Pages rebuild through the REST API, because `GITHUB_TOKEN` pushes do not trigger Pages. Its triggers cover web and build changes only, and generated bundles must not retrigger it.
+- Do not add version- or round-specific workflows or widen the write permissions of generic CI.
+- Local scripts are the authority for tests and experiments; Actions are optional verification.
 
 ## Source and documentation
 
-- Keep comments technical, current, and conditional. State what must be true and what a caller may rely on.
-- Historical source comments may retain the version they document; current `v335`/`v510` comments must not present an older family as the active implementation.
-- In `AGENTS.md`, do not include project history, migration narratives, or explanations of why a previous design changed.
-- Keep `CLAUDE.md` and `AGENTS.md` bodies identical; only the first title line may differ.
-- Update comments, tests, and docs when a public contract changes.
-- Use repository-relative paths in tracked configuration whenever possible.
+- Comments are technical, current and conditional: state what must be true and what a caller may rely on. Every module has a docstring and every non-trivial function states its contract.
+- Historical source comments may keep the version they document. Current `v335`/`v510` comments do not present an older family as active.
+- `AGENTS.md` holds no project history, migration narrative or reason for a past design change.
+- `CLAUDE.md` and `AGENTS.md` have identical bodies; only the first title line differs.
+- Update comments, tests and docs when a public contract changes.
+- Use repository-relative paths in tracked configuration.
 
 ## Safety invariants
 
 - Validate engine/profile compatibility before a long run starts.
-- Never silently mix evaluation targets from different evaluators in a training column without provenance.
-- Never silently reinterpret NNU3 data as NNU4 weights or vice versa.
-- Fail before games or training begin when a required artifact has the wrong magic, dimensions, size, or profile.
-- Keep deterministic seeds, paired openings, and test parameters in output metadata for reproducibility.
+- Fail before games or training start when an artifact has the wrong magic, dimensions, size or profile.
+- Never reinterpret NNU3 data as NNU4 weights or the reverse.
+- Keep deterministic seeds, paired openings and test parameters in output metadata.
 
-## Cloud operations and repository organization
+## Cloud and repository organization
 
-- Keep current Colab implementations under `colab/` according to `colab/layout.json`.
-- Read `colab/AGENTS.md` and `colab/README.md` before cloud operations.
-- Use `docs/repository-layout.md` for source roles and compatibility rules.
-- Keep generated reports and environments under ignored `artifacts/` directories.
-- Preserve frozen snapshots and active experiments during source cleanup.
+- Keep current Colab code under `colab/` as `colab/layout.json` defines. Read `colab/AGENTS.md` and `colab/README.md` before cloud operations.
+- `docs/repository-layout.md` gives source roles and compatibility rules.
+- Keep generated reports and environments under the ignored `artifacts/`.
+- Preserve frozen snapshots and active experiments during cleanup.

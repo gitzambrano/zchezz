@@ -62,6 +62,12 @@ def test_missing_cp_with_result_is_a_warning(tmp_path):
 
 
 def _bin(path: Path, stm_relative_bug: bool):
+    """Write a ``.bin`` shard from ROWS through the real ``.bin`` writer.
+
+    ``core.build_bin_records`` expects a White-relative score. With
+    ``stm_relative_bug=True`` the score of Black-to-move rows is negated first,
+    which reproduces the old UCI runner error, so the audit must reject the file.
+    """
     np = pytest.importorskip("numpy")
     chess = pytest.importorskip("chess")
     sys.path.insert(0, str(ROOT / "tests"))
