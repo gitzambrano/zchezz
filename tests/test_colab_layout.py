@@ -1,3 +1,7 @@
+"""Contract: the Colab layout has the common transport and runtime directories, each compatibility
+entry point forwards to one canonical implementation, legacy imports resolve and the repository
+audit does not change files.
+"""
 import importlib
 import json
 from pathlib import Path

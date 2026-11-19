@@ -365,6 +365,8 @@ def test_ponder_responsiveness(page) -> None:
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse the command line: the version (positional or `--version`), timeouts and the HTML path.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("legacy_version", nargs="?", default="")
     parser.add_argument("--version", default=VERSION)
@@ -380,6 +382,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    """Serve the engine directory and run the browser end-to-end tests on the HTML artifact of the
+    selected version.
+
+    Returns 1 when the artifact is missing or a test fails, otherwise 0.
+    """
     global ENGINE_READY_TIMEOUT_MS, SEARCH_TIMEOUT_MS
 
     args = parse_args()

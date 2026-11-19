@@ -70,6 +70,9 @@ def _path_arg(path: Path) -> str:
         return str(path)
 
 def profiles(version: str, baseline: str) -> dict[str, list[Step]]:
+    """Return the test steps of each profile name for the candidate `version` and the `baseline`
+    engine, with the executables resolved through the engine profiles.
+    """
     candidate_exe = str(engine_executable(version))
     baseline_exe = str(engine_executable(baseline))
     sanitizer_exe = str(engine_dir(version) / "zchezz_sanitize.exe")
@@ -193,6 +196,9 @@ def profiles(version: str, baseline: str) -> dict[str, list[Step]]:
     }
 
 def prerequisite_skip(step: Step) -> str | None:
+    """Return the reason a step cannot run here (operating system, missing file or tool), or None when
+    it can run.
+    """
     reasons: list[str] = []
     if step.os_names is not None and os.name not in step.os_names:
         reasons.append(f"os.name={os.name!r} not in {step.os_names}")
@@ -208,6 +214,11 @@ def prerequisite_skip(step: Step) -> str | None:
     return "; ".join(reasons) + suffix
 
 def run_step(step: Step, log_dir: Path, env: dict[str, str]) -> Result:
+    """Run one step, log its output into `log_dir` and return its Result.
+
+    A step whose prerequisite is missing is reported as `SKIP`; a missing executable gives exit code
+    127.
+    """
     why = prerequisite_skip(step)
     if why:
         return Result(step.name, list(step.command), "SKIP", None, 0.0, step.required, "", why)
@@ -248,6 +259,9 @@ def run_step(step: Step, log_dir: Path, env: dict[str, str]) -> Result:
     )
 
 def main() -> int:
+    """Run the steps of the selected test profile and return 0 when every required step passes or is
+    skipped for a documented reason, otherwise 1.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "profile",

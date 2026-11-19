@@ -1,3 +1,6 @@
+"""Contract: `colab.monitoring.evaluate` detects stalls, keeps the last progress after an error, never
+changes its inputs and needs a positive stall threshold.
+"""
 import copy
 import pytest
 

@@ -104,6 +104,9 @@ def collect_targets(
     targets: list[tuple[Path, str, int]] = []
 
     def is_safe(p: Path) -> bool:
+        """Return True when `p` may be deleted: not a protected path, not a source, weight or
+        executable under `engine/c`, and not tracked by Git.
+        """
         if p in PROTECTED_PATHS:
             return False
         p_str = str(p)
@@ -250,6 +253,9 @@ def execute_cleanup(targets: list[tuple[Path, str, int]], dry_run: bool = False)
 
 
 def main() -> int:
+    """Remove the targets of the selected cleanup categories, or only list them with `--dry-run`.
+    `--show-config` prints the settings and returns 0.
+    """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true", help="Perform inspection without deleting files")
     parser.add_argument("--show-config", action="store_true", help="Print configuration and exit")

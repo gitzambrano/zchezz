@@ -167,6 +167,7 @@ class NNUE(nn.Module):
     """
 
     def __init__(self) -> None:
+        """Create the L1 EmbeddingBag, the L2/L3 layers and their activations, and initialize L1."""
         super().__init__()
 
         # L1: nn.EmbeddingBag stores its weight as [num_embeddings=2560,

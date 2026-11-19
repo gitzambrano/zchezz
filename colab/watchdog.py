@@ -34,6 +34,9 @@ CONFIG: Dict[str, Any] = {
 
 
 def main() -> None:
+    """Run the watchdog over the selected workers through the `cli` or `playwright` backend
+    (`--backend`).
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=["cli", "playwright"], default=CONFIG["backend"],
                         help="Transport backend to use (default: cli)")

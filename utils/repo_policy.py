@@ -42,6 +42,9 @@ def runtime_string_literals(path: Path) -> list[str]:
     ]
 
 def absolute_root_files(root: Path) -> set[str]:
+    """Return the Python files under tests, train, tools and utils whose runtime string literals
+    contain an absolute path into a Zchezz checkout.
+    """
     offenders: set[str] = set()
     for top in ("tests", "train", "tools", "utils"):
         base = root / top

@@ -57,6 +57,9 @@ CATALOG_END = "<!-- END GENERATED CATALOG -->"
 # ── measurement ──────────────────────────────────────────────────────────────
 
 def _result_stats_parquet(files: List[Path]) -> tuple[Optional[float], Optional[Dict[str, int]]]:
+    """Return (valid-result rate, win/draw/loss counts) over the parquet `files`, or (None, None) when
+    they have no `result` column.
+    """
     import numpy as np
     import pyarrow.compute as pc
     import pyarrow.parquet as pq
@@ -263,6 +266,9 @@ def write_manifest(dataset_path: Path, manifest: Optional[Dict[str, Any]] = None
 
 
 def validate_manifest(manifest: Dict[str, Any]) -> bool:
+    """Return True when `manifest` has every required field, a supported schema version, a valid format
+    and a White-relative point of view; raise ValueError otherwise.
+    """
     required = {"schema_version", "name", "format", "point_of_view", "positions_count",
                 "columns", "has_cp", "has_result", "evidence"}
     missing = required - set(manifest)
@@ -309,6 +315,7 @@ def _cell(m: Dict[str, Any], field: str) -> str:
 
 
 def render_catalog(manifests: List[Dict[str, Any]]) -> str:
+    """Render the Markdown catalog table of `manifests`, sorted by name, with a totals line."""
     rows = ["| Dataset | Format | Positions | MB | Played by | Evaluator | Budget | Result % | Date | Stage |",
             "|---|---|---|---|---|---|---|---|---|---|"]
     total_pos = total_mb = 0.0
@@ -329,6 +336,9 @@ def render_catalog(manifests: List[Dict[str, Any]]) -> str:
 
 
 def update_catalog_doc(manifests: List[Dict[str, Any]], doc: Path = CATALOG_DOC) -> bool:
+    """Replace the generated catalog block of `doc` with the current catalog. Return True when the file
+    changed; raise ValueError when the block markers are missing.
+    """
     text = doc.read_text(encoding="utf-8")
     if CATALOG_BEGIN not in text or CATALOG_END not in text:
         raise ValueError(f"{doc} lacks the generated-catalog markers")
@@ -349,6 +359,12 @@ def catalog_in_doc(doc: Path = CATALOG_DOC) -> str:
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
+    """Run the manifest tool and return 0.
+
+    `--generate` refreshes every `manifest.json`, `--catalog` rewrites the catalog block of
+    docs/datasets.md, and with neither flag it prints a read-only status of each manifest.
+    `--show-config` prints the settings and exits.
+    """
     import argparse
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-root", type=Path, default=DATA_ROOT)

@@ -18,6 +18,9 @@ def force_utf8_stdio() -> None:
 def _dest(flag: str) -> str: return flag.lstrip("-").replace("-", "_")
 
 def build_parser(config: Mapping[str, Any], spec: Sequence[tuple], *, prog=None, description=None, epilog=None):
+    """Return an ArgumentParser with `--show-config` and one flag per `spec` entry (name, flag, type,
+    help); defaults come from `config`.
+    """
     parser = argparse.ArgumentParser(prog=prog, description=description, epilog=epilog)
     parser.add_argument("--show-config", action="store_true", help="print resolved defaults/overrides and exit")
     for entry in spec:
@@ -35,6 +38,10 @@ def build_parser(config: Mapping[str, Any], spec: Sequence[tuple], *, prog=None,
     return parser
 
 def override_from_cli(config: MutableMapping[str, Any], spec: Sequence[tuple], argv=None, *, prog=None, description=None, epilog=None):
+    """Apply the command-line overrides of `spec` to `config` in place and return the parsed arguments.
+
+    `--show-config` prints the resolved values and ends the process with exit code 0.
+    """
     parser = build_parser(config, spec, prog=prog, description=description, epilog=epilog)
     args = parser.parse_args(argv)
     for entry in spec:

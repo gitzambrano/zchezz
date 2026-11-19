@@ -28,6 +28,9 @@ def parse_bool(text: str) -> bool:
     raise argparse.ArgumentTypeError(f"expected true/false, got {text!r}")
 
 def extract_book(html: str) -> dict[str, list[str]]:
+    """Return the opening book embedded in the HTML text `html` as a dict of FEN to moves; empty when
+    the book block is missing.
+    """
     marker = html.find("OPENING_BOOK")
     if marker < 0:
         return {}
@@ -45,6 +48,9 @@ def full_fen(key: str) -> str:
     return f"{key} 0 1" if len(parts) == 4 else key
 
 def validate(book: dict[str, list[str]]) -> list[str]:
+    """Return the error messages (empty when valid) of the book: each position must be a legal FEN and
+    each move legal in it.
+    """
     errors: list[str] = []
     for fen, moves in book.items():
         try:
@@ -66,6 +72,7 @@ def validate(book: dict[str, list[str]]) -> list[str]:
     return errors
 
 def main() -> int:
+    """Validate the opening book of `--html`. Returns 0 when it is valid and 1 on an error."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--html", default=HTML_PATH)
     parser.add_argument("--evaluate", type=parse_bool, default=EVALUATE)

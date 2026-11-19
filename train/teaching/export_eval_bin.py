@@ -66,6 +66,9 @@ def teaching_to_sample(row, cp_white: int) -> np.ndarray:
 
 
 def main() -> int:
+    """Export the teaching dataset `--input` as a `.bin` value source at `--output`. `--value-mode`
+    selects the label. Returns 0, or 2 for a missing input.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=INPUT)
     parser.add_argument("--output", type=Path, default=OUTPUT)

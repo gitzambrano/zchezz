@@ -18,6 +18,10 @@ READ_COMMANDS = {"sessions", "status", "ls", "download", "log", "version", "help
 
 
 def main():
+    """Run the official Colab client command for `--worker-id` under that account's isolated
+    environment. `--show-config` prints the command and returns 0; returns 1 on a configuration
+    error, otherwise the command's exit code.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker-id", type=int, choices=CONFIG["worker_ids"], default=CONFIG["worker_ids"][0])
     parser.add_argument("--show-config", action="store_true")

@@ -14,6 +14,12 @@ from repo_paths import active_version, wasm_bundle  # noqa: E402
 HTML_PATH = ""
 
 def main() -> int:
+    """Check the static contract of the HTML bundle `--html` without a browser: size, engine bootstrap,
+    WASM and NNUE markers and no unresolved placeholders.
+
+    Returns 0 when the checks pass or the bundle is missing (reported as SKIP), and 1 when a check
+    fails.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--html", default=HTML_PATH)
     args = parser.parse_args()

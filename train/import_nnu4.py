@@ -8,6 +8,10 @@ ROOT=Path(__file__).resolve().parents[1]; DEFAULT_SRC=ROOT/'engine/c/zchezz_v510
 QA=255.0; QB=64.0; SHIFT=8.0; OUT_SCALE=320.0/(QB*QB)
 
 def read_nnu4(path: Path):
+    """Read an NNU4 engine file; return (weights, arch, epoch) with weights dequantized to float32.
+
+    Raises ValueError when the magic, the dimensions or a quantization constant differs from NNU4.
+    """
     data=path.read_bytes(); off=0
     if data[:4]!=b'NNU4': raise ValueError(f'{path}: expected NNU4')
     off=4; epoch=struct.unpack_from('<I',data,off)[0]; off+=4; l1_in,l1_out,l2_in,l2_out,l3_in=struct.unpack_from('<5I',data,off); off+=20
@@ -31,6 +35,9 @@ def convert(src:Path,dst:Path):
     torch.save({'epoch':epoch,'dataset':'bootstrap_'+src.parent.name.replace('zchezz_',''),'arch':arch,'qat':True,'qa':QA,'qb':QB,'weights':weights,'bootstrap':{'source':str(src)}},tmp); tmp.replace(dst); print(f'NNU4 checkpoint: {src} -> {dst}')
 
 def main():
+    """Run the importer; `--show-config` prints the settings and returns 0 without reading or writing
+    files.
+    """
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--src',type=Path,default=DEFAULT_SRC)
     p.add_argument('--dst',type=Path,default=DEFAULT_DST)

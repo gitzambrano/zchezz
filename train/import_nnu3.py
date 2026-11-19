@@ -11,6 +11,10 @@ QA=255.0; QB=64.0
 EXPECTED_DIMS=(799,256,256,64,64); EXPECTED_SIZE=426_864
 
 def read_nnu3(path:Path):
+    """Read an NNU3 engine file; return (state, arch, epoch) with weights dequantized to float32.
+
+    Raises ValueError when the size, magic or dimensions are not those of NNU3.
+    """
     data=path.read_bytes()
     if len(data)!=EXPECTED_SIZE or data[:4]!=b'NNU3': raise ValueError(f'{path}: invalid NNU3 artifact')
     epoch=struct.unpack_from('<I',data,4)[0]; dims=struct.unpack_from('<5I',data,8)
@@ -33,6 +37,9 @@ def convert(src:Path,dst:Path):
     tmp.replace(dst); print(f'NNU3 checkpoint: {src} -> {dst}')
 
 def main():
+    """Run the importer; `--show-config` prints the settings and returns 0 without reading or writing
+    files.
+    """
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--src',type=Path,default=DEFAULT_SRC)
     p.add_argument('--dst',type=Path,default=DEFAULT_DST)

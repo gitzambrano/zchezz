@@ -26,6 +26,7 @@ def sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 def command_text(command: list[str]) -> str | None:
+    """Return the output of `command` run in the repository root, or None when it fails."""
     try:
         return subprocess.check_output(
             command,
@@ -39,6 +40,9 @@ def command_text(command: list[str]) -> str | None:
         return None
 
 def latest_test_summaries() -> dict[str, dict[str, object]]:
+    """Return the newest `artifacts/tests/*/summary.json` of each profile as a dict of path, version,
+    baseline, pass state, coverage and counts; empty when there are none.
+    """
     root = ROOT / "artifacts" / "tests"
     found: dict[str, tuple[float, Path, dict[str, object]]] = {}
     if not root.is_dir():
@@ -68,6 +72,9 @@ def latest_test_summaries() -> dict[str, dict[str, object]]:
     return result
 
 def main() -> int:
+    """Write the machine-readable release provenance manifest. `--show-config` prints the settings and
+    returns 0.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="")
     parser.add_argument("--regression-run", default="")

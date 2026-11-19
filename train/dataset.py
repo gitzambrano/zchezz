@@ -432,6 +432,11 @@ class MultiShardSelfplay:
     """
 
     def __init__(self, shard_paths: list[str]):
+        """Memory-map every `.bin` shard in `shard_paths` and index their records as one sequence.
+
+        Raises ValueError when the list is empty or a shard size is not a multiple of the record
+        size.
+        """
         if not shard_paths:
             raise ValueError("MultiShardSelfplay: no shard paths given")
 

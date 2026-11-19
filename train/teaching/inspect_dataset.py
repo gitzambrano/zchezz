@@ -16,6 +16,9 @@ INPUT = ROOT / "data" / "teaching" / "stockfish_cascade_v1"
 
 
 def main() -> int:
+    """Print the size, coverage and label statistics of the teaching dataset `--input`. Returns 0, or 2
+    for a missing input.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=INPUT)
     parser.add_argument("--show-config", action="store_true")

@@ -24,6 +24,11 @@ def _q(a, scale, limit, dtype, name):
 
 
 def convert(ckpt_path: Path, dst: Path):
+    """Write the NNU5 engine file `dst` from the PyTorch checkpoint `ckpt_path`.
+
+    Raises ValueError when the checkpoint `arch`, a tensor shape or the written file size differs
+    from the NNU5 layout.
+    """
     ckpt = torch.load(ckpt_path, map_location='cpu', weights_only=False)
     arch = ckpt.get('arch', {})
     expected = {'input': L1_IN, 'h1': L1_OUT, 'concat': L2_IN, 'h2': L2_OUT, 'encoding': 'halfka_v2_hm_32b'}
@@ -64,6 +69,9 @@ def convert(ckpt_path: Path, dst: Path):
 
 
 def main():
+    """Run the exporter; `--show-config` prints the settings and returns 0 without reading or writing
+    files.
+    """
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--checkpoint', type=Path, default=DEFAULT_CKPT)
     p.add_argument('--output', type=Path, default=DEFAULT_DST)

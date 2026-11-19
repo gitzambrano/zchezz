@@ -76,6 +76,9 @@ def resolve_engine(version: str, explicit: str) -> Path:
     return Path(explicit) if explicit else engine_executable(version or active_version())
 
 def run_perft(exe: Path, fen: str, depth: int, timeout: float) -> int | None:
+    """Run `perft` at `depth` on `fen` with the engine `exe`; return the node count, or None on a
+    timeout or an unreadable answer.
+    """
     text = f"position fen {fen}\nperft {depth}\nquit\n"
     try:
         proc = subprocess.run(
@@ -100,6 +103,9 @@ def run_perft(exe: Path, fen: str, depth: int, timeout: float) -> int | None:
     return None
 
 def main() -> int:
+    """Run the reference perft suite on the engine of `--version`. Returns 0 when every count matches,
+    1 on a mismatch and 2 when the engine is missing.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("legacy_version", nargs="?", default="")
     parser.add_argument("--version", default=VERSION)

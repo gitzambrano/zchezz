@@ -71,6 +71,12 @@ def play_one(
     max_plies: int,
     game_id: str,
 ) -> dict:
+    """Play one game of the candidate against the baseline from `opening`, with `candidate_color` for
+    the candidate.
+
+    Returns a dict with the result, the termination (including engine errors and timeouts, which
+    lose the game), the plies, the candidate color and the move times.
+    """
     board = chess.Board()
     apply_opening(board, opening)
     clocks = {chess.WHITE: base_seconds, chess.BLACK: base_seconds}
@@ -160,6 +166,9 @@ def candidate_score(game: dict) -> float:
 
 
 def main() -> int:
+    """Play the ponder match between the candidate and the baseline of `--profile` from the selected
+    opening and print the summary. Returns 0.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--profile", default=engine_profiles.normalize_profile(None), choices=PROFILES)
     ap.add_argument("--opening-index", type=int, default=DEFAULT_OPENING_INDEX)

@@ -138,6 +138,9 @@ def run(config):
 
 
 def main():
+    """Report runtime access and persisted artifacts of `--worker-ids` through the CLI, without browser
+    control or changes to remote tasks.
+    """
     from pathlib import Path
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker-ids", nargs="+", type=int, choices=list(WORKERS), default=CONFIG["worker_ids"])

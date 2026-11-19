@@ -164,6 +164,12 @@ def load_key_side(folder: str, key_col: str) -> tuple[np.ndarray, np.ndarray, li
 
 
 def run_job(job: dict) -> None:
+    """Merge one job: add the `job['key_col']` column of dataset `job['key']` to the rows of
+    `job['base']`, joined on a 64-bit hash of the FEN, and write the result to `job['out']`.
+
+    Stops with SystemExit when hash collisions show that the datasets do not describe the same
+    positions. Writes nothing in a dry run.
+    """
     key_dir = os.path.join(DATA_DIR, job["key"])
     base_dir = os.path.join(DATA_DIR, job["base"])
     out_dir = os.path.join(DATA_DIR, job["out"])
@@ -186,6 +192,9 @@ def run_job(job: dict) -> None:
     buf_rows = shard = 0
 
     def flush():
+        """Write the buffered rows as the next output shard and clear the buffer; writes nothing in a
+        dry run.
+        """
         nonlocal buf, buf_rows, shard
         if not buf_rows:
             return
@@ -241,6 +250,9 @@ def run_job(job: dict) -> None:
 
 
 def main() -> int:
+    """Run the configured JOBS, or the single job given by `--key`, `--key-col`, `--base` and `--out`
+    (all four are required together). Returns 0.
+    """
     print("DRY RUN — nothing will be written" if DRY_RUN else "WRITING")
     # A fully specified --key/--key-col/--base/--out replaces the JOBS list
     # for this run; anything less falls back to it (a half-described job is a

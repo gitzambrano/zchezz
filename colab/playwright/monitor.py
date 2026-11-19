@@ -53,6 +53,11 @@ def probe(page, worker):
 
 
 def run(config):
+    """Observe the notebooks of `config['worker_ids']` every `interval` seconds and return the report.
+
+    It never reconnects or executes cells. ValueError for non-positive intervals; RuntimeError
+    (`browser_unavailable`) when no browser session can be reached.
+    """
     from playwright.sync_api import sync_playwright
     if config["interval"] <= 0 or config["stall_seconds"] <= 0:
         raise ValueError("Monitor intervals must be positive.")
@@ -104,6 +109,7 @@ def run(config):
 
 
 def main():
+    """Observe the notebooks of `--worker-ids` every `--interval` seconds."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker-ids", nargs="+", type=int, choices=list(WORKERS), default=CONFIG["worker_ids"])
     parser.add_argument("--interval", type=float, default=CONFIG["interval"])

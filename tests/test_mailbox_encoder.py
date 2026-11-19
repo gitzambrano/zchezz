@@ -121,6 +121,12 @@ def _fen_reference_indices(fen: str) -> tuple[set[int], set[int]]:
 
 
 def main() -> int:
+    """Check that `encode_mailbox_batch` matches the FEN + python-chess encoding on every record of a
+    `.bin` shard (a generated fixture when none is configured).
+
+    It reports the coverage of Black to move, castling and en passant. An assertion fails on an
+    empty shard; returns 1 on a mismatch and 0 on success.
+    """
     bin_path = BIN_PATH_DEFAULT or BIN_PATH or _generate_fixture()
     header_size, _prov = dataset.read_bin_header(bin_path)   # 0 for headerless v1 files
     size = os.path.getsize(bin_path) - header_size

@@ -265,6 +265,9 @@ def log(*args):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class OpeningIndex:
+    """Random-access index of the openings of EPD and PGN files; `fetch` reads one opening without
+    loading the files.
+    """
     def __init__(self):
         self._index = []
         self._handles = {}
@@ -280,6 +283,9 @@ class OpeningIndex:
             return self._handles[fpath]
 
     def _build_epd(self, fpath):
+        """Index the byte offset of every position of the EPD file `fpath`, caching the index in
+        `<fpath>.idx` while it is newer than the file.
+        """
         idx_path = fpath + ".idx"
         if os.path.exists(idx_path) and os.path.getmtime(idx_path) >= os.path.getmtime(fpath):
             try:
@@ -305,6 +311,7 @@ class OpeningIndex:
         log(f"  [EPD] {os.path.basename(fpath)}: {len(offsets):,} pos indexed")
 
     def _build_pgn(self, fpath):
+        """Index the byte offset of every game of the PGN file `fpath`."""
         count = 0
         with open(fpath, "rb") as f:
             game_start = None
@@ -323,6 +330,7 @@ class OpeningIndex:
     def shuffle(self): random.shuffle(self._index)
 
     def fetch(self, idx) -> dict:
+        """Return opening number `idx` as a dict with `fen` or the `moves` list in UCI notation."""
         fpath, offset, kind = self._index[idx]
         if kind == "epd":
             fh = self._open(fpath)
@@ -390,8 +398,12 @@ def load_all_openings(folder: str, filter_files: list = None) -> OpeningIndex:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class EngineInstance:
+    """One UCI engine process of the tournament, with its time control, options and Elo anchor."""
     def __init__(self, path, label, tc_mode="depth", tc_value=8, tc_inc=0,
                  options=None, go_cmd_override=None, elo=None, **_):
+        """Record the engine path (made absolute), `label`, time control, UCI `options`, an optional
+        `go` override and the anchor Elo; the process starts on first use.
+        """
         self.path     = os.path.abspath(path.replace("\\", os.sep))
         self.label    = label
         self.tc_mode  = tc_mode
@@ -414,6 +426,9 @@ class EngineInstance:
         except Exception: pass
 
     def start(self):
+        """Start the engine process, complete the UCI handshake and apply `options`. Returns True when
+        it runs and False when it cannot start.
+        """
         engine_dir = os.path.dirname(self.path)
         try:
             args = [self.path]
@@ -473,6 +488,9 @@ class EngineInstance:
         return False
 
     def _build_go(self, wtime, btime):
+        """Return the `go` command of the time control: the override when set, otherwise depth,
+        movetime or nodes.
+        """
         if self.go_cmd_override:
             return f"go {self.go_cmd_override}"
         if self.tc_mode == "depth":
@@ -485,6 +503,9 @@ class EngineInstance:
         return f"go wtime {wtime} btime {btime} winc {self.tc_inc} binc {self.tc_inc}"
 
     def get_move(self, board, wtime=0, btime=0):
+        """Ask the engine for a move on `board`; return (move, White-relative cp score, nodes, depth),
+        or (None, None) when the engine cannot start.
+        """
         if not self.process or self.process.poll() is not None:
             if not self.start(): return None, None
 
@@ -543,6 +564,8 @@ class EngineInstance:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class EloEstimator:
+    """Maximum-likelihood Elo estimate of one engine from its results against anchors of known Elo.
+    """
     def __init__(self):
         self.results = []  # list of (opponent_elo_float, score_float)
 
@@ -550,6 +573,9 @@ class EloEstimator:
         self.results.append((opp_elo, score))
 
     def estimate_mle(self):
+        """Return (Elo, 95% error margin) from the recorded results, or (None, None) when there are
+        none.
+        """
         if not self.results: return None, None
         # Group by anchor ELO
         per_anchor = {}
@@ -626,6 +652,10 @@ def format_eval(score, elapsed_ms):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def play_game(game_id, white_cfg, black_cfg, results_queue, opening=None):
+    """Play one game between the engines of `white_cfg` and `black_cfg` and put the result on
+    `results_queue`. `opening` sets the start position; an illegal move loses the game for that
+    side.
+    """
     w_eng = EngineInstance(**white_cfg)
     b_eng = EngineInstance(**black_cfg)
 
@@ -791,6 +821,8 @@ def print_counter():
 
 
 def print_cross_table(is_final=False):
+    """Print the cross table of results and the Elo estimates; with `is_final` it is the final report.
+    """
     elapsed = time.time() - start_time
     gps = completed_games / elapsed if elapsed > 0 else 0
     title = "RELATÓRIO FINAL" if is_final else f"RELATÓRIO (após {completed_games} jogos)"
@@ -882,6 +914,12 @@ PAIR_OF = {}
 
 
 def build_schedule(op_idx):
+    """Return the game schedule as (game id, White config, Black config, opening index) tuples.
+
+    It pairs every own engine with every anchor (`GAMES_VS_EACH_ANCHOR` games) and, when `SELF_PLAY`
+    is set, own engines with each other. With `COLOR_SWAP` each pairing plays both colors on the
+    same opening. Each round is shuffled.
+    """
     my_cfgs     = MY_ENGINES
     anchor_cfgs = ANCHORS
     schedule    = []
@@ -1055,6 +1093,10 @@ def write_bin(f_bin, positions, winner, label):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Run the quick tournament: build the schedule, play it with a pool of workers and print the cross
+    table and Elo estimates. Engines, time control and counts come from the top-of-file constants
+    and the command line.
+    """
     global completed_games, epd_positions, bin_samples, start_time
     global _all_labels, _my_labels, stats, h2h, elo_estimators
 

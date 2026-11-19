@@ -181,6 +181,9 @@ POSITIONS = [
 ]
 
 def run_engine(path, fen, depth, use_tb):
+    """Run `path` on `fen` to `depth` (with tablebases when `use_tb`); return (nps, score text, nodes,
+    tablebase hits), or (0, "ERR", 0, 0) on a failure.
+    """
     tb_opt = f"setoption name SyzygyPath value {TB_PATH}" if use_tb else ""
     cmds = f"uci\n{tb_opt}\nisready\nposition fen {fen}\ngo depth {depth}\n"
     try:
@@ -207,6 +210,9 @@ def run_engine(path, fen, depth, use_tb):
     return nps, score_str, nodes, tbhits
 
 def check_eval(score_str, expected):
+    """Compare the engine score text with the expected value of a position and return a pass or fail
+    marker; "—" when no value is expected.
+    """
     if expected is None: return "—"
     try:
         if score_str.startswith("mate"):
@@ -231,6 +237,9 @@ def check_eval(score_str, expected):
     return "?"
 
 def main():
+    """Benchmark the engines on the selected positions with and without tablebases and print the table.
+    Returns 1 on a failed check or a setup error, otherwise 0.
+    """
     engines   = build_engines()
     positions = select_positions()
     tb_name, notb_name = head_tb(), head_notb()

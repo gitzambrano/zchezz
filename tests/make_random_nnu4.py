@@ -45,6 +45,9 @@ OUT_PATH = "random_nnu4.bin"  # default output path when out_path is omitted
 
 
 def main():
+    """Write a random-weight NNU4 file to `out_path` from `--seed` (the same seed gives the same file),
+    for accumulator verification tests that need an NNU4 artifact.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("out_path", nargs="?", default=OUT_PATH,
                      help="Output .bin path (default %(default)s).")

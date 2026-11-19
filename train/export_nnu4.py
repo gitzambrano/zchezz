@@ -12,6 +12,11 @@ def _q(a,scale,limit,dtype,name):
     if n: print(f'WARNING: clipping {n} {name} values')
     return np.clip(q,-limit,limit).astype(dtype)
 def convert(ckpt_path:Path,dst:Path):
+    """Write the NNU4 engine file `dst` from the PyTorch checkpoint `ckpt_path`.
+
+    Raises ValueError when the checkpoint `arch` or a tensor shape differs from the NNU4 layout, so
+    no incompatible file is written.
+    """
     ckpt=torch.load(ckpt_path,map_location='cpu',weights_only=False)
     arch=ckpt.get('arch',{}); expected={'input':L1_IN,'h1':L1_OUT,'concat':L2_IN,'h2':L2_OUT,'encoding':'halfkp_4bucket'}
     for k,v in expected.items():
@@ -25,6 +30,9 @@ def convert(ckpt_path:Path,dst:Path):
     if dst.stat().st_size!=EXPECTED_SIZE: dst.unlink(missing_ok=True); raise ValueError('NNU4 size mismatch')
     print(f'NNU4 export: {ckpt_path} -> {dst} ({EXPECTED_SIZE} bytes)')
 def main():
+    """Run the exporter; `--show-config` prints the settings and returns 0 without reading or writing
+    files.
+    """
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--checkpoint',type=Path,default=DEFAULT_CKPT)
     p.add_argument('--output',type=Path,default=DEFAULT_DST)

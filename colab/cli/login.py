@@ -58,6 +58,9 @@ def exchange(worker, code):
 
 
 def main():
+    """Authorize isolated CLI credentials for `--worker-ids`, in the mode chosen by the mutually
+    exclusive mode flags.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker-ids", type=int, nargs="+", choices=CONFIG["worker_ids"], default=CONFIG["worker_ids"])
     modes = parser.add_mutually_exclusive_group()

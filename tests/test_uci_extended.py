@@ -72,6 +72,9 @@ def skip(name: str, reason: str) -> None:
     print(f"  SKIP  {name} — {reason}")
 
 class UCIEngine:
+    """UCI engine process used by the extended UCI tests: sends commands and reads output lines with a
+    timeout.
+    """
     def __init__(self, path: Path):
         self.path = path
         self.proc: subprocess.Popen[str] | None = None
@@ -80,6 +83,7 @@ class UCIEngine:
         self.reader: threading.Thread | None = None
 
     def start(self) -> None:
+        """Start the engine process and its reader thread."""
         self.proc = subprocess.Popen(
             [str(self.path)],
             cwd=self.path.parent,
@@ -95,17 +99,22 @@ class UCIEngine:
         self.reader.start()
 
     def _read(self) -> None:
+        """Reader-thread body: collect the engine output lines into the queue."""
         assert self.proc and self.proc.stdout
         for line in self.proc.stdout:
             with self.lock:
                 self.lines.append(line.rstrip("\r\n"))
 
     def send(self, command: str) -> None:
+        """Send one command line to the engine."""
         assert self.proc and self.proc.stdin and self.proc.poll() is None
         self.proc.stdin.write(command + "\n")
         self.proc.stdin.flush()
 
     def read_until(self, pattern: str, timeout: float) -> list[str]:
+        """Read lines until one matches `pattern` and return the lines read; stops after `timeout`
+        seconds.
+        """
         rx = re.compile(pattern)
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -122,6 +131,7 @@ class UCIEngine:
         return result
 
     def read_after(self, delay: float = 0.25) -> list[str]:
+        """Return the lines the engine prints in the next `delay` seconds."""
         time.sleep(delay)
         with self.lock:
             result = list(self.lines)
@@ -129,14 +139,17 @@ class UCIEngine:
         return result
 
     def sync(self) -> bool:
+        """Send `isready` and return True when the engine answers `readyok`."""
         self.send("isready")
         return any(line == "readyok" for line in self.read_until(r"^readyok$", HANDSHAKE_TIMEOUT_S))
 
     def clear(self) -> None:
+        """Discard the output lines read so far."""
         with self.lock:
             self.lines.clear()
 
     def quit(self) -> None:
+        """Ask the engine to quit and end its process."""
         if not self.proc:
             return
         if self.proc.poll() is None:
@@ -170,6 +183,7 @@ def bestmove(eng: UCIEngine, go: str, *, timeout: float = SEARCH_TIMEOUT_S) -> l
     return eng.read_until(r"^bestmove\b", timeout)
 
 def t1(eng: UCIEngine, options: set[str]) -> None:
+    """T1: the UCI handshake (`uci`, `uciok`, identity and options)."""
     print("\n=== T1: handshake ===")
     eng.send("uci")
     lines = eng.read_until(r"^uciok$", HANDSHAKE_TIMEOUT_S)
@@ -188,6 +202,7 @@ def t1(eng: UCIEngine, options: set[str]) -> None:
     check("ucinewgame preserves readiness", eng.sync())
 
 def t2(eng: UCIEngine, options: set[str]) -> None:
+    """T2: `position` and `go` in depth, movetime and node modes return a legal best move."""
     print("\n=== T2: position and go ===")
     scenarios = [
         ("startpos depth", "position startpos", "go depth 5"),
@@ -224,6 +239,7 @@ def _last_tbhits(lines: list[str]) -> int:
     return 0
 
 def t3(eng: UCIEngine, options: set[str]) -> None:
+    """T3: Syzygy tablebase option and probing; skipped when the engine has no `SyzygyPath`."""
     print("\n=== T3: Syzygy ===")
     path = Path(SYZYGY_PATH)
     if "SyzygyPath" not in options:
@@ -254,6 +270,7 @@ def t3(eng: UCIEngine, options: set[str]) -> None:
     check("KRK -> bestmove", any(line.startswith("bestmove ") for line in lines))
 
 def t4(eng: UCIEngine, options: set[str]) -> None:
+    """T4: opening-book option; skipped when the engine has no `OwnBook`."""
     print("\n=== T4: opening book ===")
     if "OwnBook" not in options:
         skip("opening-book group", "engine does not advertise OwnBook")
@@ -282,6 +299,7 @@ def t4(eng: UCIEngine, options: set[str]) -> None:
     eng.sync()
 
 def t5(eng: UCIEngine, options: set[str]) -> None:
+    """T5: MultiPV output."""
     print("\n=== T5: MultiPV ===")
     if "MultiPV" not in options:
         check("MultiPV option advertised", False)
@@ -303,6 +321,7 @@ def t5(eng: UCIEngine, options: set[str]) -> None:
     eng.sync()
 
 def t6(eng: UCIEngine, options: set[str]) -> None:
+    """T6: Threads option."""
     print("\n=== T6: Threads ===")
     if "Threads" not in options:
         check("Threads option advertised", False)
@@ -325,6 +344,7 @@ def t6(eng: UCIEngine, options: set[str]) -> None:
     eng.sync()
 
 def t7(eng: UCIEngine, options: set[str]) -> None:
+    """T7: every supported option accepts a valid value."""
     print("\n=== T7: supported options ===")
     cases = [
         ("Contempt", "25"),
@@ -344,6 +364,7 @@ def t7(eng: UCIEngine, options: set[str]) -> None:
         skip("supported-options group", "none of the optional cases are advertised")
 
 def t8(eng: UCIEngine, options: set[str]) -> None:
+    """T8: extension commands such as `bench`."""
     print("\n=== T8: extension commands ===")
     eng.clear()
     eng.send("bench 5")
@@ -360,6 +381,7 @@ def t8(eng: UCIEngine, options: set[str]) -> None:
     check("eval produces output", bool(lines), f"lines={lines[:3]}")
 
 def t9(eng: UCIEngine, options: set[str]) -> None:
+    """T9: repeated search stress without a crash or a hang."""
     print("\n=== T9: stress ===")
     ok = True
     for _ in range(10):
@@ -392,6 +414,9 @@ GROUPS = {
 }
 
 def run_group(name: str, fn, engine_path: Path) -> None:
+    """Run the test group `fn` on a fresh engine process of `engine_path`, and mark a failure in
+    FAILED.
+    """
     global FAILED
     eng = UCIEngine(engine_path)
     try:
@@ -422,6 +447,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 def main() -> int:
+    """Run every UCI test group on the engine of the selected profile. Returns 1 when any check fails,
+    otherwise 0.
+    """
     global VERSION, ENGINE_PATH, SYZYGY_PATH, BOOK_PATH
     global HANDSHAKE_TIMEOUT_S, SEARCH_TIMEOUT_S
 

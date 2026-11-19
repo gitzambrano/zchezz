@@ -65,6 +65,9 @@ RESAMPLE_EACH_EPOCH = True
 
 
 def _parse_source(spec: str) -> infra.SourceSpec:
+    """Parse a `--source` spec (`kind=parquet|bin`, `path=` or `glob=`, plus options) into a
+    SourceSpec; argparse.ArgumentTypeError on an invalid spec.
+    """
     kv = infra._parse_kv_spec(spec)
     kind = kv.get("kind")
     if kind not in ("parquet", "bin"):
@@ -88,6 +91,7 @@ def _parse_source(spec: str) -> infra.SourceSpec:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Return the argument parser of the NNU3 trainer."""
     p = argparse.ArgumentParser(
         description="Zchezz v3.22 NNU3 trainer using the modern v4.03 data/source layer",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -135,6 +139,7 @@ def _source_salt(source: infra.SourceSpec) -> int:
 
 
 def _parquet_files(source: infra.SourceSpec) -> list[str]:
+    """Return the sorted parquet files of `source`; FileNotFoundError when none match."""
     path = source.path
     if os.path.isdir(path):
         files = sorted(glob.glob(os.path.join(path, f"*{source.suffix}")))
@@ -215,6 +220,12 @@ def iter_parquet_source(source: infra.SourceSpec, split: str, epoch: int,
 
 def _bin_indices(source: infra.SourceSpec, n: int, split: str, epoch: int,
                  args: argparse.Namespace) -> np.ndarray:
+    """Return the sorted record indices of a `.bin` source for `split` ('train' or 'val') in `epoch`.
+
+    The validation rows are the first `val_frac` of a permutation fixed by `args.seed` and the
+    source, so a record never moves between the splits. The train split is then sampled to
+    `train_pct`.
+    """
     salt = _source_salt(source)
     split_rng = np.random.default_rng(args.seed ^ salt)
     perm = split_rng.permutation(n)
@@ -229,6 +240,11 @@ def _bin_indices(source: infra.SourceSpec, n: int, split: str, epoch: int,
 
 def iter_bin_source(source: infra.SourceSpec, split: str, epoch: int,
                     args: argparse.Namespace):
+    """Yield (features, side-to-move targets) chunks of the `.bin` source for `split` and `epoch`.
+
+    With `k < 1` the target is the per-game dense lookahead target. Positions with an illegal board
+    are dropped.
+    """
     ds = dataset.MultiShardSelfplay.from_glob(source.path)
     idx = _bin_indices(source, len(ds), split, epoch, args)
     step = min(args.parquet_chunk_rows, args.max_positions_chunk)
@@ -252,6 +268,9 @@ def iter_bin_source(source: infra.SourceSpec, split: str, epoch: int,
 
 def iter_sources(sources: list[infra.SourceSpec], split: str, epoch: int,
                  args: argparse.Namespace):
+    """Yield (features, targets) chunks of every source for `split` and `epoch`, with the order of the
+    sources shuffled per epoch.
+    """
     order = list(range(len(sources)))
     random.Random(args.seed + epoch + (0 if split == "train" else 1_000_003)).shuffle(order)
     generators = []
@@ -275,6 +294,12 @@ def iter_sources(sources: list[infra.SourceSpec], split: str, epoch: int,
 
 
 def _resolve_checkpoint(source: str, ckpt_dir: str) -> Path | None:
+    """Return the checkpoint file selected by `source`, or None for a new model (`new`, `scratch`,
+    `none`, empty) or an empty `auto` directory.
+
+    `source` is a file, a directory (newest `*.pt`) or `auto` (the same search in `ckpt_dir`);
+    FileNotFoundError for a path that does not exist.
+    """
     token = str(source or "").strip()
     if token.lower() in ("", "new", "scratch", "false", "none"):
         return None
@@ -298,6 +323,11 @@ def _checkpoint_state(path: Path) -> dict:
 
 
 def _load_model(args: argparse.Namespace, device: torch.device):
+    """Build the NNUE and load the selected checkpoint if there is one.
+
+    Returns (model, start epoch, learning rate, optimizer state); ValueError when the checkpoint has
+    no model state.
+    """
     model = NNUE().to(device)
     ckpt_path = _resolve_checkpoint(args.checkpoint_source, args.ckpt_dir)
     start_epoch = 0
@@ -325,6 +355,10 @@ def _load_model(args: argparse.Namespace, device: torch.device):
 def _train_chunk(model: NNUE, optimizer: torch.optim.Optimizer, loss_fn: nn.Module,
                  x_np: np.ndarray, y_np: np.ndarray, batch_size: int,
                  device: torch.device, rng: np.random.Generator) -> tuple[float, float, int]:
+    """Train on one chunk in shuffled mini-batches and return (loss sum, MAE sum, positions seen).
+
+    Raises FloatingPointError on a non-finite loss.
+    """
     n = len(y_np)
     if n == 0:
         return 0.0, 0.0, 0
@@ -353,6 +387,9 @@ def _train_chunk(model: NNUE, optimizer: torch.optim.Optimizer, loss_fn: nn.Modu
 
 def _validate(model: NNUE, sources: list[infra.SourceSpec], args: argparse.Namespace,
               device: torch.device, epoch: int) -> tuple[float, float, int]:
+    """Evaluate the model on the validation split of every source and return (mean loss, mean MAE,
+    positions seen).
+    """
     loss_fn = nn.BCELoss(reduction="mean")
     loss_sum = mae_sum = 0.0
     seen = 0
@@ -378,6 +415,9 @@ def _validate(model: NNUE, sources: list[infra.SourceSpec], args: argparse.Names
 
 def _save_checkpoint(args: argparse.Namespace, model: NNUE, optimizer: torch.optim.Optimizer,
                      epoch: int, metrics: dict) -> Path:
+    """Write the checkpoint of `epoch` with the optimizer state and `metrics` into `args.ckpt_dir` and
+    return its path.
+    """
     outdir = Path(args.ckpt_dir)
     outdir.mkdir(parents=True, exist_ok=True)
     out = outdir / f"nnu3_v322_epoch{epoch:03d}.pt"
@@ -403,6 +443,7 @@ def _print_sources(sources: list[infra.SourceSpec]) -> None:
 
 
 def self_test() -> None:
+    """Check the encoder on fixed positions; raises when the encoding is wrong."""
     encoding_smoke_test()
     fens = [
         "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -425,6 +466,11 @@ def self_test() -> None:
 
 
 def main() -> None:
+    """Train the NNU3 network from the command line.
+
+    `--self-test` runs the encoder check and exits. SystemExit when no source is enabled or an epoch
+    produces no positions.
+    """
     args = build_parser().parse_args()
     if args.self_test:
         self_test()

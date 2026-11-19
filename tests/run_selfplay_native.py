@@ -288,6 +288,9 @@ def ensure_selfplay_built():
 
 
 def main():
+    """Run the native `selfplay.exe` with the given options and append its `.bin` output to `--out`.
+    Exits with the child exit code, or 1 on a usage error.
+    """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default=DEFAULT_OUT_PATH,
                      help="output .bin file (required, append mode — forwarded to selfplay.exe's --out)")

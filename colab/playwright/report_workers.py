@@ -43,6 +43,12 @@ def create_artifacts_dir(dir_path: str) -> Path:
 
 
 def report_single_worker(worker: Dict[str, Any], headless: bool, timeout_ms: int, delay_s: int, artifacts_dir: Path) -> Dict[str, Any]:
+    """Inspect the notebook of `worker` in its browser profile and return a record with its connection
+    state, execution state, shard and progress.
+
+    The status JSON and a screenshot go to `artifacts_dir`; an error is stored in the record instead
+    of raised.
+    """
     from playwright.sync_api import sync_playwright
 
     wid = worker["worker_id"]
@@ -217,6 +223,9 @@ def report_single_worker(worker: Dict[str, Any], headless: bool, timeout_ms: int
 
 
 def generate_markdown_report(records: List[Dict[str, Any]], artifacts_dir: Path) -> str:
+    """Return the Markdown table of the worker `records` and write it to `report.md` in
+    `artifacts_dir`.
+    """
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     md = [
         f"# Colab Self-Play Worker Report",
@@ -242,6 +251,7 @@ def generate_markdown_report(records: List[Dict[str, Any]], artifacts_dir: Path)
 
 
 def run_report(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Inspect every configured worker and write the report; returns the list of records."""
     artifacts_path = create_artifacts_dir(cfg["artifacts_dir"])
     print("=" * 70)
     print("ZCHEZZ COLAB WORKER AUDIT & REPORT")
@@ -276,6 +286,7 @@ def run_report(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def main() -> None:
+    """Audit the workers of `--worker-ids` and write the report; `--headed` shows the browser."""
     parser = argparse.ArgumentParser(description="Audit and report Colab workers.")
     parser.add_argument("--worker-ids", type=int, nargs="+", default=CONFIG["worker_ids"], help="Worker IDs to report")
     parser.add_argument("--headed", action="store_true", help="Run browser in visible mode")

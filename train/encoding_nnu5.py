@@ -137,6 +137,12 @@ def encode_mailbox_batch(boards: np.ndarray, stms: np.ndarray
     sq_w = zsq_idx ^ 56                        # 0=a1..63=h8
 
     def _perspective(color_bit: int, pov_is_white: bool):
+        """Return (features, valid) for one perspective with the HalfKAv2 32-bucket king layout.
+
+        `color_bit` selects the king and pieces of that colour. `pov_is_white` mirrors the board
+        vertically, and a king on files e-h mirrors the file (horizontal mirroring). A row without a
+        king of that colour has no valid feature.
+        """
         ally_king_mask = is_king & (color == color_bit)
         has_king = ally_king_mask.any(axis=1)
         king_zsq = np.argmax(ally_king_mask, axis=1).astype(np.int32)

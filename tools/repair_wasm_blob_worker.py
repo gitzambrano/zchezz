@@ -72,6 +72,12 @@ def has_contract(text: str) -> bool:
     )
 
 def patch_file(path: Path, old: str, new: str) -> None:
+    """Replace the first occurrence of `old` with `new` in `path` and check the result satisfies the
+    contract.
+
+    A file that already satisfies it is left unchanged. RuntimeError when the file is missing, `old`
+    is not found (no blind edit) or the result is invalid.
+    """
     if not path.is_file():
         raise RuntimeError(f"missing file: {path.relative_to(ROOT)}")
 
@@ -103,6 +109,9 @@ def check_file(path: Path) -> bool:
     return ok
 
 def main() -> int:
+    """Patch the browser workers so Emscripten resolves WASM from a Blob URL, or only check them with
+    `--check`. Returns 0 on success and 1 when a worker needs the patch or cannot be patched.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     parser.add_argument('--show-config', action='store_true', help='print configuration and exit')

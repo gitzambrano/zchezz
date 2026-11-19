@@ -1,3 +1,7 @@
+"""Contract: recovery runs only for jobs with explicit resume support, obeys the attempt limit and
+cooldown, cannot inject source through arguments, and the account lease rejects overlapping
+controllers.
+"""
 import ast
 import pytest
 

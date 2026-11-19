@@ -12,6 +12,11 @@ QA = 255.0; QB = 64.0; SHIFT = 8.0; OUT_SCALE = 320.0 / (QB * QB)
 
 
 def read_nnu5(path: Path):
+    """Read an NNU5 engine file; return (weights, arch, epoch) with weights dequantized to float32.
+
+    Raises ValueError on a wrong magic, unsupported dimensions, a quantization-constant mismatch or
+    a truncated file.
+    """
     data = path.read_bytes()
     off = 0
     if data[:4] != b'NNU5':
@@ -53,6 +58,9 @@ def read_nnu5(path: Path):
 
 
 def convert(src: Path, dst: Path):
+    """Convert the NNU5 engine file `src` into a PyTorch checkpoint at `dst`. The checkpoint is written
+    to a temporary file first and then moved into place.
+    """
     weights, arch, epoch = read_nnu5(src)
     dst.parent.mkdir(parents=True, exist_ok=True)
     tmp = dst.with_suffix(dst.suffix + '.tmp')
@@ -71,6 +79,9 @@ def convert(src: Path, dst: Path):
 
 
 def main():
+    """Run the importer; `--show-config` prints the settings and returns 0 without reading or writing
+    files.
+    """
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--src', type=Path, default=DEFAULT_SRC)
     p.add_argument('--dst', type=Path, default=DEFAULT_DST)

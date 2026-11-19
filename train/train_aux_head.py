@@ -100,6 +100,9 @@ class Nnu3Features:
     """Clipped L1 activations of an NNU3 network, quantized to 0..255."""
 
     def __init__(self, prof, checkpoint: Path | None):
+        """Load the NNU3 checkpoint (the profile's installed weights when `checkpoint` is None) and
+        prepare its hidden layer; raise FileNotFoundError when it is missing.
+        """
         import torch
         from model_nnu3 import NNUE, assert_compatible_arch
 
@@ -122,6 +125,10 @@ class Nnu3Features:
         self.w1, self.b1 = net.l1.weight.detach(), net.l1.bias.detach()
 
     def __call__(self, fens, white_cp):
+        """Return (quantized hidden activations as float64, target) for the positions `fens`.
+
+        The target is `white_cp` seen from the side to move (negated for Black to move).
+        """
         import numpy as np
         import torch
         import torch.nn.functional as F
@@ -139,6 +146,9 @@ class Nnu5Features:
     """[stm | opp] SCReLU activations of an NNU5 network, quantized to 0..254."""
 
     def __init__(self, prof, checkpoint: Path | None):
+        """Load the NNU5 checkpoint (the profile's installed weights when `checkpoint` is None); raise
+        ValueError for another architecture and FileNotFoundError when it is missing.
+        """
         import torch
         from model_nnu5 import NNUE, CONCAT_DIM
 
@@ -163,6 +173,11 @@ class Nnu5Features:
         self.net = net
 
     def __call__(self, fens, white_cp):
+        """Return (quantized hidden activations of both perspectives, concatenated, as float64; target)
+        for the positions `fens`.
+
+        The target is `white_cp` seen from the side to move (negated for Black to move).
+        """
         import chess
         import numpy as np
         import torch
@@ -187,6 +202,9 @@ FEATURES = {"NNU3": Nnu3Features, "NNU5": Nnu5Features}
 
 
 def render_header(fmt: str, w_int8, inv_scale: float, bias: float, note: str) -> str:
+    """Return the C header text of the quantized fast head: int8 weights `w_int8`, `inv_scale`, `bias`
+    and a `note`.
+    """
     dim = len(w_int8)
     lines = [
         f"/* fast_head_weights.h — auxiliary {fmt} linear head ({dim} inputs).",
@@ -249,6 +267,9 @@ def fit(features, batches, dim: int, n_val: int, alpha: float):
 
 
 def main() -> int:
+    """Fit the auxiliary linear head on the selected datasets and write its C header. Returns 0 on
+    success (also for `--show-config`), 2 on a bad argument and 1 on a failure.
+    """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--profile", default=DEFAULT_PROFILE)
     ap.add_argument("--dataset", action="append", default=None,

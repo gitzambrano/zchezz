@@ -372,6 +372,9 @@ def resolve_head():
 
 
 def resolve_git_ref(ref):
+    """Return the `uci:<path>` player of the engine built from the Git ref `ref`, building and caching
+    it; None (the player is skipped) when the ref does not resolve or the build fails.
+    """
     sha = git_rev_parse(ref)
     if not sha:
         log(f"ref '{ref}' does not resolve (git rev-parse failed) — SKIPPING this player")
@@ -459,6 +462,8 @@ ARENA_BUILD_CMD_TEMPLATE = [
 
 
 def ensure_arena_built():
+    """Build `arena.exe` when it is missing or older than its source. Returns True when it is ready.
+    """
     if os.path.isfile(ARENA_EXE):
         src = os.path.join(TOOLS_DIR, "arena.c")
         if os.path.getmtime(ARENA_EXE) >= os.path.getmtime(src):
@@ -483,6 +488,9 @@ def ensure_arena_built():
 
 
 def main():
+    """Play the arena match between the `--player` entries (`net:`, `uci:` or `ref:`; two or more) and
+    print the result. Exits with 1 on a usage or build error.
+    """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--player", action="append", default=None,
                      help="net:<path> | uci:<path> | ref:<gitref-or-HEAD> (repeat, 2+ required). "

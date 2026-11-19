@@ -15,6 +15,9 @@ from colab.cli.settings import CONFIG
 
 
 def main():
+    """List access or attach existing runtimes for `--worker-ids` (`--attach` attaches). Returns 1 when
+    any worker fails, otherwise 0.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker-ids", nargs="+", type=int, choices=CONFIG["worker_ids"], default=CONFIG["worker_ids"])
     parser.add_argument("--attach", action="store_true")

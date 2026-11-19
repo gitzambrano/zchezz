@@ -1,3 +1,8 @@
+"""Kill leftover engine and helper processes of a crashed run (Windows `taskkill`).
+
+The image names, `--kill-python` and `--dry-run` are configurable; `--dry-run` only prints the
+commands.
+"""
 
 import subprocess
 import os
@@ -36,6 +41,9 @@ CLI = [
 
 
 def kill_ghosts():
+    """Run `taskkill` for every name in IMAGES and, when KILL_PYTHON is set, for every `python.exe`
+    except this process. With DRY_RUN it prints the commands only.
+    """
     print("\n" + "="*45)
     print("      NUCLEAR CLEANUP - KILLING ALL PROCESSES")
     print("="*45)

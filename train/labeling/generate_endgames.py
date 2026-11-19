@@ -444,6 +444,12 @@ def _place_pieces(
     rng: random.Random,
     max_attempts: int = 400,
 ) -> Optional[chess.Board]:
+    """Return a legal board with both kings and the given white and black piece types on random
+    squares, or None.
+
+    Gives up after `max_attempts` tries or when the pieces do not fit on 64 squares. `rng` makes the
+    placement reproducible.
+    """
     n_pieces = 2 + len(white_pieces) + len(black_pieces)
     if n_pieces > 64:
         return None
@@ -560,6 +566,9 @@ def generate_all_records(shuffle_seed: int) -> List[Dict]:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class StockfishEngine:
+    """Stockfish process used as the label teacher; refuses a teacher that does not report side-to-move
+    UCI scores.
+    """
     def __init__(self):
         self.proc     = None
         self._re_cp   = re.compile(r'score cp (-?\d+)')
@@ -567,6 +576,9 @@ class StockfishEngine:
         self._start()
 
     def _start(self):
+        """Start the Stockfish process and check that its identity reports standard side-to-move
+        scores; RuntimeError otherwise.
+        """
         if self.proc is not None:
             try: self.proc.terminate()
             except: pass
@@ -601,6 +613,9 @@ class StockfishEngine:
         return buf[0] if done.wait(timeout) else ""
 
     def _read_until(self, marker: str, timeout: float = SF_TIMEOUT_S) -> List[str]:
+        """Read engine output lines until one starts with `marker` and return them; TimeoutError after
+        `timeout` seconds or when the engine closes its output.
+        """
         lines    = []
         deadline = time.monotonic() + timeout
         while True:
@@ -665,6 +680,10 @@ for _wp, _bp, _lbl, _fl in ENDGAME_GROUPS:
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _worker_evaluate(records: List[Dict]) -> Tuple[List[Dict], Dict[str, int]]:
+    """Label a batch of generated positions in a worker process with its own Stockfish.
+
+    Returns (labelled rows, per-group counters).
+    """
     engine  = StockfishEngine()
     results: List[Dict] = []
     stats:   Dict[str, int] = {}
@@ -780,6 +799,11 @@ def _save_state(state: dict):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Generate the synthetic endgame positions, label them with Stockfish and write them in the
+    configured formats.
+
+    `--group` limits the material groups; SystemExit when it names an unknown group.
+    """
     # --group restricts ENDGAME_GROUPS for this run. It is applied to the
     # module global because generate_all_records() and the reporting below
     # both read that list; an unknown label is a typo and aborts rather than

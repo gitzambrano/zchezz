@@ -27,7 +27,9 @@ def engine_path(profile: str) -> Path:
 
 
 class Uci:
+    """UCI engine process for the pondering protocol validation."""
     def __init__(self, exe: Path):
+        """Start the engine at `exe` with piped input and output and its reader thread."""
         self.p = subprocess.Popen(
             [str(exe)],
             stdin=subprocess.PIPE,
@@ -52,6 +54,7 @@ class Uci:
         self.p.stdin.flush()
 
     def read_for(self, seconds: float) -> list[str]:
+        """Return the lines the engine prints in the next `seconds` seconds."""
         end = time.monotonic() + seconds
         out: list[str] = []
         while True:
@@ -65,6 +68,9 @@ class Uci:
         return out
 
     def read_until(self, prefix: str, timeout: float) -> tuple[str, list[str]]:
+        """Read lines until one starts with `prefix`; return (that line, all lines read).
+        AssertionError after `timeout` seconds.
+        """
         end = time.monotonic() + timeout
         out: list[str] = []
         while True:
@@ -97,6 +103,11 @@ def no_bestmove(lines: list[str], where: str) -> None:
 
 
 def main() -> int:
+    """Validate the pondering protocol of the engine of `--profile`: a node-limited `go ponder` prints
+    no `bestmove` until `stop` or `ponderhit`, and each ends with exactly one `bestmove`.
+
+    Returns 0 when every check passes; AssertionError otherwise.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", required=True, choices=("v331", "v332", "v333", "v334", "v335", "v507", "v508", "v509", "v510", "v601", "v602", "v603", "v604", "v605"))
     args = ap.parse_args()

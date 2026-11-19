@@ -51,6 +51,10 @@ def audit(root):
 
 
 def main():
+    """Write the source-organization report to `--output`. Returns 1 when a compatibility target is
+    missing, otherwise 0; `--show-config` prints the settings and returns 0. It never changes
+    repository files.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=CONFIG["output"])
     parser.add_argument("--show-config", action="store_true")

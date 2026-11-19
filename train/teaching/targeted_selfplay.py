@@ -28,6 +28,9 @@ GENERATE_SEEDS = True
 
 
 def main() -> int:
+    """Export hard seeds as openings, then run `tests/run_selfplay.py` from them. Returns the self-play
+    exit code, or 2 on a bad input.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=INPUT_TEACHING)
     parser.add_argument("--openings", type=Path, default=OPENING_DIR)

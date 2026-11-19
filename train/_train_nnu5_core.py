@@ -183,6 +183,11 @@ _PCT_MODE_ALIASES = {"lines": "sample-rows", "shards": "sample-files"}
 
 @dataclass
 class SourceSpec:
+    """One training source: parquet files or `.bin` shards with their sampling and target settings.
+
+    `k` (`.bin`) and `lam` (parquet) select how the result blends into the target; `train_pct` and
+    `pct_mode` select how much of the source each epoch uses; `val_frac` is held out for validation.
+    """
     kind: Literal["parquet", "bin"]
     path: str                      # parquet: dir/glob of *.parquet ; bin: glob of *.bin
     target_col: str = "cp"         # parquet only: legacy hint, see the DATASETS block
@@ -211,6 +216,9 @@ class SourceSpec:
     suffix: str = ".parquet"       # only files ending with this are used
 
     def __post_init__(self) -> None:
+        """Default `name` to the basename of `path`, map old `pct_mode` names, and exit with SystemExit
+        for an invalid `pct_mode`.
+        """
         if not self.name:
             self.name = os.path.basename(self.path.rstrip("/\\"))
         # Accept the previous value names so an old config keeps working.
@@ -341,6 +349,9 @@ def _parse_kv_spec(spec: str) -> dict[str, str]:
 
 
 def _source_from_string(spec: str) -> SourceSpec:
+    """Parse a `--source key=value,...` spec into a SourceSpec; ArgumentTypeError when `path=` or
+    `glob=` is missing or a value is invalid.
+    """
     kv = _parse_kv_spec(spec)
     kind = kv.get("kind")
     if kind not in ("parquet", "bin"):
@@ -363,6 +374,7 @@ def _source_from_string(spec: str) -> SourceSpec:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    """Return the argument parser of the NNU5 trainer."""
     p = argparse.ArgumentParser(
         description="Zchezz v4.00 HalfKP-4Bucket NNUE trainer",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -746,6 +758,12 @@ def _build_parquet_file_cache(fpath: str, source: SourceSpec, chunk_rows: int,
 def _load_or_build_parquet_file_cache(fpath: str, source: SourceSpec, chunk_rows: int,
                                        pool: "mp.pool.Pool", n_workers: int,
                                        use_cache: bool) -> dict:
+    """Return the encoded features of the parquet file `fpath` as a dict of arrays.
+
+    With `use_cache` it reads the on-disk cache and discards a stale one (old schema, changed
+    source, out-of-range feature index); otherwise it encodes the file with `pool` in chunks of
+    `chunk_rows` and writes the cache.
+    """
     cache_path = _encoded_cache_path(fpath, source.suffix)
     if use_cache and os.path.exists(cache_path):
         try:
@@ -1108,6 +1126,9 @@ def stream_split(sources: list[SourceSpec], split: Literal["train", "val"],
     acc_n = 0
 
     def _flush():
+        """Join the accumulated parquet and `.bin` rows into one training chunk and reset the
+        accumulators; return None when nothing is accumulated.
+        """
         nonlocal acc_pq_stm_idx, acc_pq_stm_off, acc_pq_opp_idx, acc_pq_opp_off, acc_pq_y
         nonlocal acc_boards, acc_stms, acc_bin_y, acc_n
         if acc_n == 0:
@@ -1247,6 +1268,7 @@ def find_checkpoint(source: str | bool | None = "auto",
             return None
 
     def _find_newest_in_tree(directory: str) -> str | None:
+        """Return the most recently modified `.pt` checkpoint under `directory`, or None."""
         if not os.path.isdir(directory):
             return None
         candidates: list[tuple[float, str]] = []
@@ -1297,6 +1319,9 @@ def find_latest_checkpoint(ckpt_dir: str) -> str | None:
 def save_checkpoint(ckpt_dir: str, dataset_name: str, epoch: int, model: NNUE,
                      optimizer: torch.optim.Optimizer, train_loss: float, val_loss: float | None,
                      train_mae: float | None = None, val_mae: float | None = None) -> str:
+    """Write the checkpoint of `epoch` with the model, the optimizer and the metrics to a timestamped
+    file in `ckpt_dir` and return its path.
+    """
     os.makedirs(ckpt_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     path = os.path.join(ckpt_dir, f"nnue_v400_{dataset_name}_epoch{epoch:02d}_{timestamp}.pt")
@@ -1330,6 +1355,12 @@ def save_checkpoint(ckpt_dir: str, dataset_name: str, epoch: int, model: NNUE,
 # ════════════════════════════════════════════════════════════════════════
 
 def train(args: argparse.Namespace) -> None:
+    """Train the NNU5 network as `args` describes: build the sources, resume from a checkpoint, run the
+    epochs with validation and save a checkpoint per epoch.
+
+    SystemExit when there is no usable source; ValueError when the checkpoint L1 shape is not the
+    NNU5 shape.
+    """
     # No --source on the command line? Use the DATASETS block at the top of
     # this file. That block — not the CLI — is the normal way to configure a
     # run (CLAUDE.md rule 8); --source exists only to override it for

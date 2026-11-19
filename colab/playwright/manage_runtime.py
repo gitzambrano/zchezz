@@ -36,6 +36,9 @@ CONFIG: Dict[str, Any] = {
 
 
 def manage_worker(worker: Dict[str, Any], action: str, headless: bool, timeout_ms: int, delay_s: int) -> Dict[str, Any]:
+    """Apply `action` (switch-cpu, switch-gpu, reset or terminate-active) to the runtime of `worker` in
+    its browser session; returns a result dict.
+    """
     from playwright.sync_api import sync_playwright
 
     name = worker["name"]
@@ -161,6 +164,7 @@ def manage_worker(worker: Dict[str, Any], action: str, headless: bool, timeout_m
 
 
 def main() -> None:
+    """Apply `--action` to the runtimes of `--worker-ids`."""
     parser = argparse.ArgumentParser(description="Administrative management of Zchezz Colab runtimes.")
     parser.add_argument("--worker-ids", nargs="+", default=CONFIG["worker_ids"], help="Worker identifiers (e.g. v331 v507 1 2).")
     parser.add_argument("--action", choices=["switch-cpu", "switch-gpu", "reset", "terminate-active"], default=CONFIG["action"], help="Administrative action.")

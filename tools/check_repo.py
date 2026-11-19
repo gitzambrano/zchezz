@@ -12,6 +12,10 @@ ERRORS=[]
 def error(x): ERRORS.append(x)
 
 def main() -> int:
+    """Run the fast repository contract checks: required files, `ACTIVE_ENGINE`, every profile's
+    directory and weights, no v4 trees, and the allowed workflows and publisher rules. No builds,
+    games or network. Prints each failure and returns non-zero when any check fails.
+    """
     required=("AGENTS.md","CLAUDE.md","engine/ACTIVE_ENGINE","engine/build/Makefile","utils/engine_profiles.py","utils/cliconf.py","tests/run_tests.py")
     for name in required:
         if not (ROOT/name).exists(): error(f"missing required path: {name}")

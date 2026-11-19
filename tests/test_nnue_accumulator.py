@@ -61,6 +61,11 @@ THREADS_CASE = ("startpos, Threads=4",
 
 
 def run(name, cmds):
+    """Send the UCI commands `cmds` to the verification engine and return (passed, seconds).
+
+    The commands must not end with `quit`: `go` runs on a background thread and an immediate quit
+    would abort the search before the check runs.
+    """
     # IMPORTANT: do NOT append "quit\n" here. cmd_go() starts the search on
     # a background thread and returns immediately; the "quit" handler sets
     # g_stop_flag and joins right away, which can abort the search before
@@ -92,6 +97,9 @@ def run(name, cmds):
 
 
 def main():
+    """Run the accumulator verification cases (all, or those in ONLY) and exit with 0 when every case
+    passes, otherwise 1.
+    """
     print(f"Engine: {EXE}\n")
     cases = CASES
     if ONLY:

@@ -35,6 +35,11 @@ def digest(data: bytes) -> str:
 
 
 def sync_page(bundle: Path, index: Path, *, write: bool) -> bool:
+    """Validate the bundle and compare it with the Pages `index`.
+
+    Returns False when they are identical. When they differ it raises ValueError unless `write` is
+    set; with `write` it replaces `index` atomically and returns True.
+    """
     payload = bundle.read_bytes()
     validate_bundle(payload)
     existing = index.read_bytes() if index.exists() else b""
@@ -58,6 +63,9 @@ def sync_page(bundle: Path, index: Path, *, write: bool) -> bool:
 
 
 def main() -> int:
+    """Run the Pages tool in `--mode` check, sync or validate. Returns 0 on success and 1 on a mismatch
+    or an invalid bundle; only `sync` writes `index.html`.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--mode", default="check", choices=("check", "sync", "validate"))
     ap.add_argument("--bundle", type=Path, default=BUNDLE)

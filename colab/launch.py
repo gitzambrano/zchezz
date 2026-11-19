@@ -344,6 +344,8 @@ def launch_worker_cli(worker_id: int, gpu: str = "T4", force_restart: bool = Fal
 
 
 def main() -> None:
+    """Launch and bootstrap the Colab workers chosen on the command line; see the module docstring for the steps.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend", choices=["cli", "playwright"], default=CONFIG["backend"],
                         help="Transport backend to use (default: cli)")

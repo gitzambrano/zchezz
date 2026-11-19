@@ -45,6 +45,9 @@ def replace_once_or_existing(text: str, old: str, new: str, label: str) -> tuple
 
 
 def repair_text(path: Path, text: str) -> tuple[str, list[str]]:
+    """Return (new text, list of changes) with the 44-byte wasm32 SearchParams layout applied to the
+    worker source; RuntimeError when an expected code pattern is missing.
+    """
     changes: list[str] = []
 
     old = "const pp=Mod._malloc(32);"
@@ -122,6 +125,7 @@ def repair_text(path: Path, text: str) -> tuple[str, list[str]]:
 
 
 def validate(path: Path, text: str) -> list[str]:
+    """Return the list of errors (empty when valid) of the SearchParams layout in `text`."""
     errors: list[str] = []
     if "const SP_SZ=44;" not in text:
         errors.append("SP_SZ=44 missing")
@@ -143,6 +147,9 @@ def validate(path: Path, text: str) -> list[str]:
 
 
 def main() -> int:
+    """Repair the SearchParams ABI in the browser code, or only check it with `--check`. Returns 1 when
+    a file fails and 0 otherwise.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     parser.add_argument('--show-config', action='store_true', help='print configuration and exit')

@@ -89,6 +89,9 @@ def load_spec(identifier: str) -> dict[str, Any]:
 
 
 def validate_spec(spec: dict[str, Any]) -> None:
+    """Raise ValueError when `spec` is not a valid experiment: a suite must be a non-empty list of spec
+    ids; a run needs the required keys and only known protocol keys.
+    """
     if "suite" in spec:
         if not isinstance(spec["suite"], list) or not spec["suite"]:
             raise ValueError(f"{spec.get('id')}: 'suite' must be a non-empty list of spec ids")
@@ -258,6 +261,9 @@ def _seed_from_log(log: Path) -> int | None:
 # ── execution ────────────────────────────────────────────────────────────────
 
 def harness_command(spec, proto, a, b, run_dir: Path) -> list[str]:
+    """Return the command line of the tournament harness for engines `a` and `b` under the protocol
+    `proto`, writing its output to `run_dir`.
+    """
     cmd = [sys.executable, str(ROOT / "tests" / "_run_tournament_quick_core.py"),
            "--engine-a", str(a["binary"]), "--label-a", a["label"],
            "--engine-b", str(b["binary"]), "--label-b", b["label"],
@@ -283,6 +289,11 @@ def harness_command(spec, proto, a, b, run_dir: Path) -> list[str]:
 
 
 def run_one(spec: dict[str, Any], *, dry_run: bool) -> int:
+    """Run one experiment spec and return 0 on success, 1 on a failure.
+
+    It writes into `RESULTS_ROOT/<id>/<UTC stamp>/`. With `dry_run` it validates the spec and prints
+    the plan only.
+    """
     validate_spec(spec)
     proto = protocol_of(spec)
     arch_flags = spec.get("build", {}).get("arch_flags", DEFAULT_ARCH_FLAGS)
@@ -326,6 +337,9 @@ def run_one(spec: dict[str, Any], *, dry_run: bool) -> int:
 
 
 def _write_summary(run_dir, spec, proto, a, b, arch_flags, *, status, rc) -> dict[str, Any]:
+    """Write `summary.json` into `run_dir` (spec, protocol, engines, build flags, win/draw/loss counts,
+    `status` and `rc`) and `latest.json` next to it; return the summary dict.
+    """
     pgns = sorted(run_dir.glob("*.pgn"))
     logs = sorted(run_dir.glob("*.log"))
     parsed = parse_pgn(pgns[-1], a["label"]) if pgns else {"wins": 0, "draws": 0, "losses": 0, "pairs": []}
@@ -371,6 +385,7 @@ def _write_summary(run_dir, spec, proto, a, b, arch_flags, *, status, rc) -> dic
 
 
 def show_config(spec: dict[str, Any]) -> None:
+    """Print the resolved experiment specification without running anything."""
     validate_spec(spec)
     print("Resolved Experiment Specification:")
     print(f"  ID         : {spec['id']}")
@@ -389,6 +404,7 @@ def show_config(spec: dict[str, Any]) -> None:
 
 
 def expand(spec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the list of specs to run: the members of a suite, or the spec itself."""
     if "suite" in spec:
         validate_spec(spec)
         out = []
@@ -402,6 +418,9 @@ def expand(spec: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def main() -> int:
+    """Run the selected specs (`--spec`, default `default`). `--list` and `--show-config` do not run
+    anything. Returns 1 when any run fails, otherwise 0.
+    """
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--spec", action="append", default=None,
                     help="spec id or JSON path (repeatable; default: default)")

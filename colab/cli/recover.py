@@ -103,6 +103,9 @@ def recover(worker, spec):
 
 
 def main():
+    """Resume the jobs of `--spec` on `--worker-ids` after the checkpoint and process checks; only
+    explicitly configured jobs are resumed.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", type=Path, default=CONFIG["spec"])
     parser.add_argument("--worker-ids", nargs="+", type=int, choices=CLI_CONFIG["worker_ids"], default=CLI_CONFIG["worker_ids"])

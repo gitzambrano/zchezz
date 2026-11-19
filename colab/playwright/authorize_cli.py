@@ -16,6 +16,12 @@ from colab.cli.settings import CONFIG, account_directory, cli_python
 
 
 def main():
+    """Authorize the CLI credentials of `--worker-ids` through their browser profiles; `--replace`
+    replaces existing credentials.
+
+    Raises TimeoutError when Google verification is not completed, and RuntimeError when the
+    authorization page has no code or the credential exchange fails.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker-ids", type=int, nargs="+", choices=list(WORKERS), default=CONFIG["worker_ids"])
     parser.add_argument("--replace", action="store_true")

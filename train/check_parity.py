@@ -157,6 +157,9 @@ int main(void) {
 
 
 def _compile_driver(compiler: str, workdir: Path) -> Path:
+    """Compile the embedded C parity driver in `workdir` and return the executable path; raise
+    RuntimeError when the compiler fails.
+    """
     driver_c = workdir / "_parity_driver.c"
     driver_c.write_text(_DRIVER_C_SOURCE, encoding="utf-8")
     exe_path = workdir / ("_parity_driver.exe" if os.name == "nt" else "_parity_driver")
@@ -212,6 +215,9 @@ def _python_feature_index(piece_is_white: bool, piece_type_code: int, sq_python:
 
 
 def _random_positions(n: int, seed: int | None = None) -> list[chess.Board]:
+    """Return `n` boards reached by random legal play. With `seed=None` it uses the current
+    POSITION_SEED.
+    """
     # seed=None reads POSITION_SEED at CALL time, not at def time: --seed
     # rewrites that constant after this module's body has already run, and a
     # `seed=POSITION_SEED` default argument would have frozen the old value.
@@ -230,6 +236,11 @@ def _random_positions(n: int, seed: int | None = None) -> list[chess.Board]:
 
 
 def run_compiled_parity_check(n_positions: int = N_POSITIONS) -> None:
+    """Compare the Python encoder with the C encoder on `n_positions` random positions.
+
+    Without a C compiler it writes a JSON fixture instead. Raises SystemExit when any position
+    differs, and RuntimeError when the driver fails.
+    """
     compiler = _find_compiler()
     if compiler is None:
         print("No C compiler (gcc/cc/clang) found on PATH — falling back to JSON fixture export.")

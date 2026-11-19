@@ -1,3 +1,6 @@
+"""Contract: seven distinct accounts each have a notebook and a profile, each account has an isolated
+CLI environment and session state, and the public inspection modes need no CLI dependencies.
+"""
 from pathlib import Path
 import os
 import subprocess

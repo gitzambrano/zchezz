@@ -1,3 +1,7 @@
+"""Contract: packed moves and teaching binaries round-trip, the derived policy respects the side to
+move, an empty dataset is readable, and resume accepts operational changes but rejects recipe
+changes.
+"""
 from pathlib import Path
 import sys
 

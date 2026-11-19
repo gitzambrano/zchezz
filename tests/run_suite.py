@@ -167,6 +167,9 @@ ENGINE_TIMEOUT_S = 60               # segundos antes de abortar a busca
 # ── EPD PARSER ─────────────────────────────────────────────────────────────────
 
 def _parse_epd_line(line: str):
+    """Parse one EPD line into a position dict (FEN and its operations, such as best and avoid moves
+    and the id); None for a blank, comment or invalid line.
+    """
     line = line.strip()
     if not line or line.startswith('#'):
         return None
@@ -237,6 +240,9 @@ def load_epd(path: str):
 
 
 def discover_suites(suites_dir, include, exclude):
+    """Return the EPD suites found in `suites_dir`, filtered by the `include` and `exclude` names.
+    Exits with 1 when the folder does not exist.
+    """
     d = Path(suites_dir)
     if not d.exists():
         print(f"[ERRO] Pasta não encontrada: {d.resolve()}")
@@ -290,7 +296,13 @@ def sample_positions(positions, n, pct, seed=42):
 # ── UCI ENGINE WRAPPER ─────────────────────────────────────────────────────────
 
 class UCIEngine:
+    """UCI engine process used by the suite runner; `search` runs one position and returns its best
+    move, score and nodes.
+    """
     def __init__(self, binary, nnue_path=None):
+        """Start the engine at `binary`, passing `--nnue` when `nnue_path` exists, and complete the UCI
+        handshake.
+        """
         args = [binary]
         if nnue_path and os.path.exists(nnue_path):
             args += ['--nnue', nnue_path]
@@ -321,6 +333,7 @@ class UCIEngine:
         self._proc.stdin.flush()
 
     def _readline_timeout(self, timeout):
+        """Read one output line, or return an empty string after `timeout` seconds."""
         if sys.platform != 'win32':
             import select
             if select.select([self._proc.stdout], [], [], timeout)[0]:
@@ -342,6 +355,9 @@ class UCIEngine:
         raise TimeoutError(f"UCI: '{marker}' não recebido em {timeout}s")
 
     def search(self, fen, depth, movetime_ms):
+        """Search `fen` to `depth`, or for `movetime_ms` when it is set; return a dict with the best
+        move (`uci`), score and nodes.
+        """
         with self._lock:
             self._send(f'position fen {fen}')
             if movetime_ms:
@@ -393,6 +409,12 @@ def san_to_uci(fen, san):
 # ── SCORING ────────────────────────────────────────────────────────────────────
 
 def score_position(pos, engine_uci):
+    """Return (points, maximum 10) of the engine move `engine_uci` for the position `pos`.
+
+    A position with scored moves gives the points of the matching move. An avoid-move (`am`)
+    position gives 0 when the move is avoided, otherwise 10. A best-move (`bm`) position gives 10
+    when the move is a best move, otherwise 0. No move gives 0.
+    """
     if engine_uci is None:
         return 0, 10
 
@@ -413,6 +435,9 @@ def score_position(pos, engine_uci):
 # ── SUITE RUNNER ───────────────────────────────────────────────────────────────
 
 def run_suite(suite_name, positions, binary, depth, movetime_ms, workers):
+    """Run every position of the suite with `workers` engine processes at `depth` or `movetime_ms`;
+    return the per-position results.
+    """
     label      = os.path.basename(binary)
     search_tag = f"movetime={movetime_ms}ms" if movetime_ms else f"depth={depth}"
     print(f"\n  [{suite_name}] {label}  —  {len(positions)} posições  ({search_tag})")
@@ -432,6 +457,8 @@ def run_suite(suite_name, positions, binary, depth, movetime_ms, workers):
         with pool_lock: pool.append(e)
 
     def run_one(idx_pos):
+        """Search one (index, position) pair with a worker's engine and return (index, result dict).
+        """
         idx, pos = idx_pos
         eng = get_eng()
         try:
@@ -500,6 +527,7 @@ def run_suite(suite_name, positions, binary, depth, movetime_ms, workers):
 # ── TABELA COMPARATIVA ─────────────────────────────────────────────────────────
 
 def print_table(e1_res, e2_res, e1_label, e2_label):
+    """Print the per-suite results of one or two engines side by side."""
     W = 110
     print("\n" + "=" * W)
     if e2_res:
@@ -575,6 +603,9 @@ def find_nnue(binary_path):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def main():
+    """Run the selected EPD suites on one engine, or on two engines for a comparison, and print the
+    tables. Exits with 1 on a usage or setup error.
+    """
     parser = argparse.ArgumentParser(
         description='Zchezz UCI Engine Test Suite Runner',
         formatter_class=argparse.RawDescriptionHelpFormatter,

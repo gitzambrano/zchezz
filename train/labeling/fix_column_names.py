@@ -270,6 +270,12 @@ def drop_columns(path: str, columns: list[str]) -> None:
 
 
 def main() -> int:
+    """Apply the configured column renames and drops (RENAMES, DROPS) to the datasets under DATA_DIR.
+
+    Returns 0 on success or when nothing is configured, and 1 on an error. A dry run (DRY_RUN)
+    writes nothing; with BACKUP on, each file is copied before it is rewritten. `--only` limits the
+    run to some configured datasets.
+    """
     if not RENAMES and not DROPS:
         print("Nothing configured in RENAMES or DROPS.")
         return 0

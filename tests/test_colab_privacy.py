@@ -1,3 +1,6 @@
+"""Contract: private account overrides stay out of the public registry, and the privacy check reports
+where a private value is, never the value.
+"""
 import json
 from pathlib import Path
 import runpy

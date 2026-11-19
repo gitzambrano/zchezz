@@ -151,6 +151,9 @@ def infer_game_boundaries(arr: np.ndarray) -> list[tuple[int, int]]:
 
 
 def check_shard(path: str) -> list[str]:
+    """Return the problems found in the `.bin` shard `path` (empty file, size that is not a multiple of
+    the record size, invalid records). An empty list means the shard is valid.
+    """
     errors: list[str] = []
     size = os.path.getsize(path)
     if size == 0:
@@ -244,6 +247,9 @@ def check_shard(path: str) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    """Check the shards given on the command line (by default the latest self-play output). Returns 0
+    when all are valid, 1 when any is not and 2 on a usage error.
+    """
     if len(argv) >= 2:
         paths = argv[1:]
     else:

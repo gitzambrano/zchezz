@@ -36,6 +36,9 @@ def _result_token(token: str | None) -> int:
 
 
 def iter_epd(path: Path) -> Iterator[SourcePosition]:
+    """Yield a SourcePosition for each EPD line of `path`, with the `ce`/`c1` score and the
+    `c0`/`result` tag when present.
+    """
     cp_re = re.compile(r'(?:c1|ce)\s+"?([+-]?\d+(?:\.\d+)?)')
     res_re = re.compile(r'(?:c0|result)\s+"(1-0|0-1|1/2-1/2)"')
     tag = source_tag(path)
@@ -57,6 +60,7 @@ def iter_epd(path: Path) -> Iterator[SourcePosition]:
 
 
 def iter_fen(path: Path) -> Iterator[SourcePosition]:
+    """Yield a SourcePosition for each non-empty line of the FEN list `path`."""
     tag = source_tag(path)
     with path.open("r", encoding="utf-8", errors="replace") as handle:
         for raw in handle:
@@ -74,6 +78,9 @@ def iter_fen(path: Path) -> Iterator[SourcePosition]:
 
 def iter_pgn(path: Path, skip_plies: int = 0,
              max_plies: int = 0) -> Iterator[SourcePosition]:
+    """Yield the positions of every game in the PGN `path`, after the first `skip_plies` plies and at
+    most `max_plies` per game (0 means no limit).
+    """
     import chess.pgn
 
     tag = source_tag(path)
@@ -93,6 +100,10 @@ def iter_pgn(path: Path, skip_plies: int = 0,
 
 
 def iter_bin(path: Path) -> Iterator[SourcePosition]:
+    """Yield the positions of a Zchezz `.bin` self-play shard, with its side-to-move `eval_cp`
+    converted to White-relative; raises ValueError for a file size that is not a multiple of the
+    record size.
+    """
     import numpy as np
     import chess
     from dataset import HEADER_DTYPE, SAMPLE_DTYPE, SAMPLE_FILE_MAGIC
@@ -150,6 +161,9 @@ def iter_bin(path: Path) -> Iterator[SourcePosition]:
 
 
 def expand_inputs(inputs: list[str]) -> list[Path]:
+    """Expand files, directories and glob patterns into the sorted list of `.epd`, `.fen`, `.pgn` and
+    `.bin` files.
+    """
     extensions = {".epd", ".fen", ".pgn", ".bin"}
     output = []
     for raw in inputs:
@@ -177,6 +191,8 @@ def expand_inputs(inputs: list[str]) -> list[Path]:
 
 def iter_inputs(inputs: list[str], *, pgn_skip_plies: int = 0,
                 pgn_max_plies: int = 0) -> Iterator[SourcePosition]:
+    """Yield the SourcePosition rows of every input file, with the reader chosen by file extension.
+    """
     for path in expand_inputs(inputs):
         extension = path.suffix.lower()
         if extension == ".epd":
@@ -191,6 +207,9 @@ def iter_inputs(inputs: list[str], *, pgn_skip_plies: int = 0,
 
 def iter_random_positions(count: int, min_plies: int,
                           max_plies: int, seed: int) -> Iterator[SourcePosition]:
+    """Yield `count` positions reached by random legal play of `min_plies` to `max_plies` plies; the
+    same `seed` gives the same positions.
+    """
     import chess
 
     rng = random.Random(seed)

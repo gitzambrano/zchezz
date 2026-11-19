@@ -14,6 +14,9 @@ class UCIError(RuntimeError):
 
 
 class UCIEngine:
+    """Minimal UCI engine driver for the tests: starts the executable, sends commands and reads lines
+    with a timeout. Usable as a context manager.
+    """
     def __init__(self, executable: Path | str, *, cwd: Path | str | None = None):
         self.executable = Path(executable)
         self.cwd = Path(cwd) if cwd else self.executable.parent
@@ -31,6 +34,9 @@ class UCIEngine:
         self.close()
 
     def start(self) -> None:
+        """Start the process and its reader threads; does nothing when it already runs.
+        FileNotFoundError when the executable does not exist.
+        """
         if self.proc and self.proc.poll() is None:
             return
         if not self.executable.is_file():
@@ -77,6 +83,9 @@ class UCIEngine:
         self.proc.stdin.flush()
 
     def read_until(self, pattern: str, *, timeout: float = 10.0) -> list[str]:
+        """Read engine lines until one matches the regular expression `pattern` and return the lines
+        read; UCIError after `timeout` seconds.
+        """
         regex = re.compile(pattern)
         deadline = time.monotonic() + timeout
         lines: list[str] = []
@@ -113,6 +122,7 @@ class UCIEngine:
         return self.read_until(r"^bestmove\b", timeout=timeout)
 
     def close(self) -> None:
+        """Quit the engine, end its process and join the reader threads."""
         if not self.proc:
             return
         if self.proc.poll() is None:

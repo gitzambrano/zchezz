@@ -176,6 +176,8 @@ if not os.path.exists('/content/Zchezz'):
 
 
 def main():
+    """Run `--action` (status, switch-gpu, start or full-setup) on the training worker `--worker`.
+    """
     parser = argparse.ArgumentParser(description="Manage Colab Training.")
     parser.add_argument("--worker", default="7", help="Worker ID (6 or 7, or v331 or v507)")
     parser.add_argument("--action", choices=["status", "switch-gpu", "start", "full-setup"], default="status")

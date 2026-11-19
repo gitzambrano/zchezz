@@ -41,6 +41,9 @@ def canonical_blob_sha1(data: bytes) -> str:
 
 
 def verified_source() -> tuple[Path, bytes]:
+    """Return (path, bytes) of the first template source whose LF-normalized Git blob SHA-1 equals the
+    expected one; RuntimeError when none does.
+    """
     problems: list[str] = []
 
     for source in SOURCES:
@@ -74,6 +77,9 @@ def verified_source() -> tuple[Path, bytes]:
 
 
 def verify_target() -> int:
+    """Check that the shared template in `engine/build/` has the expected LF-normalized Git blob SHA-1.
+    Returns 0 when it does and 1 otherwise.
+    """
     if not TARGET.is_file():
         print(f"ERROR: shared WASM template missing: {TARGET.relative_to(ROOT)}")
         return 1
@@ -99,6 +105,9 @@ def verify_target() -> int:
 
 
 def main() -> int:
+    """Copy the verified template to `engine/build/`, or only check it with `--check`. Returns 0 on
+    success and 1 on a mismatch.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check",

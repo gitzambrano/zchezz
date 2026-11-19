@@ -392,6 +392,12 @@ def encode_mailbox_batch(boards: np.ndarray, stms: np.ndarray
     sq_w = zsq_idx ^ 56                        # white-POV square per column
 
     def _perspective(color_bit: int, pov_is_white: bool):
+        """Return (features, valid) for one perspective: the king-bucketed feature index per mailbox
+        square and a mask of squares that produce a feature.
+
+        `color_bit` selects the pieces of that colour. `pov_is_white` mirrors the board vertically.
+        A row without a king of that colour has no valid feature.
+        """
         king_mask = is_king & (color == color_bit)
         has_king = king_mask.any(axis=1)
         # argmax finds the (only, for a legal position) True entry; rows
@@ -424,6 +430,9 @@ def encode_mailbox_batch(boards: np.ndarray, stms: np.ndarray
     opp_valid = np.where(is_white_stm, black_valid, white_valid)
 
     def _pack(feat: np.ndarray, valid: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Flatten the valid features of every row into the EmbeddingBag (indices, offsets) pair;
+        offsets hold the start of each row.
+        """
         counts = valid.sum(axis=1).astype(np.int64)
         offsets = np.zeros(n, dtype=np.int64)
         if n > 1:

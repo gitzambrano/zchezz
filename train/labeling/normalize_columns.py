@@ -341,6 +341,12 @@ def process_file(src: str, plan: dict, stats: dict) -> int:
 
 
 def run_folder(name: str) -> None:
+    """Bring the parquet files of dataset `name` under DATA_DIR onto the canonical column vocabulary
+    (`fen`, `cp`, `result`).
+
+    Does nothing when the scan finds no change to make. With DRY_RUN it reports the plan and writes
+    nothing.
+    """
     folder = os.path.join(DATA_DIR, name)
     plan = scan_dataset(folder)
     if not plan:

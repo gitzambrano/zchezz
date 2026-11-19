@@ -288,6 +288,9 @@ def get_sampled_indices(suite_key: str) -> list:
 
 
 def run_single_test(engine_file, suite_key, depth):
+    """Run the test suite `suite_key` on `engine_file` to `depth` through the JS runner and return its
+    parsed JSON result; None when a file is missing or the run fails.
+    """
     s = SUITES[suite_key]
     if not os.path.exists(s['file']) or not os.path.exists(engine_file):
         return None
@@ -328,6 +331,7 @@ def run_single_test(engine_file, suite_key, depth):
 
 # ── MAIN ──────────────────────────────────────────────────────
 def main():
+    """Run the selected suites on every engine and print the comparison table."""
     print("="*80)
     print("      ZCHEZZ ENGINE SUITE COMPARATOR (JS RUNNER)      ")
     print("="*80)

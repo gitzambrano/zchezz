@@ -1,3 +1,6 @@
+"""Contract: gap mining flags a large teacher/student residual, `stable_fraction` is deterministic and
+the UCI backend reads static and search scores with the right point of view.
+"""
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -17,6 +20,7 @@ class Board:
 
 
 def cfg():
+    """Return the teaching configuration with the weights and thresholds the tests rely on."""
     return SimpleNamespace(
         GAP_FULL_SCALE_CP=400,
         GAP_HARD_CP=120,

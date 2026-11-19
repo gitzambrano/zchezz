@@ -391,7 +391,13 @@ def select_by_temperature(candidates, T, temp_scale=100.0, rng=None):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class EngineInstance:
+    """One UCI engine process that plays self-play games under a depth, movetime, nodes or clock time
+    control.
+    """
     def __init__(self, path: str, label: str, tc_mode="depth", tc_value=7, tc_inc=0):
+        """Record the engine path (made absolute), `label` and time control (`tc_mode`, `tc_value`,
+        `tc_inc`); the process starts on first use.
+        """
         self.path      = os.path.abspath(path.replace("\\", os.sep))
         self.label     = label
         self.tc_mode   = tc_mode
@@ -424,6 +430,9 @@ class EngineInstance:
         except Exception: pass
 
     def start(self):
+        """Start the engine process and complete the UCI handshake. Returns True when the engine runs
+        (also when it already did) and False when it cannot start.
+        """
         if self.process and self.process.poll() is None:
             return True # Já rodando
 
@@ -496,6 +505,12 @@ class EngineInstance:
         return False
 
     def get_move(self, board, wtime=0, btime=0, search_ply=0, rng=None):
+        """Ask the engine for a move on `board` under the time control.
+
+        Returns (move, White-relative cp score, nodes, depth), or (None, 0, 0, 0) when the engine
+        cannot start. `wtime`/`btime` apply to clock modes; `search_ply` and `rng` let the caller
+        vary the move choice reproducibly.
+        """
         if not self.process or self.process.poll() is not None:
             if not self.start(): return None, 0, 0, 0
 
@@ -672,6 +687,9 @@ class OpeningIndex:
         return bool(self._index)
 
     def _build_epd(self, fpath):
+        """Index the byte offset of every position of the EPD file `fpath`, caching the index in
+        `<fpath>.idx` while it is newer than the file.
+        """
         idx_path = fpath + ".idx"
         import struct
         if os.path.exists(idx_path) and os.path.getmtime(idx_path) >= os.path.getmtime(fpath):
@@ -701,6 +719,7 @@ class OpeningIndex:
         log(f"  [EPD] {os.path.basename(fpath)}: {len(offsets):,} pos indexed")
 
     def _build_pgn(self, fpath):
+        """Index the byte offset of every game of the PGN file `fpath`."""
         with open(fpath, "rb") as f:
             game_start = None
             while True:
@@ -798,6 +817,9 @@ def elo_diff(wins, losses, draws):
     return f"{'+' if elo>=0 else ''}{elo:.1f} ±{ci:.0f}"
 
 def print_status(is_final: bool = False):
+    """Print the running statistics of the games played so far; with `is_final` it prints the final
+    summary.
+    """
     global completed_games, _real_total_games, start_time, stats, h2h
     elapsed = time.time() - start_time
     gps_val = completed_games / elapsed if elapsed > 1 else 0
@@ -937,6 +959,12 @@ def build_bin_records(states, winner) -> bytes:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def play_game(game_id, w_engine, b_engine, opening, results_queue, game_rng=None):
+    """Play one game between `w_engine` (White) and `b_engine` (Black) from `opening` and put the
+    result on `results_queue`.
+
+    `game_rng` makes the move choice reproducible; by default it derives from SEED and `game_id`. An
+    illegal or null engine move ends the game as a loss for that side.
+    """
     start_t = time.time()
     if game_rng is None:
         game_rng = random.Random((SEED or 0) * 1_000_003 + game_id)
@@ -1084,6 +1112,10 @@ def play_game(game_id, w_engine, b_engine, opening, results_queue, game_rng=None
         log(f"  [ERRO JOGO {game_id}] Exception: {e}")
 
 def main():
+    """Play the configured number of self-play games with a pool of workers and write the selected
+    outputs (PGN, EPD, `.bin`) and statistics. Engine settings, time control and counts come from
+    the top-of-file constants and the command line.
+    """
     global completed_games, _real_total_games, start_time, _stats_lock, _file_lock, stats, h2h
     kill_leftover_engines()
     all_openings = load_all_openings(OPENING_FOLDER) if OPENING_MODE != "random" else OpeningIndex()
@@ -1176,6 +1208,9 @@ def main():
     for item in schedule: task_q.put(item)
 
     def worker_loop():
+        """Worker body: start this worker's engine processes, then play games from the shared queue
+        until it is empty.
+        """
         # Initialize engine processes
         instances = []
         for cfg in ENGINES_CFG:

@@ -40,6 +40,12 @@ def inv_sig(p: np.ndarray) -> np.ndarray:
 
 
 def process_shard(args: tuple) -> tuple[int, int, str]:
+    """Convert one `.bin` shard into a parquet shard with the lookahead target and the quiet-position
+    filter.
+
+    `args` is (bin_path, out_dir, shard_id). Returns (records read, rows written, output path); (0,
+    0, "") for a missing or empty shard.
+    """
     bin_path, out_dir, shard_id = args
     if not os.path.exists(bin_path) or os.path.getsize(bin_path) == 0:
         return 0, 0, ""
@@ -139,6 +145,9 @@ def process_shard(args: tuple) -> tuple[int, int, str]:
 
 
 def main():
+    """Process every `.bin` shard of data/selfplay_v331 and data/selfplay_v507 with a process pool into
+    data/selfplay_lookahead_filter, and print progress and totals.
+    """
     out_dir = str(ROOT / "data" / "selfplay_lookahead_filter")
     os.makedirs(out_dir, exist_ok=True)
 

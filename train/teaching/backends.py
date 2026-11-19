@@ -31,6 +31,12 @@ class UciBackend:
 
     def __init__(self, path: str | Path, hash_mb: int = 16, threads: int = 1,
                  static_fallback_nodes: int = 1, score_pov: str = uci_score.AUTO):
+        """Start the UCI engine at `path` with `hash_mb` MB of hash and `threads` threads.
+
+        `static_fallback_nodes` is the node budget of the search that replaces `static_eval` when
+        the engine has no static-evaluation command. `score_pov` selects how `utils.uci_score` reads
+        the engine's score (automatic by default).
+        """
         self.path = str(path)
         self.static_fallback_nodes = max(1, int(static_fallback_nodes))
         self.p = subprocess.Popen(
@@ -82,6 +88,10 @@ class UciBackend:
         return max(25000, MATE_CP - mate * 10)
 
     def static_eval(self, fen: str, white_to_move: bool) -> int:
+        """Return the static evaluation of `fen` in centipawns, White-relative, clamped to +/-32000.
+
+        When the engine has no static-evaluation command, it runs a short fixed-node search instead.
+        """
         if self._static_supported is False:
             lines = self.search(fen, white_to_move,
                                 nodes=self.static_fallback_nodes, multipv=1)
@@ -121,6 +131,11 @@ class UciBackend:
     def search(self, fen: str, white_to_move: bool, *, nodes: int = 0,
                depth: int = 0, movetime_ms: int = 0,
                multipv: int = 1) -> list[SearchLine]:
+        """Search `fen` and return one SearchLine per principal variation, ordered by rank.
+
+        The limit is `nodes`, else `depth`, else `movetime_ms`; with none of them it searches 1
+        node. `multipv` is at least 1. Scores are White-relative through `utils.uci_score`.
+        """
         multipv = max(1, int(multipv))
         self._send(f"setoption name MultiPV value {multipv}")
         self._send(f"position fen {fen}")
@@ -165,6 +180,7 @@ class UciBackend:
         return [latest[k] for k in sorted(latest)]
 
     def close(self) -> None:
+        """Ask the engine to quit and end its process; safe to call after the process has exited."""
         if self.p.poll() is None:
             try:
                 self._send("quit")

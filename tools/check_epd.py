@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def valid_fen_prefix(text: str) -> tuple[bool, str]:
+    """Return (valid, reason) for the first four FEN fields of `text`: board ranks, side to move,
+    castling and en-passant square. `reason` is empty when valid.
+    """
     fields = text.strip().split()
     if len(fields) < 4:
         return False, "fewer than four FEN fields"
@@ -38,6 +41,9 @@ def valid_fen_prefix(text: str) -> tuple[bool, str]:
 
 
 def scan(path: Path) -> tuple[int, list[str]]:
+    """Check every line of the EPD `path`; return (positions read, failure messages) with the line
+    number of each invalid or duplicate position.
+    """
     failures: list[str] = []
     seen: set[str] = set()
     count = 0
@@ -57,6 +63,9 @@ def scan(path: Path) -> tuple[int, list[str]]:
 
 
 def main() -> int:
+    """Scan the given EPD files (by default every `*.epd` outside `artifacts/`). Returns 1 when any
+    file has a failure, otherwise 0; `--show-config` prints the settings and returns 0.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", help="EPD files; default scans repository *.epd outside artifacts")
     parser.add_argument("--show-config", action="store_true", help="Print configuration and exit")

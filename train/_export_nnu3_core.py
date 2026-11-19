@@ -34,6 +34,11 @@ def newest_checkpoint(path: str) -> Path:
 
 
 def _state_dict(ckpt: object) -> tuple[dict, dict | None, int]:
+    """Return (state dict, arch, epoch) from a checkpoint dict.
+
+    Accepts the keys `model`, `state_dict` or `model_state_dict`, or a bare state dict that has
+    every model tensor. Raises ValueError otherwise.
+    """
     if not isinstance(ckpt, dict):
         raise ValueError("checkpoint must be a dict")
     arch = ckpt.get("arch")
@@ -65,6 +70,11 @@ def _q8(a: np.ndarray, scale: float, name: str) -> np.ndarray:
 
 
 def export_checkpoint(checkpoint: Path, output: Path) -> None:
+    """Write the NNU3 engine file `output` from the checkpoint `checkpoint`.
+
+    Checks the architecture, every tensor shape and the final file size, and raises ValueError on a
+    mismatch.
+    """
     raw = torch.load(checkpoint, map_location="cpu", weights_only=False)
     state, arch, epoch = _state_dict(raw)
     assert_compatible_arch(arch)

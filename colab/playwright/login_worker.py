@@ -284,6 +284,12 @@ def login_and_wait(
 
 
 def main() -> None:
+    """Open each requested worker's native Chrome profile for an interactive Google login, one at a
+    time (`--worker-ids` or `--worker-id`).
+
+    The helper waits for the user to close the window, then checks the session and saves the
+    cookies. The user enters the password; the script never does.
+    """
     parser = argparse.ArgumentParser(description="Interactive login helper for Colab workers.")
     parser.add_argument("--worker-ids", type=int, nargs="+", default=None, help="Worker IDs to authenticate sequentially (e.g. 2 4).")
     parser.add_argument("--worker-id", type=int, default=None, help="Single worker ID (e.g. 2).")

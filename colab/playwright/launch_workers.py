@@ -67,6 +67,12 @@ def launch_worker(
     wait_run_s: int,
     artifacts_dir: Path,
 ) -> Dict[str, Any]:
+    """Open the notebook of `worker` in its browser profile and start its self-play; return a result
+    dict.
+
+    With `skip_if_running` a worker that already runs is left alone. `timeout_ms`, `delay_s` and
+    `wait_run_s` bound the waits and `artifacts_dir` receives the evidence.
+    """
     from playwright.sync_api import sync_playwright
 
     wid = worker["worker_id"]
@@ -178,6 +184,9 @@ def launch_worker(
 
 
 def main() -> None:
+    """Launch the self-play workers of `--worker-ids` headlessly; `--force-restart` restarts a worker
+    that already runs.
+    """
     parser = argparse.ArgumentParser(description="Launch Zquoridor Colab self-play workers headlessly.")
     parser.add_argument("--worker-ids", type=int, nargs="+", default=CONFIG["worker_ids"], help="Worker IDs (e.g. 3 4 5).")
     parser.add_argument("--force-restart", action="store_true", help="Force re-run even if already running.")

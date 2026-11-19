@@ -41,6 +41,11 @@ def fake_quant_bias_int32(t: torch.Tensor, scale: float) -> torch.Tensor:
 
 
 class NNUE(nn.Module):
+    """NNU3 network: dense L1 (INPUT_DIM -> HIDDEN1), L2 (HIDDEN1 -> HIDDEN2) and L3 (HIDDEN2 -> 1).
+
+    forward() fake-quantizes weights and activations with the engine constants
+    (QA, QB), so the trained float weights export to the integer NNU3 file.
+    """
     def __init__(self) -> None:
         super().__init__()
         self.l1 = nn.Linear(INPUT_DIM, HIDDEN1)
@@ -48,6 +53,11 @@ class NNUE(nn.Module):
         self.l3 = nn.Linear(HIDDEN2, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return the win probability, shape (batch,), for dense feature rows `x` of shape (batch,
+        INPUT_DIM).
+
+        Straight-through estimators keep gradients through the rounding steps.
+        """
         w1 = fake_quant_int16(self.l1.weight, QA)
         b1 = fake_quant_bias_int32(self.l1.bias, QA)
         h1 = F.linear(x, w1, b1).clamp(0.0, RELU_CLIP)

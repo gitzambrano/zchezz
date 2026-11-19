@@ -79,6 +79,9 @@ PGN_MAX_PLIES = 0
 
 @dataclass
 class Config:
+    """Settings of one teacher run: inputs, output directory, source mode, limits, workers, batching
+    and methods.
+    """
     INPUTS: list[str]
     OUTPUT: str
     SOURCE_MODE: str
@@ -123,6 +126,7 @@ class Config:
 
 
 def default_config() -> Config:
+    """Return a Config built from the module constants."""
     return Config(
         INPUTS.copy(), OUTPUT, SOURCE_MODE, LIMIT, RESUME, SEED, WORKERS,
         BATCH_SIZE, MAX_IN_FLIGHT_BATCHES, CHECKPOINT_EVERY, METHODS,
@@ -136,6 +140,8 @@ def default_config() -> Config:
 
 
 def parse_args(cfg: Config) -> tuple[Config, bool]:
+    """Return (Config with the command-line overrides applied, whether `--show-config` was given).
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", action="append", dest="inputs",
                         help="file/dir/glob; repeatable")
@@ -190,6 +196,8 @@ _WORKER = None
 
 
 def _worker_init(cfg_dict: dict, sf_path: str):
+    """Process-pool initializer: store the configuration and start one UCI engine for this worker.
+    """
     global _WORKER
     from train.teaching.backends import UciBackend
 
@@ -207,6 +215,9 @@ def _worker_init(cfg_dict: dict, sf_path: str):
 
 
 def _classify(board) -> tuple[int, bool]:
+    """Return (flags, quiet): the check, tactical, quiet and terminal flags of the board and whether it
+    is a quiet non-terminal position.
+    """
     from train.teaching.format import (
         FLAG_IN_CHECK, FLAG_QUIET, FLAG_TACTICAL, FLAG_TERMINAL)
 
@@ -226,6 +237,9 @@ def _classify(board) -> tuple[int, bool]:
 
 
 def _label_one(src: dict):
+    """Label one source position (a dict) in a worker. Return (position bytes, move bytes, move count),
+    or None when the position is skipped.
+    """
     import chess
     from train.teaching.format import (
         FLAG_GENERATED, FLAG_SOURCE_CP, METHOD_EXTERNAL_STUDENT,
@@ -278,6 +292,8 @@ def _label_batch(batch: list[dict]):
 
 
 def _source_iter(cfg: Config):
+    """Yield the source positions selected by `SOURCE_MODE`: database files, random positions or both.
+    """
     from train.teaching.inputs import iter_inputs, iter_random_positions
 
     if cfg.SOURCE_MODE in ("database", "mixed"):
@@ -316,6 +332,9 @@ def _atomic_json(path: Path, payload: dict) -> None:
 
 
 def main() -> int:
+    """Label the source positions with Stockfish and write the teaching dataset. Returns 0 on success
+    (also for `--show-config`) and 2 on a configuration or input error.
+    """
     cfg, show = parse_args(default_config())
     sf = stockfish_executable()
     if show:
@@ -384,6 +403,9 @@ def main() -> int:
     next_checkpoint_consumed = consumed + max(1, cfg.CHECKPOINT_EVERY)
 
     def batches():
+        """Yield lists of `BATCH_SIZE` source positions, skip the positions a resumed run already
+        consumed, and stop at `LIMIT`.
+        """
         batch = []
         emitted = 0
         for index, src in enumerate(_source_iter(cfg)):

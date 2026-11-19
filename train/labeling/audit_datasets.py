@@ -49,6 +49,12 @@ PIECE_VALUE = {"p": 1, "n": 3, "b": 3, "r": 5, "q": 9}
 
 
 def _side_stats(cp, mat, res, white_mask):
+    """Per-side statistics from White-relative `cp`, material balance `mat`, optional White result
+    `res` and the White-to-move mask.
+
+    For each side to move: rows and agreement of the `cp` sign with the material sign, and
+    corr(tanh(cp/400), result) when results exist.
+    """
     out = {}
     for side, m in (("white", white_mask), ("black", ~white_mask)):
         s = {}
@@ -65,6 +71,9 @@ def _side_stats(cp, mat, res, white_mask):
 
 
 def _problems(st):
+    """Return the failure messages for one file's statistics: a point-of-view check below its
+    threshold, or a non-zero invalid-row count.
+    """
     probs = []
     for side in ("white", "black"):
         s = st["pov"][side]

@@ -35,6 +35,9 @@ def register(name: str):
 
 @dataclass
 class TeachingContext:
+    """State shared by the teaching methods for one position: the board, the backend, the configuration
+    and the labels computed so far.
+    """
     board: object
     backend: object
     cfg: object
@@ -59,6 +62,9 @@ def stable_fraction(fen: str, salt: str = "policy") -> float:
 
 
 def policy_metrics(ctx: TeachingContext) -> tuple[float | None, float | None]:
+    """Return (margin, entropy) of the search scores of the moves in `ctx`, or (None, None) when no
+    move has a search score.
+    """
     values = []
     for move in ctx.moves:
         cp = move.get("search_cp")
@@ -83,6 +89,12 @@ def policy_metrics(ctx: TeachingContext) -> tuple[float | None, float | None]:
 
 
 def compute_interest(ctx: TeachingContext) -> float:
+    """Return the interest score: a weighted sum of the teacher/student gap, a low policy margin and
+    the policy entropy.
+
+    It also sets the disagreement, low-margin and high-entropy flags in `ctx.flags` when the
+    thresholds are reached.
+    """
     score = 0.0
     teacher = ctx.search_cp if ctx.search_cp is not None else ctx.static_cp
     student = ctx.student_cp if ctx.student_cp is not None else ctx.source_cp
@@ -120,6 +132,12 @@ def gap_mining(ctx: TeachingContext) -> None:
 
 @register("static_policy")
 def static_policy(ctx: TeachingContext) -> None:
+    """Statically evaluate every legal child of the position and rank them, then store the rows in
+    `ctx.moves`.
+
+    It applies to every hard position and to a stable sample of the others (`POLICY_SAMPLE_RATE`),
+    and marks the position hard when its interest reaches `HARD_INTEREST`.
+    """
     # Every hard case plus a stable uniform sample gets per-child labels.
     should = bool(ctx.flags & FLAG_HARD) or (
         stable_fraction(ctx.fen) < float(ctx.cfg.POLICY_SAMPLE_RATE))
@@ -152,6 +170,9 @@ def static_policy(ctx: TeachingContext) -> None:
 
 @register("adaptive_search")
 def adaptive_search(ctx: TeachingContext) -> None:
+    """Search the position when its interest reaches `SEARCH_INTEREST` or it is hard, and store the
+    search lines in `ctx`; otherwise do nothing.
+    """
     if ctx.interest < float(ctx.cfg.SEARCH_INTEREST) and not (ctx.flags & FLAG_HARD):
         return
     lines = ctx.backend.search(
@@ -209,6 +230,7 @@ def run_methods(ctx: TeachingContext, names: list[str] | tuple[str, ...]) -> Non
 
 
 def encode_moves(ctx: TeachingContext) -> np.ndarray:
+    """Return the MOVE_DTYPE rows of the moves in `ctx`."""
     out = np.zeros(len(ctx.moves), dtype=MOVE_DTYPE)
     for i, row in enumerate(ctx.moves):
         out[i]["move"] = pack_move_uci(row["uci"])

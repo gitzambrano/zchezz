@@ -370,6 +370,11 @@ def _pawn_home_sanity(us_pawn_bits: np.ndarray) -> float:
 # ────────────────────────────────────────────────────────────────────────
 
 def download_tar(rel_url: str, raw_dir: str) -> str:
+    """Download the archive `rel_url` into `raw_dir` and return its local path.
+
+    A cached file larger than 10 KB is reused. The request sends a custom User-Agent because the
+    storage server rejects the Python default.
+    """
     os.makedirs(raw_dir, exist_ok=True)
     dest = os.path.join(raw_dir, rel_url.replace("/", "_"))
     if os.path.exists(dest) and os.path.getsize(dest) > 10240:  # 10 KB = stub
@@ -443,6 +448,9 @@ def convert(paths, out_dir: str, args) -> None:
     t0 = time.time()
 
     def flush_shard():
+        """Write the buffered rows as the next `part_NNNNN.parquet` shard and clear the buffer; does
+        nothing when the buffer is empty.
+        """
         nonlocal shard_idx, shard_rows
         if not shard_rows:
             return
@@ -719,6 +727,10 @@ def big_run(args) -> None:
 # ────────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    """Parse the command line, then download and convert the selected LC0 archives into parquet shards.
+
+    `--self-test` runs the decoder test and exits without network access.
+    """
     global SAMPLE_EVERY, MAX_TOTAL_ROWS, OUT_DIR
     p = argparse.ArgumentParser(description="LC0 tar → Zchezz parquet/bin (fen+result) importer")
     p.add_argument("--self-test", action="store_true",

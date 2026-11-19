@@ -846,6 +846,11 @@ def iter_bin_file(path: str) -> Iterator[Dict[str, Any]]:
 
 
 def iter_parquet_file(path: str) -> Iterator[Dict[str, Any]]:
+    """Yield the rows of the parquet file `path` as dicts with `fen`, `cp`, `result` and `id`.
+
+    A stored `wdl` is converted to `cp` only when `cp` is missing. A file that cannot be read, or
+    has no `fen` column, is reported and skipped.
+    """
     import pyarrow.parquet as pq
     try:
         pf = pq.ParquetFile(path)
@@ -982,6 +987,9 @@ def limited_stream(files: List[Tuple[str, str]], cfg, skip: int) -> Iterator[Tup
 # ═══════════════════════════════════════════════════════════════════════════
 
 class _StockfishEngine:
+    """Stockfish process used to re-evaluate positions at a fixed node budget; refuses a teacher that
+    does not report side-to-move UCI scores.
+    """
     def __init__(self, sf_path: str, nodes: int, hash_mb: int, timeout: float):
         self._sf_path = sf_path
         self._nodes   = nodes
@@ -992,6 +1000,9 @@ class _StockfishEngine:
         self._start(hash_mb)
 
     def _start(self, hash_mb: int):
+        """Start the process with `hash_mb` MB of hash and check that its identity reports standard
+        side-to-move scores; RuntimeError otherwise.
+        """
         if self._proc:
             try: self._proc.terminate()
             except Exception: pass
@@ -1026,6 +1037,9 @@ class _StockfishEngine:
         return buf[0] if ev.wait(timeout) else ""
 
     def _read_until(self, marker: str, timeout: float) -> List[str]:
+        """Read engine output lines until one starts with `marker` and return them; TimeoutError after
+        `timeout` seconds or when the engine closes its output.
+        """
         lines    = []
         deadline = time.monotonic() + timeout
         while True:
@@ -1232,6 +1246,12 @@ class OutputSink:
     def __init__(self, dest: str, formats: List[str], dir_mode: bool,
                  append: bool, chunk_size: int, emit_id: bool, dry_run: bool,
                  start_chunk: int = 0):
+        """Prepare the output at `dest` in each of `formats`: a directory of `chunk_NNNN` files when
+        `dir_mode`, otherwise one streamed file per format.
+
+        `append` continues existing files, `chunk_size` is the rows per chunk, `emit_id` keeps the
+        id column, and `dry_run` creates and writes nothing.
+        """
         self.dest        = dest
         self.formats     = list(formats)
         self.dir_mode    = dir_mode
@@ -1255,6 +1275,9 @@ class OutputSink:
 
     # ── file-mode handles (opened lazily so a dry run touches nothing) ──
     def _handle(self, fmt: str):
+        """Return the open file handle of format `fmt`, opening it on first use (append mode when
+        `append`).
+        """
         if fmt in self._handles:
             return self._handles[fmt]
         path = self._file_path(fmt)
@@ -1287,6 +1310,8 @@ class OutputSink:
 
     # ── directory mode ──────────────────────────────────────────────────
     def _write_chunk(self, rows: List[Dict]):
+        """Write `rows` as the next `chunk_NNNN` file of every format and advance the chunk index.
+        """
         idx = self.chunk_idx
         for fmt in self.formats:
             path = os.path.join(self.dest, f'chunk_{idx:04d}.{fmt}')
@@ -1304,6 +1329,7 @@ class OutputSink:
 
     # ── single-file mode ────────────────────────────────────────────────
     def _write_stream(self, rows: List[Dict]):
+        """Append `rows` to the streamed file of every format."""
         for fmt in self.formats:
             if fmt == 'parquet':
                 import pyarrow as pa
@@ -1326,6 +1352,9 @@ class OutputSink:
                 fh.writelines(_pgn_stub(r) for r in rows)
 
     def _df(self, rows: List[Dict]) -> pd.DataFrame:
+        """Return `rows` as a DataFrame with the columns `fen`, `cp`, `result` (and `id` when
+        `emit_id`).
+        """
         cols = ['fen', 'cp', 'result'] + (['id'] if self.emit_id else [])
         df = pd.DataFrame([{c: r.get(c) for c in cols} for r in rows], columns=cols)
         # Fixed dtypes so every chunk/row-group shares one schema (a streamed
@@ -1339,6 +1368,9 @@ class OutputSink:
         return df
 
     def _write_bin(self, fh, rows: List[Dict], close: bool):
+        """Append `rows` to the `.bin` file `fh` as SAMPLE_DTYPE records; close the file when `close`
+        is true.
+        """
         recs = []
         for r in rows:
             try:
@@ -1428,6 +1460,11 @@ def _manifest_provenance(in_spec: str, cfg) -> dict:
 
 
 def run_pipeline(in_spec: str, out_spec: str, cfg) -> int:
+    """Read the input `in_spec`, apply the enabled filters, optionally re-evaluate with Stockfish and
+    write the output `out_spec`.
+
+    Returns 0 on success and 1 on a failure; prints a summary of each stage.
+    """
     files = collect_input_files(in_spec, cfg.in_format)
     dir_mode, formats = resolve_output(out_spec, cfg.out_formats, cfg.explicit_out_formats)
 
@@ -1688,6 +1725,7 @@ class Cfg:
 
 
 def resolve_config(args) -> Cfg:
+    """Return the pipeline Cfg built from the command-line `args`."""
     c = Cfg()
     c.in_format  = args.in_format
     c.out_formats = args.out_format
@@ -1749,6 +1787,7 @@ def resolve_config(args) -> Cfg:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Return the argument parser of the position pipeline."""
     ap = argparse.ArgumentParser(
         prog='process_positions.py',
         description=__doc__,
@@ -1835,6 +1874,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    """Run the position pipeline for each `--in`/`--out` pair and return the combined exit code (0 on
+    success).
+
+    `--show-config` prints the resolved configuration and returns 0. Returns 1 when Stockfish is
+    needed but missing.
+    """
     ap   = build_parser()
     args = ap.parse_args(argv)
 

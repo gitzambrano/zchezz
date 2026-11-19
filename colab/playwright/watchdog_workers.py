@@ -127,6 +127,9 @@ def init_worker_session(p: Any, worker: Dict[str, Any], headless: bool, timeout_
 
 
 def run_watchdog_inner(cfg: Dict[str, Any], artifacts_path: Path, worker_ids: List[int]) -> bool:
+    """Run the watchdog loop over `worker_ids`: check each worker and keep its session alive,
+    reconnecting it when `auto_reconnect` is set. Returns at once when no worker is valid.
+    """
     from playwright.sync_api import sync_playwright
     if not worker_ids:
         print("[WATCHDOG] No valid worker IDs configured.")
@@ -322,6 +325,7 @@ def run_watchdog_inner(cfg: Dict[str, Any], artifacts_path: Path, worker_ids: Li
 
 
 def run_watchdog(cfg: Dict[str, Any]) -> None:
+    """Run the watchdog passes for the configured workers every check interval."""
     artifacts_path = create_artifacts_dir(cfg["artifacts_dir"])
     worker_ids = [wid for wid in cfg["worker_ids"] if wid in WORKERS]
     if not worker_ids:
@@ -342,6 +346,7 @@ def run_watchdog(cfg: Dict[str, Any]) -> None:
 
 
 def main() -> None:
+    """Run the watchdog for `--worker-ids` every `--interval` seconds."""
     parser = argparse.ArgumentParser(description="Zchezz Colab active watchdog and keep-alive monitor.")
     parser.add_argument("--worker-ids", type=int, nargs="+", default=CONFIG["worker_ids"], help="Worker IDs (e.g. 3 4 5).")
     parser.add_argument("--interval", type=int, default=CONFIG["check_interval_seconds"], help="Seconds between checks.")

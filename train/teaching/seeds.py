@@ -22,6 +22,9 @@ BRANCHES_PER_SEED = 1
 
 
 def main() -> int:
+    """Write the teaching positions whose interest is at least `--min-interest` (at most `--max-seeds`)
+    as EPD seeds. Returns 0, or 2 on a bad input.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, default=INPUT)
     parser.add_argument("--output", type=Path, default=OUTPUT)

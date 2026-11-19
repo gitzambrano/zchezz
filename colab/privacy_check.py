@@ -56,6 +56,9 @@ def scan(root, identifiers):
 
 
 def main():
+    """Check versionable files for private values and print only their locations. `--show-config`
+    prints the settings and returns 0; returns 1 when a file has a finding, otherwise 0.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--show-config", action="store_true")
     args = parser.parse_args()

@@ -62,7 +62,13 @@ class ClippedReLU(nn.Module):
 
 
 class NNUE(nn.Module):
+    """NNU5 dual-perspective network, QAT-trained in float32.
+
+    Both perspectives go through the same L1 EmbeddingBag. Their SCReLU outputs
+    are concatenated (CONCAT_DIM) and pass through L2 and L3 with fake quantization.
+    """
     def __init__(self) -> None:
+        """Create the shared L1 EmbeddingBag, the L2/L3/output layers and their activations."""
         super().__init__()
         self.l1 = nn.EmbeddingBag(INPUT_DIM, HIDDEN1, mode="sum")
         self.l1_bias = nn.Parameter(torch.zeros(HIDDEN1))
@@ -84,6 +90,12 @@ class NNUE(nn.Module):
 
     def forward(self, stm_idx: torch.Tensor, stm_off: torch.Tensor,
                 opp_idx: torch.Tensor, opp_off: torch.Tensor) -> torch.Tensor:
+        """Return the win probability, shape (batch,), for a batch in the EmbeddingBag offsets protocol.
+
+        `stm_idx`/`stm_off` hold the side-to-move perspective features and
+        `opp_idx`/`opp_off` the other perspective (flat indices and per-row offsets,
+        as produced by `encoding_nnu5.encode_mailbox_batch`).
+        """
         w1 = fake_quant_int16(self.l1.weight, QA)
         b1 = fake_quant_bias_int32(self.l1_bias, float(QA))
 

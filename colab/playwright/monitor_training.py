@@ -26,6 +26,11 @@ from colab.playwright.browser_utils import launch_stealth_context, dismiss_modal
 
 
 def monitor_worker(worker_id: int, max_epochs: int = 100):
+    """Watch the training notebook of worker `worker_id` in its browser profile: trigger the training
+    cell when needed and log epoch heartbeats.
+
+    `max_epochs` is accepted but the current implementation does not use it.
+    """
     w = WORKERS[worker_id]
     profile = w.get("profile", "v331")
     cdp_port = w.get("cdp_port", 9000 + worker_id)

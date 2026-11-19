@@ -141,6 +141,9 @@ def pack_move_uci(uci: str) -> int:
 
 
 def unpack_move_uci(value: int) -> str:
+    """Return the UCI string (for example `e2e4`, `e7e8q`) of a packed 16-bit move; the inverse of
+    `pack_move_uci`.
+    """
     value = int(value)
 
     def name(square: int) -> str:
@@ -160,6 +163,9 @@ def board_to_codes(board) -> np.ndarray:
 
 
 def fill_position_board(rec, board) -> None:
+    """Fill the board, side-to-move and castling fields of the position record `rec` from the
+    `chess.Board` `board`.
+    """
     rec["board"] = board_to_codes(board)
     rec["stm"] = 0 if board.turn else 1
     rec["castling"] = (
@@ -241,8 +247,19 @@ def move_scores_to_policy(moves: np.ndarray, white_to_move: bool,
 
 
 class TeachingWriter:
+    """Writer of a teaching dataset: `positions.bin`, `moves.bin` and `metadata.json` under one
+    directory.
+
+    Each position record points at its move rows in `moves.bin` (see `write`).
+    """
     def __init__(self, root: str | os.PathLike, metadata: dict | None = None,
                  append: bool = False):
+        """Open the dataset directory `root`.
+
+        With `append=True` it continues an existing dataset and raises ValueError when that dataset
+        has an incompatible format; without it, the directory starts a new dataset. `metadata` is
+        merged into `metadata.json`.
+        """
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.meta_path = self.root / "metadata.json"
@@ -308,6 +325,7 @@ class TeachingWriter:
             raise ValueError("MOVE_DTYPE itemsize mismatch")
 
     def _write_meta(self) -> None:
+        """Write `metadata.json` with the format magic, version and record counts."""
         self.metadata.update({
             "magic": MAGIC,
             "version": FORMAT_VERSION,
@@ -326,6 +344,11 @@ class TeachingWriter:
         os.replace(tmp, self.meta_path)
 
     def write(self, position: np.ndarray, moves: np.ndarray | Sequence = ()) -> None:
+        """Append one position record and its move rows.
+
+        The record's `policy_offset` and `policy_count` are set to the location of the rows in
+        `moves.bin`. `position` must hold exactly one POSITION_DTYPE record; ValueError otherwise.
+        """
         pos = np.asarray(position, dtype=POSITION_DTYPE).reshape(-1)
         if len(pos) != 1:
             raise ValueError("write() accepts exactly one position record")
@@ -359,7 +382,13 @@ class TeachingWriter:
 
 
 class TeachingDataset:
+    """Read-only view of a teaching dataset written by `TeachingWriter`: indexing returns a position
+    and its move rows.
+    """
     def __init__(self, root: str | os.PathLike):
+        """Open the dataset directory `root`; raise ValueError when `positions.bin` or `moves.bin` has
+        a size that is not a multiple of its record size.
+        """
         self.root = Path(root)
         self.metadata = json.loads(
             (self.root / "metadata.json").read_text(encoding="utf-8"))
